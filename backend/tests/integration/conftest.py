@@ -37,14 +37,63 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 import uuid
+from urllib.parse import urlsplit
 
 # ── env must be set before importing the app ────────────────────────────────
+# ⚠ G2 · #33 · THE DEFAULT STAYS 5432, AND THE SILENCE IS WHAT GOT FIXED.
+#
+# The register reads "points at the wrong port", but 5432 is not wrong — it is
+# Postgres's own default, it is what CI runs (ci.yml sets DATABASE_URL
+# explicitly, so nothing here can break it), and it is what a fresh machine
+# following the README gets. Moving it to 5433 would swap a value that is
+# right-by-default for one developer's local choice, and the next person on
+# 5432 would hit exactly the same wall from the other side.
+#
+# The actual defect is that being wrong is SILENT. Nothing listening on 5432
+# produced a wall of SQLAlchemy OperationalError at the first fixture, with no
+# hint that 5433 is where this project's cluster usually lives. So the port is
+# left alone and a preflight says the sentence instead — checked once per
+# session, ~1ms, no dependency.
+#
+# ⚠ LIMIT, STATED: this catches "nothing is listening", which is the common
+# case. It CANNOT catch "a different Postgres is listening on 5432 and happens
+# to have a foxy_pytest database" — that one still runs against the wrong
+# database, and no cheap probe distinguishes it from the right one.
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+psycopg://foxy:foxy@localhost:5432/foxy_pytest")
+
+
+def _preflight_database_url() -> None:
+    """Fail with one sentence instead of a page of connection errors."""
+    parts = urlsplit(os.environ["DATABASE_URL"])
+    host, port = parts.hostname or "localhost", parts.port or 5432
+    try:
+        socket.create_connection((host, port), timeout=1.5).close()
+        return
+    except OSError:
+        pass
+    alt = 5433 if port == 5432 else 5432
+    hint = ""
+    try:
+        socket.create_connection((host, alt), timeout=1.5).close()
+        hint = (f"\n  Something IS listening on {host}:{alt}. This project's "
+                f"local cluster usually runs there:\n"
+                f'    DATABASE_URL="postgresql+psycopg://foxy:foxy@{host}:{alt}'
+                f'/foxy_pytest" pytest backend/tests/integration -q')
+    except OSError:
+        hint = (f"\n  Nothing is listening on {host}:{alt} either — start "
+                f"Postgres, or point DATABASE_URL at a running cluster.")
+    raise RuntimeError(
+        f"Cannot reach Postgres at {host}:{port}, taken from DATABASE_URL."
+        f"{hint}")
+
+
+_preflight_database_url()
 os.environ.setdefault("API_KEY_PEPPER", "testpepper")
 os.environ.setdefault("SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("GEMINI_API_KEY", "")          # judge fail-open (no network in tests)

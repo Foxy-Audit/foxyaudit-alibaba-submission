@@ -6736,3 +6736,652 @@ def test_the_stale_offer_is_legible_on_the_tint_it_sits_on() -> None:
             f"{theme}: the boundary is {edge_in:.2f}:1 inside / {edge_out:.2f}:1 "
             f"outside — a control has to be findable from both sides"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G2 · ACCESSIBILITY AND THE PAPER CUTS  (register #63 #67 #90 #84 #74 #81 #33)
+#
+# Bodies and rules are read through _bare()/_css(): this file argues with itself
+# in prose that quotes the very selectors and attributes being changed, and
+# _nocomment strips only HTML comments. One shipped A2 guard greps raw SRC for
+# a role name and A CSS COMMENT WRITTEN THIS PHASE FAILED IT — see the note in
+# the .segbtn rule. That is the trap, live, in this file.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _g2_bare(name: str) -> str:
+    out = re.sub(r"/\*.*?\*/", "", _js_func(name), flags=re.S)
+    return re.sub(r"(?m)^\s*//.*$", "", out)
+
+
+def _g2_rules() -> list:
+    """(selector, declarations) for every TOP-LEVEL rule in the sheet."""
+    return [(s.strip(), d) for s, d in
+            re.findall(r"([^{}@]+)\{([^{}]*)\}", _css())]
+
+
+def _g2_forced_block() -> str:
+    css = _css()
+    at = css.index("@media (forced-colors: active){")
+    depth, j = 0, css.index("{", at)
+    while True:
+        if css[j] == "{":
+            depth += 1
+        elif css[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[at:j + 1]
+        j += 1
+
+
+def _g2_covered(selector: str) -> bool:
+    """Is this exact selector named in the forced-colors block? Token match, so
+    `.tag` is not satisfied by `.tags` and `.chip` is not satisfied by
+    `.chip.dim` — the substring version of this guard passed while three of the
+    controls it names were uncovered."""
+    block = _g2_forced_block()
+    for sel, _ in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+        for one in sel.split(","):
+            if one.strip() == selector:
+                return True
+    return False
+
+
+# ── #63 · Windows High Contrast ─────────────────────────────────────────────
+
+#: THE CENSUS, as three failure classes. Class C is the one a `border:0` grep
+#: cannot see and is the most severe: a transparent border SURVIVES forced
+#: colors as transparent, so these keep an invisible edge while losing the
+#: background and shadow that were carrying their selected state.
+_FC_BORDERLESS = [".pager button", ".kpi .kinfo", ".pw-eye", ".sens-btn",
+                  ".fpill-x", ".fpill-clear", ".rowlink", ".linklike",
+                  ".annbar .x", ".tag"]
+_FC_NO_DECL = [".fauxselect-trigger", ".fauxselect-opt", ".cmdk-item",
+               ".notif-item", ".dock-badge", ".topbadge", ".kpi .face"]
+_FC_TRANSPARENT = [".dock-item", ".segbtn"]
+
+
+def test_the_console_has_a_forced_colors_block_at_all() -> None:
+    """There was not one occurrence of forced-colors in 6,700 lines, on a
+    surface whose entire design language is soft-UI shadow — and forced-colors
+    drops box-shadow outright. PRODUCT.md names this as the known a11y gap."""
+    assert SRC.count("forced-colors") >= 1, "the block is gone again"
+    assert "@media (forced-colors: active){" in _css(), (
+        "forced-colors is mentioned but not as a live media block"
+    )
+
+
+def test_the_forced_colors_block_uses_the_users_palette_not_ours() -> None:
+    """In this mode the palette belongs to the user. A var(--fox) here either is
+    ignored or paints a colour they have explicitly opted out of."""
+    block = _g2_forced_block()
+    assert "var(--" not in block, (
+        "a design token is being painted inside forced-colors: "
+        + ", ".join(re.findall(r"var\(--[a-z0-9-]+\)", block))
+    )
+    system = {"ButtonBorder", "ButtonText", "Canvas", "CanvasText", "Highlight",
+              "HighlightText", "GrayText", "LinkText", "Field", "FieldText"}
+    used = set(re.findall(r"(?<![\w-])([A-Z][a-zA-Z]+)(?=[;\s}])", block))
+    assert used and used <= system, "not a system colour keyword: %s" % (used - system)
+
+
+def test_the_mode_is_never_switched_off() -> None:
+    """forced-color-adjust:none opts the user out of their own accessibility
+    setting. It is the wrong answer everywhere, not just inside the block."""
+    assert "forced-color-adjust" not in _css(), (
+        "something opts itself out of the user's high-contrast setting"
+    )
+
+
+@pytest.mark.parametrize("sel", _FC_BORDERLESS + _FC_NO_DECL + _FC_TRANSPARENT)
+def test_every_formless_control_gets_an_edge_in_forced_colors(sel: str) -> None:
+    """Each of these draws its whole visible form from a fill, a shadow, or a
+    transparent border — all three of which forced-colors removes or neutralises
+    — so each needs an edge that survives."""
+    assert _g2_covered(sel), f"{sel} has no boundary in forced-colors"
+
+
+def test_the_census_cannot_grow_in_silence() -> None:
+    """The lists above are frozen ON PURPOSE. Recomputed from the sheet, so a
+    NEW borderless or transparent-bordered control added later fails here until
+    somebody decides whether it needs covering — the half of this that a
+    hardcoded checklist can never do."""
+    borderless, transparent = set(), set()
+    for sel, decl in _g2_rules():
+        if sel.startswith(("@", ":root", "html", "*", "::")):
+            continue
+        # ⚠ THE SHORTHAND ONLY, AND BASE RULES ONLY — re-aimed, because the
+        # first version counted any `border-<side>:none` and flagged
+        # .sc-row:last-child, which DROPS THE DIVIDER under a final row rather
+        # than being a control that lost its form. A single-side none is a
+        # separator decision; losing the whole edge is this phase's failure.
+        if ":" in sel:
+            continue
+        d = decl.replace(" ", "").replace("\n", "")
+        for m in re.findall(r"(?<![\w-])border:([^;]*)", d):
+            if m.strip() in ("0", "none"):
+                borderless.add(sel)
+            elif m.strip().endswith("transparent"):
+                transparent.add(sel)
+    # a rule that re-declares a real border on another side is not formless
+    borderless = {s for s in borderless
+                  if not any(re.search(r"border-(top|right|bottom|left):[^;]*(var|#|rgb)", d)
+                             for x, d in _g2_rules() if x == s)}
+    known = set(_FC_BORDERLESS) | set(_FC_TRANSPARENT) | {
+        # Deliberately uncovered, each for a stated reason:
+        ".sr-only",        # has no visual form BY DESIGN — border:0 is part of
+                           # the clip pattern, and giving it an edge would put a
+                           # visible box on screen-reader-only text
+        ".chip",           # R2's margin mark survives; a full border rebuilds
+                           # the pill R2 deleted (see the block's own note)
+        ".inbox-row",      # keeps a real border-bottom, so rows stay separated
+        ".dock",           # keeps a real border-right
+        ".cmdk-in",        # covered under its own selector, not the shorthand
+        ".voxswitch input",  # the visually-hidden 0x0 input behind the track
+        ".tbl.cardify td",   # a DATA CELL under 760px, not a control. It drops
+                             # its own edge on purpose so the stacked card reads
+                             # as one card; the row carries the separation
+    }
+    missing = sorted((borderless | transparent) - known)
+    assert not missing, (
+        "these draw no boundary of their own and are not in the forced-colors "
+        "block — cover them, or add them to the deliberate list with a reason: "
+        + ", ".join(missing)
+    )
+    # and the frozen lists must still describe reality, or they are decoration
+    for s in _FC_BORDERLESS + _FC_TRANSPARENT:
+        assert s in borderless | transparent | {".tag"}, (
+            f"{s} is listed in the census and no longer matches the sheet"
+        )
+
+
+@pytest.mark.parametrize("sel", [
+    '.segbtn[aria-checked="true"]', ".dock-item.active", ".fauxselect-opt.sel",
+    ".inbox-row.on", ".notif-item.unread",
+])
+def test_every_selection_still_says_which_one(sel: str) -> None:
+    """The half that goes silent. Each of these said 'this one' with a gradient
+    and a shadow and has nothing left once both are dropped — a nav with no
+    current item and a segmented control with no chosen segment."""
+    block = _g2_forced_block()
+    for group, decl in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+        if any(o.strip() == sel for o in group.split(",")):
+            assert "Highlight" in decl, f"{sel} is named but not marked as selected"
+            return
+    raise AssertionError(f"{sel} loses its selected state in forced-colors")
+
+
+def test_the_chosen_radio_is_still_distinguishable() -> None:
+    """The checkbox tick is drawn with a BORDER so it is recoloured and
+    survives; the radio dot is drawn with a BACKGROUND and disappears, which
+    makes a chosen radio identical to an unchosen one."""
+    block = _g2_forced_block()
+    assert re.search(r'input\[type="radio"\]:checked::after\{[^}]*background:Highlight(?:Text)?', block), (
+        "the radio dot still vanishes in forced-colors"
+    )
+    assert re.search(r'input\[type="(?:checkbox|radio)"\]:checked[^{]*\{[^}]*background:Highlight', block), (
+        "a checked control has no fill the user's palette can show"
+    )
+
+
+def test_the_status_chip_was_left_alone() -> None:
+    """R2 rebuilt .chip as a margin mark. forced-colors preserves border WIDTHS
+    and replaces only their colour, so the 3px mark survives untouched and
+    needs nothing — and giving it a full border here would rebuild the exact
+    pill R2 deleted."""
+    assert "border-left:3px solid" in _scope(".chip{"), (
+        "the mark that survives forced-colors is no longer there"
+    )
+    block = _g2_forced_block()
+    for sel, decl in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+        if any(o.strip() == ".chip" for o in sel.split(",")):
+            assert not re.search(r"(?<!-)border:\s*1px", decl), (
+                "forced-colors rebuilds .chip's pill — R2 removed it on purpose"
+            )
+
+
+def test_no_selector_in_the_block_is_dead() -> None:
+    """A rule for a class that does not exist reads as coverage and is not. Each
+    selector's leading class has to be styled elsewhere in the sheet."""
+    css = _css()
+    block = _g2_forced_block()
+    for sel, _ in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+        for one in sel.split(","):
+            one = one.strip()
+            if not one or one.startswith(":"):
+                continue
+            head = re.match(r"(\.[\w-]+|input\[[^\]]+\])", one)
+            if not head:
+                continue
+            assert css.count(head.group(1)) > block.count(head.group(1)), (
+                f"{one} in the forced-colors block styles nothing that exists"
+            )
+
+
+# ── #67 · a 17px box with a 24px target ─────────────────────────────────────
+
+def test_the_tick_box_target_reaches_24px_without_growing_the_box() -> None:
+    """SC 2.5.8. The visible box stays 17px on purpose — growing it moves the
+    label, the row and the gap in every form here — so the TARGET grows, the
+    same move A0 made for coarse pointers."""
+    base = _scope('input[type="checkbox"],input[type="radio"]{')
+    assert "width:17px;height:17px" in base.replace(" ", ""), (
+        "the visible box changed size; every form on the surface moved with it"
+    )
+    hit = _scope('input[type="checkbox"]::before,input[type="radio"]::before{')
+    assert "width:24px" in hit and "height:24px" in hit, "the target is under 24px"
+    assert "position:absolute" in hit and "translate(-50%,-50%)" in hit.replace(" ", ""), (
+        "the target is not centred on the box, so it grows in one direction only"
+    )
+
+
+def test_the_tick_still_has_its_own_pseudo() -> None:
+    """::after draws the tick and the radio dot. If the hit area had taken it,
+    the check would have been silently replaced by an empty square — and both
+    pseudos are now spoken for, which is a real constraint on the next change."""
+    tick = _scope('input[type="checkbox"]:checked::after{')
+    assert "border:solid var(--on-pri)" in tick, "the tick is gone"
+    dot = _scope('input[type="radio"]:checked::after{')
+    assert "border-radius:50%" in dot, "the radio dot is gone"
+
+
+def test_the_hidden_switch_input_takes_no_stray_target() -> None:
+    """.voxswitch's input is the visually-hidden 0x0 one behind the track; the
+    whole <label> is already the target, so a 24px pseudo there would put a live
+    hit area over the words beside it."""
+    assert "content:none" in _scope(
+        '.voxswitch input[type="checkbox"]::before,.voxswitch input[type="radio"]::before{'), (
+        "the hidden switch input grew a target of its own"
+    )
+
+
+# ── #90 · the pickers are keyboard-native ───────────────────────────────────
+
+_G2_DOM = r"""
+/* A DOM small enough to run the shipped handler and no smaller. Only the four
+   selector forms the code actually uses are implemented; anything else throws
+   rather than quietly matching nothing, so the probe cannot pass by accident. */
+var FOCUS=null, CLICKS=[];
+function El(tag,attrs){ var e={tag:tag,attrs:attrs||{},children:[],parent:null,
+  id:(attrs&&attrs.id)||'', tabIndex:attrs&&'tabindex' in attrs?+attrs.tabindex:0,
+  dataset:{}, onclick:null,
+  getAttribute:function(k){ return k in this.attrs?String(this.attrs[k]):null; },
+  setAttribute:function(k,v){ this.attrs[k]=String(v); if(k==='id')this.id=String(v); },
+  focus:function(){ FOCUS=this; },
+  click:function(){ CLICKS.push(this); if(this.onclick)this.onclick(this); },
+  closest:function(sel){ var n=this; while(n){ if(_match(n,sel))return n; n=n.parent; } return null; },
+  querySelectorAll:function(sel){ var out=[]; (function walk(n){ n.children.forEach(function(c){
+      if(_match(c,sel))out.push(c); walk(c); }); })(this); return out; } };
+  return e; }
+function _match(n,sel){
+  var m=sel.match(/^\[([\w-]+)="([^"]*)"\]$/);
+  if(m)return n.getAttribute(m[1])===m[2];
+  m=sel.match(/^\[data-([\w-]+)="([^"]*)"\]$/);
+  if(m)return n.getAttribute('data-'+m[1])===m[2];
+  if(sel.charAt(0)==='.')return (n.attrs['class']||'').split(' ').indexOf(sel.slice(1))>=0;
+  throw new Error('probe DOM cannot match '+sel);
+}
+function add(parent,child){ child.parent=parent; parent.children.push(child); return child; }
+var _byId={};
+var document={ getElementById:function(id){ return _byId[id]||null; },
+               addEventListener:function(){} };
+function $(id){ return _byId[id]||null; }
+function key(target,k){ _radioKey({key:k,target:target,preventDefault:function(){}}); }
+function snap(g){ return g.querySelectorAll('[role="radio"]').map(function(b){
+  return b.getAttribute('aria-checked')+'/'+b.tabIndex; }).join(' '); }
+"""
+
+
+def _run_g2(fns: tuple, body: str) -> dict:
+    import json
+    import os
+    import tempfile
+    probe = (_G2_DOM + "\n" + "\n".join(_js_decl(f) for f in fns)
+             + "\nvar R={};\n" + body + "\nconsole.log(JSON.stringify(R));\n")
+    fd, path = tempfile.mkstemp(suffix=".js")
+    os.close(fd)
+    try:
+        Path(path).write_text(probe, encoding="utf-8")
+        # node writes utf-8; pytest does not. This one is node.
+        proc = subprocess.run([shutil.which("node"), path], capture_output=True,
+                              text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    finally:
+        os.unlink(path)
+
+
+_G2_SKIP = pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+
+_PICKERS = {"bcLevel": 3, "densityPick": 2, "inboxFilters": 6}
+
+
+@pytest.mark.parametrize("gid,count", sorted(_PICKERS.items()))
+def test_each_single_select_picker_announces_as_a_radiogroup(gid: str, count: int) -> None:
+    """They were role="group" over aria-pressed toggles: a screen reader could
+    not say '2 of 3', and every option was its own tab stop. #o3Tabs is
+    deliberately NOT here — it is a tab bar, and A2 settled that."""
+    if gid == "inboxFilters":
+        html = _js_func("renderInboxFilters")
+        assert 'role="radio"' in html, "the filter pills are still toggle buttons"
+        assert "aria-checked=" in html and "tabindex=" in html, (
+            "the filters re-render without their state or their roving tabindex"
+        )
+        assert 'role="radiogroup"' in re.search(
+            r'<div id="inboxFilters"[^>]*>', _nocomment(SRC)).group(0)
+        return
+    m = re.search(r'<div class="segmented"[^>]*id="%s"[^>]*>(.*?)</div>' % gid,
+                  _nocomment(SRC), re.S)
+    assert m, f"#{gid} is no longer the shared segmented control"
+    assert 'role="radiogroup"' in m.group(0), f"#{gid} still announces as a plain group"
+    buttons = re.findall(r"<button[^>]*>", m.group(1))
+    assert len(buttons) == count, f"#{gid} has {len(buttons)} options, expected {count}"
+    for b in buttons:
+        assert 'role="radio"' in b, f"an option is not a radio: {b}"
+        assert "aria-checked=" in b, f"an option announces no state: {b}"
+        assert "tabindex=" in b, f"an option is outside the roving tabindex: {b}"
+    assert sum('tabindex="0"' in b for b in buttons) == 1, (
+        f"#{gid} has {sum('tabindex=' + chr(34) + '0' + chr(34) in b for b in buttons)} "
+        f"tab stops — a radiogroup is exactly one"
+    )
+    assert "aria-pressed" not in m.group(0), (
+        f"#{gid} carries both vocabularies; aria-pressed on a radio is invalid"
+    )
+
+
+@_G2_SKIP
+def test_the_arrow_keys_move_and_select_and_wrap() -> None:
+    """RUN, because this is the whole of #90. role="radio" promises that arrows
+    MOVE AND SELECT on both axes, that Home/End reach the ends, and that
+    selection wraps. A group that announced as radios and did none of it would
+    be a broken promise rather than a missing feature."""
+    r = _run_g2(("_radioSet", "_radioKey"), """
+var g=El('div',{id:'bcLevel',role:'radiogroup'}); _byId.bcLevel=g;
+['info','warning','critical'].forEach(function(lv,i){
+  var b=add(g,El('button',{role:'radio','aria-checked':i?'false':'true',
+    tabindex:i?'-1':'0','data-level':lv}));
+  b.onclick=function(el){ _radioSet(g,el); };
+});
+var it=g.querySelectorAll('[role="radio"]');
+R.start=snap(g);
+key(it[0],'ArrowRight');  R.right=snap(g); R.focus1=FOCUS.getAttribute('data-level');
+key(FOCUS,'ArrowRight');  R.right2=snap(g);
+key(FOCUS,'ArrowRight');  R.wrap=snap(g);  R.focus2=FOCUS.getAttribute('data-level');
+key(FOCUS,'ArrowLeft');   R.wrapBack=snap(g); R.focus3=FOCUS.getAttribute('data-level');
+key(FOCUS,'End');         R.end=FOCUS.getAttribute('data-level');
+key(FOCUS,'Home');        R.home=FOCUS.getAttribute('data-level');
+key(FOCUS,'ArrowDown');   R.down=FOCUS.getAttribute('data-level');
+key(FOCUS,'ArrowUp');     R.up=FOCUS.getAttribute('data-level');
+key(FOCUS,'Tab');         R.tabIgnored=FOCUS.getAttribute('data-level');
+R.clicks=CLICKS.length;
+""")
+    assert r["start"] == "true/0 false/-1 false/-1", r["start"]
+    assert r["right"] == "false/-1 true/0 false/-1", (
+        "the arrow moved without selecting — that is the tab-bar contract, not "
+        "the radio one: %s" % r["right"]
+    )
+    assert r["focus1"] == "warning", "focus did not follow the selection"
+    assert r["wrap"] == "true/0 false/-1 false/-1" and r["focus2"] == "info", (
+        "selection does not wrap past the last option: %s" % r["wrap"]
+    )
+    assert r["focus3"] == "critical", "it does not wrap backwards"
+    assert r["end"] == "critical" and r["home"] == "info", "Home/End do not reach the ends"
+    assert r["down"] == "warning" and r["up"] == "info", (
+        "only one axis works; a radiogroup answers both"
+    )
+    assert r["tabIgnored"] == "info", "Tab was swallowed — the group is a keyboard trap"
+    assert r["clicks"] == 8, "a move happened without going through the group's own handler"
+
+
+@_G2_SKIP
+def test_the_roving_tabindex_survives_the_group_rebuilding_itself() -> None:
+    """renderInboxFilters replaces its own innerHTML on every pick, and this
+    file has already paid once for a handler bound to elements that get
+    destroyed — arrow navigation died on first use. Focus is looked up again
+    after the click rather than held across it."""
+    r = _run_g2(("_radioSet", "_radioKey"), """
+var g=El('div',{id:'inboxFilters',role:'radiogroup'}); _byId.inboxFilters=g;
+var NAMES=['all','unread','priority'];
+function render(sel){
+  g.children=[];
+  NAMES.forEach(function(n){
+    var b=add(g,El('button',{role:'radio','aria-checked':n===sel?'true':'false',
+      tabindex:n===sel?'0':'-1','data-f':n}));
+    b.onclick=function(el){ render(el.getAttribute('data-f')); };   // rebuilds
+  });
+}
+render('all');
+R.before=snap(g);
+key(g.querySelectorAll('[role="radio"]')[0],'ArrowRight');
+R.after=snap(g);
+R.focus=FOCUS?FOCUS.getAttribute('data-f'):null;
+R.detached=FOCUS?(g.children.indexOf(FOCUS)<0):null;
+""")
+    assert r["before"] == "true/0 false/-1 false/-1"
+    assert r["after"] == "false/-1 true/0 false/-1", (
+        "the rebuild dropped the state the handler had just set: %s" % r["after"]
+    )
+    assert r["focus"] == "unread", "focus was not restored after the re-render"
+    assert r["detached"] is False, (
+        "focus landed on a node that is no longer in the group — the next arrow "
+        "key finds nothing and navigation dies on first use"
+    )
+
+
+def test_the_two_state_vocabularies_never_mix() -> None:
+    """aria-pressed on a role=radio is invalid and announced wrong; both paint
+    the same on purpose so the tab bar can keep its own."""
+    rule = _scope('.segbtn[aria-pressed="true"],.segbtn[aria-checked="true"]{')
+    assert "background:linear-gradient" in rule, "the selected segment lost its fill"
+    assert "_radioSet(" in _g2_bare("_segPick"), "_segPick no longer routes radios"
+    assert "aria-pressed" in _g2_bare("_segPick"), (
+        "the aria-pressed path is gone and #o3Tabs selects nothing"
+    )
+    assert "_radioSet(" in _g2_bare("setDensity"), "setDensity writes the old attribute"
+    lvl = _g2_bare("sendBroadcast")
+    assert 'aria-checked="true"' in lvl, (
+        "the broadcast level is read from an attribute the picker no longer "
+        "sets, so every announcement would go out as info"
+    )
+    assert "document.addEventListener('keydown',_radioKey)" in _nocomment(SRC), (
+        "the arrow handler is defined and never registered — A6's exact shape"
+    )
+
+
+# ── #84 · the label runs under the icon ─────────────────────────────────────
+
+def test_the_kpi_label_cannot_escape_its_own_box() -> None:
+    """MEASURED, and the register's diagnosis was the wrong way round: the
+    reserve is 4-8px MORE than the icon needs, and adding to it takes room from
+    the thing that is actually overflowing. ORGANIZATIONS is one unbreakable
+    word, and once auto-fit hits its 150px floor the word has no break
+    opportunity and runs out of the padding box under the icon."""
+    lab = _scope(".kpi .face .klabel{")
+    assert "overflow-wrap:break-word" in lab, (
+        "the label can escape its padding box again"
+    )
+    reserve = int(re.search(r"padding-right:(\d+)px", lab).group(1))
+    # recomputed from the icon's own box, not restated: right + width, less the
+    # tightest face padding, is the smallest reserve that clears it.
+    info = _scope(".kpi .kinfo{")
+    right = int(re.search(r"right:(\d+)px", info).group(1))
+    width = int(re.search(r"width:(\d+)px", info).group(1))
+    pad = min(int(re.search(r"padding:\d+px (\d+)px", _scope(".kpi .face{")).group(1)),
+              int(re.search(r'\.kpi \.face\{padding:\d+px (\d+)px',
+                            _css().replace("\n", "")).group(1)))
+    assert reserve >= right + width - pad, (
+        f"the reserve is {reserve}px and the icon needs {right + width - pad}px"
+    )
+    assert reserve <= right + width, (
+        f"the reserve grew to {reserve}px — past what the icon occupies it is "
+        f"only taking width from the label, which is what makes this worse"
+    )
+
+
+# ── #74 · .tag's measured exemption ─────────────────────────────────────────
+
+def test_the_tag_exemption_is_written_down_and_still_true() -> None:
+    """Filed three times. The numbers live in the sheet now, and this recomputes
+    them so the note cannot rot: --neutral-soft is an ALPHA fill, so every
+    figure is against the COMPOSITED surface in both themes."""
+    note = _style_block()[_style_block().index("#74"):]
+    note = note[:note.index("*/")]
+    for phrase in ("1.4.11", "not a control", "does not transfer"):
+        assert phrase.lower() in note.lower(), (
+            f"the exemption does not say {phrase!r} — it has to state WHY, or "
+            f"the next person measuring this re-files it"
+        )
+    scopes = {"dark": _scope(":root{"), "light": _scope('html[data-theme="light"]{')}
+    for theme in ("dark", "light"):
+        m = re.search(r"--neutral-soft:\s*rgba\((\d+),(\d+),(\d+),([\d.]+)\)",
+                      scopes[theme].replace(" ", ""))
+        assert m, f"--neutral-soft stopped being an alpha fill in {theme}"
+        rgb, a = [int(m[i]) for i in (1, 2, 3)], float(m[4])
+        for panel in ("--surf", "--surf2"):
+            p = _token(panel, theme)
+            base = [int(p.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+            fill = "#%02x%02x%02x" % tuple(
+                round(rgb[i] * a + base[i] * (1 - a)) for i in range(3))
+            word = _ratio(_token("--neutral", theme), fill)
+            # the WORD is the figure that has to hold — it is the whole meaning
+            assert word >= 4.5, f"{theme} {panel}: the tag's word is {word:.2f}:1"
+            plate = _ratio(fill, p)
+            assert plate < 3.0, (
+                f"{theme} {panel}: the plate is now {plate:.2f}:1 — if it is "
+                f"loud enough to be a component, it is not exempt any more"
+            )
+            assert ("%.2f" % plate) in note, (
+                f"{theme} {panel}: the note says something other than "
+                f"{plate:.2f}:1 for the fill — the measurement has rotted"
+            )
+
+
+# ── #81 · the pill printed the wire value ───────────────────────────────────
+
+@_G2_SKIP
+def test_no_status_pill_prints_an_underscore() -> None:
+    """not_applicable rendered as NOT_APPLICABLE across eight call sites. RUN
+    over every status this function names, because the class and the text come
+    off the same string and a grep cannot tell which one changed."""
+    r = _run_g2(("opsChip",), """
+function esc(s){ return String(s); }
+R.out={};
+['ok','confirmed','active','warning','stale','pending','never','not_applicable',
+ 'revoked','info','critical','unknown','unavailable','some_new_thing',''
+].forEach(function(s){
+  var h=opsChip(s);
+  R.out[s||'(empty)']={cls:/class="chip ([a-z]+)"/.exec(h)[1],
+                       text:/>([^<]*)</.exec(h)[1]};
+});
+""")
+    out = r["out"]
+    for status, got in out.items():
+        assert "_" in got["text"] and False if "_" in got["text"] else True, (
+            f"{status} still prints as {got['text']!r}"
+        )
+    assert out["not_applicable"]["text"] == "not applicable", out["not_applicable"]
+    assert out["some_new_thing"]["text"] == "some new thing", (
+        "the transform is a special case for one value rather than a rule"
+    )
+    # ⚠ AND THE MEANING IS UNCHANGED. A label map would have moved these.
+    tiers = {"ok": "safe", "confirmed": "safe", "active": "safe",
+             "warning": "warn", "stale": "warn", "pending": "warn",
+             "never": "dim", "not_applicable": "dim", "revoked": "dim",
+             "info": "info", "critical": "bad", "unknown": "bad",
+             "unavailable": "bad", "some_new_thing": "bad", "(empty)": "bad"}
+    for status, cls in tiers.items():
+        assert out[status]["cls"] == cls, (
+            f"{status} changed tier: {out[status]['cls']} instead of {cls} — "
+            f"#81 was about how a status READS, never about what it means"
+        )
+
+
+# ── #33 · the test config's port ────────────────────────────────────────────
+
+def _g2_conftest() -> Path:
+    return Path(__file__).resolve().parents[1] / "backend/tests/integration/conftest.py"
+
+
+def test_the_default_port_is_still_the_one_ci_uses() -> None:
+    """The decision, pinned. 5432 is Postgres's own default and what ci.yml
+    runs; moving it to 5433 would encode one developer's local choice and put
+    the next person on 5432 into the same wall from the other side. The defect
+    was the SILENCE, not the number."""
+    p = _g2_conftest()
+    if not p.exists():
+        pytest.skip("backend conftest not in this checkout")
+    src = p.read_text(encoding="utf-8")
+    m = re.search(r'os\.environ\.setdefault\(\s*"DATABASE_URL",\s*"([^"]+)"', src)
+    assert m, "the DATABASE_URL default is gone"
+    assert ":5432/" in m.group(1), (
+        "the default moved off the port CI uses: " + m.group(1)
+    )
+
+
+def test_a_missing_database_says_which_port_to_try() -> None:
+    """RUN, both branches. The old failure was a wall of OperationalError at
+    the first fixture with no hint that this project's cluster usually lives on
+    5433.
+
+    ⚠ THE SOCKET IS SUBSTITUTED, NOT THE PORT. The first version of this probed
+    a high free port and asserted the message named 5433 — but the alternate is
+    computed from the CONFIGURED port, so on :59999 the code correctly suggests
+    5432 and the guard failed against right behaviour. Worse, probing real
+    ports would make the result depend on what happens to be running on the
+    machine: green on the developer's box, red in CI, for reasons that have
+    nothing to do with the code."""
+    p = _g2_conftest()
+    if not p.exists():
+        pytest.skip("backend conftest not in this checkout")
+    src = p.read_text(encoding="utf-8")
+    m = re.search(r"def _preflight_database_url\(\)[^\n]*\n(?:(?:[ \t].*)?\n)+", src)
+    assert m, "the preflight is gone; a wrong port is silent again"
+    # ⚠ THE CALL, NOT A MENTION OF IT. The first version searched the tail for
+    # the substring and passed with the call commented out — the guard was
+    # reading the `#` line that disabled it. A6's shape, found by mutation.
+    assert re.search(r"(?m)^_preflight_database_url\(\)\s*$", src), (
+        "the preflight is defined and never called at module level"
+    )
+
+    def run(url: str, listening: set) -> str:
+        ns = {}
+        exec("import os\nfrom urllib.parse import urlsplit\n"
+             + m.group(0).replace('os.environ["DATABASE_URL"]', "URL"), ns)
+        ns["URL"] = url
+        tried = []
+
+        class _Sock:
+            @staticmethod
+            def create_connection(addr, timeout=None):
+                tried.append(addr[1])
+                if addr[1] not in listening:
+                    raise OSError("refused")
+
+                class _C:
+                    def close(self):
+                        pass
+                return _C()
+        ns["socket"] = _Sock
+        try:
+            ns["_preflight_database_url"]()
+            return "" if 5432 in listening or 5433 in listening else "SILENT"
+        except RuntimeError as e:
+            return str(e)
+        finally:
+            assert tried, "the preflight never opened a socket at all"
+
+    url32 = "postgresql+psycopg://foxy:foxy@localhost:5432/foxy_pytest"
+    # the case the register describes: the developer's cluster is on 5433
+    msg = run(url32, {5433})
+    assert "localhost:5432" in msg, "the message does not name what it tried"
+    assert "DATABASE_URL" in msg, "the message does not name the knob to turn"
+    assert "5433" in msg, (
+        "nothing on 5432, something on 5433, and the message does not say so — "
+        "which is the entire point of the change"
+    )
+    assert "5433/foxy_pytest" in msg, "the message does not hand over a runnable line"
+    # nothing anywhere: still one sentence, and it must not claim 5433 is up
+    msg = run(url32, set())
+    assert "Nothing is listening" in msg and "start Postgres" in msg, msg
+    # and the happy path stays silent
+    assert run(url32, {5432}) == "", "a reachable database still raises"

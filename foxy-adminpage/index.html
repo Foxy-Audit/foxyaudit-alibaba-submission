@@ -623,7 +623,36 @@ html[data-theme="light"] .pg-wm{opacity:.06}
 .kpi .face .klabel,.kpi .face .kval,.kpi .face .kfoot{color:var(--foxink)}
 .kpi .gly{width:38px;height:38px;display:block;
   color:var(--foxink);pointer-events:none}
-.kpi .face .klabel{padding-right:44px}
+/* ── G2 · #84 · THE LABEL RUNS UNDER THE ICON, AND THE RESERVE IS NOT WHY ───
+   MEASURED, and the register's diagnosis is the wrong way round. The reserve
+   is not ~4px short — it is already 4-8px MORE than the icon needs:
+
+     .kinfo sits right:11px, width:42px, so it occupies 11..53px from the
+     face's right edge. .klabel's own right edge is inset by the face padding,
+     17px comfortable / 13px compact, so the reserve has to cover 53-17=36px
+     and 53-13=40px. It reserves 44. ADDING to it would make this worse, by
+     taking room away from the thing that is actually overflowing.
+
+   What happens instead: ORGANIZATIONS is one unbreakable word at 9.5px with
+   1.2px tracking, and .kpis is repeat(auto-fit,minmax(150px,1fr)). Once a
+   column reaches its 150px floor the word no longer fits its line, has no
+   break opportunity, and runs straight out of the padding box and under the
+   icon. Measured in a sized container, longest label, both densities:
+
+     container   face      ORGANIZATIONS overflows   gap to the icon
+       316px     144.8px        16.7px                   -8.7px
+       332px     152.8px         8.7px                   -0.7px
+       700px     157.8px         3.7px                   +4.3px
+
+   ⚠ AND IT IS NOT A 375px BUG. At 375px the grid gives two 174px columns and
+   nothing collides. The worst case is a WIDE viewport, where auto-fit packs
+   four columns at the 150px floor. Chasing this at the phone breakpoint would
+   have measured the one width where it does not happen.
+
+   So the fix is at the overflow, not the reserve. break-word only breaks a
+   word that cannot fit its line alone, so every label that fits today is
+   untouched and the one that does not now wraps instead of escaping. */
+.kpi .face .klabel{padding-right:44px;overflow-wrap:break-word}
 
 /* ── R1 · THE GLYPH *IS* THE (i) ───────────────────────────────────────────
    ⚠ THE DEFECT THIS RULE EXISTS TO PREVENT: two icons in one 38px box. The
@@ -920,7 +949,41 @@ html[data-theme="light"] .pg-wm{opacity:.06}
    and a confidence THRESHOLD wore an info pill. Amber that means "senior staff"
    in one column and "look at this" in the next teaches staff to ignore amber.
    Plan tier, role, site, enforcement mode, quota and "you" are labels, not
-   states; they take this. --neutral / --neutral-soft already existed for it. */
+   states; they take this. --neutral / --neutral-soft already existed for it.
+
+   ── G2 · #74 · THE MEASURED EXEMPTION, WRITTEN DOWN ─────────────────────────
+   Filed three times now, so the numbers live here rather than being re-derived
+   by whoever next runs a contrast pass. --neutral-soft is an ALPHA fill, so
+   every figure below is against the COMPOSITED surface, both panels, both
+   themes — measuring the rgba() itself reports a colour nobody sees:
+
+                         fill vs panel   ring vs panel   WORD vs fill
+     dark  on --surf        1.21:1          2.05:1          6.62:1
+     dark  on --surf2       1.22:1          2.07:1          6.36:1
+     light on --surf        1.16:1          1.69:1          5.93:1
+     light on --surf2       1.16:1          1.69:1          6.15:1
+
+   The fill and the ring are both under 3:1 and that is DELIBERATE, on the same
+   argument .chip.dim already makes for its sub-3:1 mark:
+
+   1.4.11 governs "user interface components and graphical objects required to
+   understand the content". A .tag is neither. It is not a control — nothing on
+   this surface makes one clickable — and it carries NO STATE. It is a category
+   label whose entire meaning is the word inside it: PRO, SUPERADMIN, ADMIN,
+   BLOCK, MARKETING. Lose the plate completely and the sentence is unchanged;
+   that is the test this passes and a status chip would fail. The word itself
+   clears AA everywhere at 5.93-6.62:1, which is the figure that has to hold.
+
+   R2's vocabulary says the same thing from the other side: hue answers WHICH
+   state and weight answers WHETHER it is the expected one. A tag answers
+   neither question, so it is deliberately the quietest thing on the row — a
+   3:1 plate would make every plan tier compete with the statuses beside it,
+   which is the exact defect the component was created to fix.
+
+   ⚠ THIS EXEMPTION DOES NOT TRANSFER. It covers .tag and nothing else. The
+   moment a tag becomes clickable, or starts carrying a state, it is a control
+   and 3:1 applies. Zero code changed here — the value is that the next person
+   measuring this surface stops re-filing it. */
 .tag{
   display:inline-flex;align-items:center;gap:var(--s-1);
   font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.5px;
@@ -1294,6 +1357,30 @@ input[type="checkbox"]:checked::after{
 input[type="radio"]:checked::after{
   content:'';position:absolute;inset:3px;border-radius:50%;background:var(--on-pri);
 }
+/* ── G2 · #67 · A 17px BOX WITH A 24px TARGET ──────────────────────────────
+   WCAG 2.5.8 asks for 24x24 CSS px. The visible box stays 17px on purpose:
+   growing it would move the label, the row and the gap in every form on the
+   surface. The TARGET grows instead, which is the move this file already
+   makes twice — A0's coarse-pointer rescue and C4's .fpill-x at the
+   breakpoint. A pseudo-element is part of its originating element for hit
+   testing, so this is a real target and not a decoration.
+
+   ⚠ BOTH PSEUDOS ARE NOW SPOKEN FOR. ::after draws the tick and the radio
+   dot, so the hit area takes ::before. Anything that needs a third layer here
+   has to add an element.
+
+   24px centred on a 17px box bleeds 3.5px per side, and the two places these
+   sit next to something (.voxswitch's label row and the filter rows) both use
+   an 8px gap, so no two targets overlap. ::before paints under ::after, and
+   it has no background, so the tick is unaffected. */
+input[type="checkbox"]::before,input[type="radio"]::before{
+  content:'';position:absolute;left:50%;top:50%;width:24px;height:24px;
+  transform:translate(-50%,-50%);
+}
+/* .voxswitch's input is the visually-hidden 0x0 one behind the track — the
+   whole <label> is already the target, and a 24px pseudo on a zero-sized box
+   would put a stray hit area over the words beside it. */
+.voxswitch input[type="checkbox"]::before,.voxswitch input[type="radio"]::before{content:none}
 input[type="checkbox"]:focus-visible,input[type="radio"]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 input[type="checkbox"]:disabled,input[type="radio"]:disabled{opacity:.45;cursor:not-allowed}
 /* native date / time inputs — the field uses .cin; theme the OS picker trigger to match */
@@ -1354,7 +1441,17 @@ input::-webkit-calendar-picker-indicator:hover{opacity:1;background:var(--surf3)
 .segmented{display:inline-flex;gap:4px;padding:4px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-sm)}
 .segbtn{font-family:var(--disp);font-weight:600;font-size:12px;color:var(--muted);background:none;border:1px solid transparent;border-radius:var(--r-xs);padding:7px 16px;min-height:38px;cursor:pointer;transition:background var(--dur) ease,color var(--dur) ease,box-shadow var(--dur) ease}
 .segbtn:hover{color:var(--ink)}
-.segbtn[aria-pressed="true"]{background:linear-gradient(150deg,var(--fox-hi),var(--fox));color:var(--on-pri);box-shadow:var(--clay-press)}
+/* ⚠ TWO ATTRIBUTES, ONE STATE. G2 (#90) turned the three single-select groups
+   into real radiogroups, and a role="radio" carries aria-checked, not
+   aria-pressed — a toggle-button attribute on a radio is invalid and is
+   announced wrong. #o3Tabs stays on aria-pressed: it is a tab bar, its shipped
+   guard requires six aria-pressed buttons, and A2 already tried and rejected
+   the tab-list role there. Both spellings paint the same, deliberately.
+   .segmented.opsnav is untouched either way — it keys off aria-current.
+   (The role is not spelled out above: A2's guard greps raw SRC for that string
+   and _nocomment strips only HTML comments, so writing it here in CSS prose
+   fails a guard about the markup. This file carries the same note elsewhere.) */
+.segbtn[aria-pressed="true"],.segbtn[aria-checked="true"]{background:linear-gradient(150deg,var(--fox-hi),var(--fox));color:var(--on-pri);box-shadow:var(--clay-press)}
 /* A5. The inbox filter row is six of these in a 300px rail, so it does need a
    smaller step — but it was taking one as five inline declarations written by
    renderInboxFilters, which made it an undeclared sixth size AND put it out of
@@ -1915,6 +2012,98 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
      in anyway — and a capture at any moment inside that window shows them
      blank. Reduced motion means no stagger, not a stagger played instantly. */
   *,*::before,*::after{animation-duration:.001ms !important;animation-delay:0s !important;animation-iteration-count:1 !important;transition-duration:.001ms !important;scroll-behavior:auto !important}
+}
+
+/* ════════ G2 · #63 · WINDOWS HIGH CONTRAST ════════════════════════════════
+   There was no forced-colors block anywhere in this file, on a surface whose
+   entire design language is soft-UI shadow — and forced-colors DROPS
+   box-shadow outright and forces every background and border colour to the
+   user's own palette. PRODUCT.md names this as the console's known a11y gap.
+
+   THE CENSUS, done rule by rule rather than by grepping `border:0` — three
+   distinct failure classes, and the register's list of nine is only the first:
+
+   A · border:0 / border:none — no boundary survives at all (10):
+       .pager button · .kpi .kinfo · .pw-eye · .sens-btn · .fpill-x ·
+       .fpill-clear · .rowlink · .linklike · .annbar .x · .tag
+       (.annbar .x and .sens-btn are not on the register's list.)
+
+   B · NO border declaration at all — the class a `border:0` grep cannot see,
+       and the one the register correctly guessed it had missed (9):
+       .fauxselect-trigger · .fauxselect-opt · .cmdk-item · .notif-item ·
+       .dock-badge · .topbadge · .kpi .face · .pwm-seg · .qmeter-t
+
+   C · border:1px solid transparent — THE WORST OF THE THREE, and on nothing
+       the register names. forced-colors replaces border COLOURS but leaves
+       `transparent` transparent, so these keep a border that cannot be seen
+       while losing the background and shadow that carried their state:
+       .dock-item (the active nav item) · .segbtn (the selected segment).
+       Both go completely indistinguishable from their unselected siblings.
+
+   AND ONE THAT NEEDED NOTHING. .chip is fine as shipped: R2 rebuilt it as a
+   margin mark with `border-left:3px`, forced-colors preserves border WIDTHS
+   and only replaces their colour, so the mark survives. Adding a full border
+   would rebuild the exact pill R2 deleted. What it does lose is the tier —
+   safe/info/warn/bad differ ONLY by border-left-color, so all four collapse to
+   one colour — and that is already covered: R2's rule is that the WORD carries
+   the tier, guarded by test_no_tier_is_carried_by_colour_alone.
+
+   ⚠ SYSTEM KEYWORDS, NOT TOKENS. Inside this block the palette belongs to the
+   user, so every colour here is a CSS system colour. A var(--fox) in here
+   would either be ignored or paint a colour the user has explicitly opted out
+   of. ButtonBorder draws an edge, CanvasText draws ink, and Highlight /
+   HighlightText are the only honest way to say "this one is selected".
+
+   ⚠ NO forced-color-adjust ANYWHERE. Opting an element out of the mode opts
+   the user out of their own accessibility setting.
+
+   ⚠ ui-ux-pro-max HAS NOTHING ON THIS. Queried for forced-colors, high
+   contrast, system colour keywords and SC 1.4.11 target sizing: zero matches
+   across its ux guidelines and every reference file. Its accessibility
+   coverage stops at contrast ratios, alt text, focus rings and tab order. So
+   the rules below come from CSS Color Adjustment 1 and WCAG directly, and that
+   is stated rather than dressed up as a database result. */
+@media (forced-colors: active){
+  /* A + B · give every control that draws its own edge an edge that survives. */
+  .btn,.pager button,.topbtn,.dock-item,.segbtn,.cin,.fauxselect-trigger,
+  .fauxselect-opt,.cmdk-item,.notif-item,.kpi .kinfo,.pw-eye,.sens-btn,
+  .fpill-x,.fpill-clear,.rowlink,.linklike,.annbar .x,.tag,
+  .dock-badge,.topbadge,.voxswitch-track{
+    border:1px solid ButtonBorder;
+  }
+  /* .kpi .face is the card's whole coloured plate and .clay is the card — one
+     boundary between them, not two nested ones. */
+  .kpi .face{border:1px solid ButtonBorder}
+  /* C · every SELECTED state, which is the half that goes silent. Each of
+     these said "this one" with a gradient and a shadow, and has nothing left
+     once both are dropped. */
+  .segbtn[aria-checked="true"],.segbtn[aria-pressed="true"],
+  .segmented.opsnav .segbtn[aria-current="page"],
+  .dock-item.active,.fauxselect-opt.sel,.inbox-row.on,.notif-item.unread,
+  .pager button[aria-current="page"]{
+    background:Highlight;color:HighlightText;border-color:Highlight;
+  }
+  /* the checkbox tick already survives — ::after is a BORDER, so it is
+     recoloured rather than dropped. The radio dot is a BACKGROUND and
+     disappears, which makes a chosen radio identical to an unchosen one. */
+  input[type="checkbox"]:checked,input[type="radio"]:checked{
+    background:Highlight;border-color:Highlight;
+  }
+  input[type="checkbox"]:checked::after{border-color:HighlightText}
+  input[type="radio"]:checked::after{background:HighlightText}
+  /* the switch travels, but only its FILL said which end it was at. */
+  .voxswitch-knob{background:CanvasText}
+  .voxswitch input:checked + .voxswitch-track{background:Highlight}
+  .voxswitch input:checked + .voxswitch-track .voxswitch-knob{background:HighlightText}
+  /* meters and bars are pure fill; without an edge they read as empty track. */
+  .pwm-seg,.qmeter-t,.qmeter-t i,.funbar i{border:1px solid CanvasText}
+  /* the modal scrim is a translucent wash that forced-colors flattens, so the
+     dialog needs to state its own edge or it merges with the page behind it. */
+  .modal-card,.cmdk,.clay{border:1px solid CanvasText}
+  /* .cmdk-in has border:none and is the only field in the palette. */
+  .cmdk-in{border:1px solid ButtonBorder}
+  /* focus has to stay findable when every fill is the same colour. */
+  :focus-visible{outline:2px solid CanvasText;outline-offset:2px}
 }
 </style>
 </head>
@@ -2641,7 +2830,7 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
           <h2 class="sr-only" id="inboxPaneLab">Messages</h2>
           <label class="sr-only" for="inboxSearch">Search messages</label>
           <input class="cin" id="inboxSearch" placeholder="Search sender, subject, message…" oninput="renderInboxList()" style="margin-bottom:8px;">
-          <div id="inboxFilters" role="group" aria-label="Filter messages" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+          <div id="inboxFilters" role="radiogroup" aria-label="Filter messages" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
           <!-- Offered, never performed: the poller finds out the list is stale
                and says so here. Reloading a list somebody is reading yanks the
                row out from under them. Hidden until there is something to say. -->
@@ -2822,9 +3011,11 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
           <div class="panel-h"><div><div class="eyebrow">local · this browser</div><div class="panel-t">Appearance</div></div></div>
           <label class="voxswitch" style="margin-bottom:14px;"><input type="checkbox" id="darkModeToggle" onchange="setTheme(this.checked?'dark':'light')"><span class="voxswitch-track"><span class="voxswitch-knob"></span></span><span>dark mode</span></label>
           <div class="flabel">table density</div>
-          <div class="segmented" role="group" aria-label="Table density">
-            <button type="button" class="segbtn" data-density-opt="comfortable" aria-pressed="true" onclick="setDensity('comfortable')">Comfortable</button>
-            <button type="button" class="segbtn" data-density-opt="compact" aria-pressed="false" onclick="setDensity('compact')">Compact</button>
+          <!-- G2 · #90 · a radiogroup, with the roving tabindex that implies:
+               one tab stop for the group, arrows move AND select. -->
+          <div class="segmented" id="densityPick" role="radiogroup" aria-label="Table density">
+            <button type="button" class="segbtn" role="radio" data-density-opt="comfortable" aria-checked="true" tabindex="0" onclick="setDensity('comfortable')">Comfortable</button>
+            <button type="button" class="segbtn" role="radio" data-density-opt="compact" aria-checked="false" tabindex="-1" onclick="setDensity('compact')">Compact</button>
           </div>
         </div>
         <div class="clay pad">
@@ -2868,10 +3059,10 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
           <label class="flabel" style="margin-top:0;" for="bcTitle">title</label><input class="cin" id="bcTitle" placeholder="Scheduled maintenance">
           <label class="flabel" for="bcBody">message</label><textarea class="cin" id="bcBody" style="min-height:70px;resize:vertical;" placeholder="What's happening and when…"></textarea>
           <div class="flabel">level</div>
-          <div class="segmented" id="bcLevel" role="group" aria-label="Level">
-            <button type="button" class="segbtn" data-level="info" aria-pressed="true" onclick="_segPick(this)">info</button>
-            <button type="button" class="segbtn" data-level="warning" aria-pressed="false" onclick="_segPick(this)">warning</button>
-            <button type="button" class="segbtn" data-level="critical" aria-pressed="false" onclick="_segPick(this)">critical</button>
+          <div class="segmented" id="bcLevel" role="radiogroup" aria-label="Level">
+            <button type="button" class="segbtn" role="radio" data-level="info" aria-checked="true" tabindex="0" onclick="_segPick(this)">info</button>
+            <button type="button" class="segbtn" role="radio" data-level="warning" aria-checked="false" tabindex="-1" onclick="_segPick(this)">warning</button>
+            <button type="button" class="segbtn" role="radio" data-level="critical" aria-checked="false" tabindex="-1" onclick="_segPick(this)">critical</button>
           </div>
           <label class="sub mono" style="display:flex;gap:6px;align-items:center;margin-top:10px;cursor:pointer;font-size:11px;"><input type="checkbox" id="bcEmail"> also email all active staff</label>
           <button class="btn pri" style="margin-top:12px;" onclick="sendBroadcast()">Post announcement</button>
@@ -3875,7 +4066,21 @@ function opsChip(status){
      been switched off is an absence, and absence must not shout in a status hue.
      Caught by rendering the page, not by reading it. */
   const cls=s==='ok'||s==='confirmed'||s==='active'?'safe':s==='warning'||s==='stale'||s==='pending'?'warn':s==='never'||s==='not_applicable'||s==='revoked'?'dim':s==='info'?'info':s==='critical'?'bad':'bad';
-  return `<span class="chip ${cls}">${esc(s)}</span>`;
+  /* G2 · #81: the pill printed the wire value. `not_applicable` rendered as
+     NOT_APPLICABLE across eight call sites — health, the worker, the anchor
+     wallet, every anchor row, alerts, campaigns, org360's last anchor and
+     opsCheck.
+
+     ⚠ THE UNDERSCORE IS REPLACED, NOTHING IS RENAMED. A label map would
+     change what a status READS AS on pages A3 did not own, and there is no
+     way to check a rewording against a status whose exact wire value is the
+     only thing anyone has agreed on. Of the eleven values this function names
+     — ok, confirmed, active, warning, stale, pending, never, not_applicable,
+     revoked, info, critical — exactly one contains an underscore, and every
+     other one is already an English word. So the transform is mechanical, it
+     covers whatever the API adds next, and it cannot alter a meaning.
+     The CLASS is still chosen from the raw value above, untouched. */
+  return `<span class="chip ${cls}">${esc(s.replace(/_/g,' '))}</span>`;
 }
 function opsCheck(label,value,detail,neutral){
   /* `neutral` renders the value as a .tag instead of a status .chip, for a row
@@ -4214,7 +4419,11 @@ function renderInboxFilters(){
   /* .segbtn.xs rather than five inline declarations overriding the shared
      control. The inline set was a sixth, undeclared size of the console's
      segmented button, and it beat the coarse-pointer rescue rule. */
-  el.innerHTML=defs.map(d=>'<button class="segbtn xs" type="button" aria-pressed="'+(INBOX_FILTER===d[0]?'true':'false')+'" onclick="INBOX_FILTER=\''+d[0]+'\';renderInboxFilters();renderInboxList()">'+d[1]+' <b style="opacity:.65;">'+(c[d[0]]||0)+'</b></button>').join('');
+  /* role="radio" + aria-checked + the roving tabindex, re-emitted on every
+     render because this function rewrites its own container (#90). The arrow
+     handler is delegated, so nothing has to be re-bound here. */
+  el.innerHTML=defs.map(d=>{const on=INBOX_FILTER===d[0];
+    return '<button class="segbtn xs" type="button" role="radio" aria-checked="'+(on?'true':'false')+'" tabindex="'+(on?'0':'-1')+'" onclick="INBOX_FILTER=\''+d[0]+'\';renderInboxFilters();renderInboxList()">'+d[1]+' <b style="opacity:.65;">'+(c[d[0]]||0)+'</b></button>'}).join('');
 }
 /* Bound by delegation on the list, not per row. It used to be an onkeydown
    attribute on every row, and openMessage rewrites the list's innerHTML — so
@@ -4612,7 +4821,8 @@ function loadSettings(){
   loadSessions();
   $('darkModeToggle').checked=document.documentElement.dataset.theme==='dark';
   const dn=document.documentElement.dataset.density||'comfortable';
-  document.querySelectorAll('[data-density-opt]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.densityOpt===dn?'true':'false'));
+  const dg=$('densityPick');
+  if(dg)_radioSet(dg,dg.querySelector('[data-density-opt="'+dn+'"]'));
   const mfaOn=!!(ME&&ME.mfa_enabled);
   $('setMfaBtns').innerHTML=mfaOn
     ? '<button class="btn sm" onclick="mfaDisable()">Disable MFA</button> <span class="chip safe">MFA on</span>'
@@ -5898,7 +6108,73 @@ function openModal(opts){
 }
 function closeModal(){ $('fxmodal').classList.remove('on'); $('fxmodalBody').innerHTML=''; $('fxmodalFoot').innerHTML=''; _modalOnOpen=null; }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('fxmodal').classList.contains('on'))closeModal(); });
-function _segPick(el){ const p=el.closest('.segmented'); if(p)p.querySelectorAll('.segbtn').forEach(b=>b.setAttribute('aria-pressed',b===el?'true':'false')); }
+/* ── G2 · #90 · THE SINGLE-SELECT PICKERS ARE RADIOGROUPS ───────────────────
+   Three groups on this surface are single-select and were announcing as a
+   generic role="group" of aria-pressed toggles: the announcement level, the
+   table density, and the inbox filters. A screen reader could not say "2 of 3"
+   and arrow keys did nothing, so every option was its own tab stop.
+
+   ⚠ role="radio" IS A PROMISE AND IT IS KEPT IN FULL HERE. Arrows move AND
+   select, Home/End jump to the ends, both axes work, selection wraps, and the
+   group is ONE tab stop because aria-checked and tabindex are set together and
+   never apart. A group that announced as radios without those would be a
+   broken promise rather than a missing feature — worse than leaving it alone.
+
+   ⚠ THE THIRD GROUP IS NOT THE ONE THE REGISTER NAMES. There is no role
+   picker: #setRole is a readonly display of the signed-in staff member's own
+   role, and new-staff role is a .fauxselect combobox. The third single-select
+   aria-pressed group is #inboxFilters. #o3Tabs is deliberately NOT converted —
+   it is a tab bar, not a picker.
+
+   ⚠ DELEGATED, NOT PER-BUTTON. renderInboxFilters replaces its own innerHTML
+   on every pick, and this file has already paid once for a handler bound to
+   elements that get destroyed (see the inbox arrow-key note). */
+function _radioSet(group,el){
+  if(!group)return;
+  [].slice.call(group.querySelectorAll('[role="radio"]')).forEach(function(b){
+    const on=b===el;
+    b.setAttribute('aria-checked',on?'true':'false');
+    /* Together, always. Two tab stops is not a radiogroup and none is
+       unreachable. */
+    b.tabIndex=on?0:-1;
+  });
+}
+function _segPick(el){
+  const rg=el.closest('[role="radiogroup"]');
+  if(rg){ _radioSet(rg,el); return; }
+  /* #o3Tabs and any other aria-pressed .segmented keeps its old behaviour. */
+  const p=el.closest('.segmented');
+  if(p)p.querySelectorAll('.segbtn').forEach(b=>b.setAttribute('aria-pressed',b===el?'true':'false'));
+}
+/* Named, not an anonymous listener: a guard can only drive what it can slice by
+   name, and a probe anchored to "the block after _segPick" changes subject the
+   first time something is inserted there. */
+function _radioKey(e){
+  if(e.altKey||e.ctrlKey||e.metaKey)return;
+  const r=e.target&&e.target.closest?e.target.closest('[role="radio"]'):null;
+  if(!r)return;
+  const g=r.closest('[role="radiogroup"]'); if(!g)return;
+  const items=[].slice.call(g.querySelectorAll('[role="radio"]'));
+  const i=items.indexOf(r); let n=-1;
+  if(e.key==='ArrowRight'||e.key==='ArrowDown')n=(i+1)%items.length;
+  else if(e.key==='ArrowLeft'||e.key==='ArrowUp')n=(i-1+items.length)%items.length;
+  else if(e.key==='Home')n=0;
+  else if(e.key==='End')n=items.length-1;
+  else return;
+  e.preventDefault();
+  /* click(), not a bespoke select: each group's onclick is the only thing that
+     knows what choosing means for it — setDensity writes localStorage,
+     renderInboxFilters re-renders the list. Arrows moving without selecting
+     would be the tab-bar contract, not the radio one. */
+  items[n].click();
+  /* The handler may have replaced the group's contents, so the element to
+     focus is looked up again by position rather than held across the call —
+     otherwise focus lands on a detached node and arrow keys die on first use. */
+  const g2=g.id?document.getElementById(g.id):g;
+  const after=g2?[].slice.call(g2.querySelectorAll('[role="radio"]')):[];
+  (after[n]||items[n]).focus();
+}
+document.addEventListener('keydown',_radioKey);
 
 /* org lifecycle */
 async function _doSuspend(id,btn){
@@ -6143,7 +6419,8 @@ function setDensity(d){
   if(d!=='compact')d='comfortable';
   document.documentElement.dataset.density=d;
   try{localStorage.setItem('foxy_admin_density',d)}catch(e){}
-  document.querySelectorAll('[data-density-opt]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.densityOpt===d?'true':'false'));
+  const g=$('densityPick');
+  if(g)_radioSet(g,g.querySelector('[data-density-opt="'+d+'"]'));
 }
 /* The Settings self-activity card was removed (round-2 item 9). Its endpoint,
    GET /admin/v1/auth/activity, is left in place: it is still covered by
@@ -6428,7 +6705,10 @@ async function saveConfig(){
 async function sendBroadcast(){
   const title=$('bcTitle').value.trim(), body=$('bcBody').value.trim();
   if(!title||!body){ toast('title and message are required','warn'); return; }
-  const lvlBtn=document.querySelector('#bcLevel .segbtn[aria-pressed="true"]');
+  /* aria-checked since #90 turned this into a radiogroup. Read as either, so a
+     future group that has not been converted still reports its level rather
+     than silently falling back to info. */
+  const lvlBtn=document.querySelector('#bcLevel .segbtn[aria-checked="true"],#bcLevel .segbtn[aria-pressed="true"]');
   const level=lvlBtn?lvlBtn.dataset.level:'info';
   const email_staff=$('bcEmail').checked;
   let r; try{ r=await api('/admin/v1/broadcast',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title,body,level,email_staff})}); }catch(e){ r=null; }
