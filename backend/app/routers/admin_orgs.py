@@ -72,6 +72,17 @@ class OrgListItem(BaseModel):
     #: worker.py::_org_history and /v1/usage
     #: (test_usage_reports_days_older_than_the_rollup_window).
     usage_this_month: int = 0
+    #: G3 · #71 · WHEN THIS TENANT LAST CAPTURED ANYTHING. The eleven fields
+    #: above describe what a workspace IS — plan, subscription, access, contact.
+    #: None of them answers "is something wrong with it", which is the question
+    #: the orgs list exists to answer, so the console had to open each tenant in
+    #: turn to find out.
+    #:
+    #: MAX(created_at) over `audit_logs`, per org. NULL means the workspace has
+    #: never captured a single event — a REAL state and a different fact from
+    #: "quiet", which is why it is null here rather than an epoch or a zero.
+    #: Serialised UTC ISO like every other timestamp on this list.
+    last_event_at: str | None = None
 
 
 class OrgDetail(OrgListItem):
@@ -99,7 +110,7 @@ class PlanRequest(BaseModel):
     payment_reference: str | None = Field(default=None, max_length=128)
 
 
-def _list_item(o: Organization, usage: int = 0) -> OrgListItem:
+def _list_item(o: Organization, usage: int = 0, last_event=None) -> OrgListItem:
     return OrgListItem(
         id=str(o.id), name=o.name, plan_tier=o.plan_tier,
         subscription_status=o.subscription_status, suspended=bool(o.suspended),
@@ -108,6 +119,7 @@ def _list_item(o: Organization, usage: int = 0) -> OrgListItem:
         approval_status=o.approval_status,
         monthly_log_quota=o.monthly_log_quota,
         usage_this_month=usage,
+        last_event_at=_iso(last_event),
     )
 
 
@@ -119,10 +131,50 @@ def list_organizations(
 ):
     """All tenants (staff cross-org view). Soft-deleted orgs are hidden unless
     include_deleted=true so staff can still audit an offboarded tenant."""
-    stmt = select(Organization).order_by(Organization.created_at.desc())
+    # G3 · #71 · LAST EVENT SEEN, as a correlated scalar on the SAME statement.
+    # One round trip, no N+1, and — measured, not assumed — the only shape that
+    # does not read the whole ledger.
+    #
+    # C3.1 learned this once already (its DISTINCT was 77x slower than driving
+    # from `organizations`), and the gap is far wider for a MAX. Synthetic bench
+    # at the real distribution, 1,505,000 events over 40 orgs, five with none,
+    # PostgreSQL 18.4, EXPLAIN (ANALYZE, BUFFERS):
+    #
+    #   A  SELECT org_id, max(created_at) FROM audit_logs GROUP BY org_id
+    #        Parallel Seq Scan over all 1.5M rows — BEFORE and AFTER VACUUM
+    #        158 ms cold · 132-137 ms warm
+    #   B  this one, correlated from organizations
+    #        Index Only Scan Backward using ix_audit_logs_org_created,
+    #        Index Searches: 40, Heap Fetches: 35 -> 0 after VACUUM
+    #        1.8 ms cold · 0.18-0.29 ms warm
+    #
+    # ~470-750x warm. And the reason is structural rather than lucky: a bare
+    # GROUP BY has no predicate to seek with, so the planner never uses the
+    # index and the cost scales with EVENT count. B does one backward seek per
+    # ORG and stops at the first row, so its cost scales with tenant count —
+    # forty seeks whether the ledger holds a thousand rows or a billion.
+    #
+    # ⚠ Heap Fetches is still the number to watch, and it behaves better here
+    # than in C3.1's case: unvacuumed it was 35, one per org, not one per event.
+    # A vacuum stall makes this slower by a bounded amount rather than flipping
+    # it to a different plan.
+    #
+    # RLS: reads `audit_logs` cross-org, exactly like the month count below and
+    # under exactly the same posture — see that comment. Under the confined
+    # `foxy_app` role every org would report "never captured" rather than
+    # erroring, which on this column would read as an alarm rather than a
+    # failure. No new posture is introduced here.
+    last_event = (
+        select(func.max(AuditLog.created_at))
+        .where(AuditLog.org_id == Organization.id)
+        .correlate(Organization)
+        .scalar_subquery()
+    )
+    stmt = select(Organization, last_event.label("last_event_at")).order_by(
+        Organization.created_at.desc())
     if not include_deleted:
         stmt = stmt.where(Organization.deleted_at.is_(None))
-    orgs = db.execute(stmt).scalars().all()
+    rows = db.execute(stmt).all()
 
     # C3.1 · ONE grouped count for every row, over the LEDGER. This list is
     # unpaginated server-side — the console holds all of it in ORGS_ALL and
@@ -169,7 +221,7 @@ def list_organizations(
             .group_by(AuditLog.org_id)
         ).all()
     }
-    return [_list_item(o, used.get(o.id, 0)) for o in orgs]
+    return [_list_item(o, used.get(o.id, 0), last) for o, last in rows]
 
 
 @router.get("/v1/organizations/{org_id}", response_model=OrgDetail)

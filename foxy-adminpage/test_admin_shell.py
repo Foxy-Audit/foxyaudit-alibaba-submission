@@ -2515,11 +2515,13 @@ def test_the_org_list_is_not_left_on_its_loading_placeholder() -> None:
         "the org table changes silently"
     )
     body = _js_func("loadOrgs")
-    # SEVEN since C3 added the quota meter beside Plan. A fault row spanning the
-    # wrong count is invisible until the table is actually empty, which is why
-    # this is pinned to a number rather than to "some colspan".
-    assert "faultRow(7," in body, (
-        "the org table's failure path does not fill its own seven columns"
+    # SEVEN since C3 added the quota meter beside Plan; EIGHT since G3 added
+    # Last event. A fault row spanning the wrong count is invisible until the
+    # table is actually empty, which is why this is pinned to a number rather
+    # than to "some colspan" — and why it is RE-AIMED at the new width rather
+    # than loosened to accept any.
+    assert "faultRow(8," in body, (
+        "the org table's failure path does not fill its own eight columns"
     )
 
 
@@ -5303,25 +5305,38 @@ def test_the_meter_is_built_from_the_measured_tokens() -> None:
 
 
 def test_every_empty_state_on_the_org_table_spans_its_new_width() -> None:
-    """The table went from six columns to seven, and a stale colspan is
-    invisible until the table is actually empty -- which for three of these five
-    is the state a staff member hits on their first visit.
+    """The table went six -> seven (C3's quota meter) -> EIGHT (G3's Last
+    event), and a stale colspan is invisible until the table is actually empty
+    -- which for three of these five is the state a staff member hits on their
+    first visit.
 
     FIVE sites, not three: the loading row that ships in the markup and the
     faultRow() call are both easy to miss because neither looks like an empty
     state in the source.
+
+    ⚠ RE-AIMED, NOT LOOSENED. The obvious repair when a column lands is to stop
+    naming a number, and a guard that accepts "some colspan" is the C4 failure:
+    it checks that a token is present rather than that it is right, and every
+    one of these five could then drift to a different width and stay green.
     """
     mk = _nocomment(SRC)
     tbody = mk[mk.index('<tbody id="orgRows"'):]
     tbody = tbody[:tbody.index("</tbody>")]
-    assert 'colspan="7"' in tbody, "the shipped loading row still spans six"
+    assert 'colspan="8"' in tbody, "the shipped loading row still spans seven"
     body = _js_func("renderOrgs")
-    assert body.count('colspan="7"') == 3, (
-        "renderOrgs has %d seven-column empty states, expected 3"
-        % body.count('colspan="7"'))
-    assert 'colspan="6"' not in body, "an empty state still spans the old width"
-    assert "faultRow(7," in _js_func("loadOrgs"), (
-        "the fault row still spans six of seven columns")
+    assert body.count('colspan="8"') == 3, (
+        "renderOrgs has %d eight-column empty states, expected 3"
+        % body.count('colspan="8"'))
+    for stale in ('colspan="6"', 'colspan="7"'):
+        assert stale not in body, "an empty state still spans the old width: " + stale
+    assert "faultRow(8," in _js_func("loadOrgs"), (
+        "the fault row still spans seven of eight columns")
+    # the width has to match what the header actually renders, not a number
+    # somebody remembered -- the two drifted apart once already
+    head = re.search(r'<table class="tbl cardify" id="orgTbl">.*?</thead>', mk, re.S)
+    assert head and head.group(0).count("<th ") == 8, (
+        "the org table renders %d headers against a colspan of 8"
+        % (head.group(0).count("<th ") if head else -1))
 
 
 # ── C4 · the active-filter pill row ──────────────────────────────────────────
@@ -6881,6 +6896,15 @@ def test_the_census_cannot_grow_in_silence() -> None:
         ".tbl.cardify td",   # a DATA CELL under 760px, not a control. It drops
                              # its own edge on purpose so the stacked card reads
                              # as one card; the row carries the separation
+        # G3 · a sort header. It IS a control and it IS borderless, so this
+        # guard did its job by stopping the phase — and the answer is still no
+        # box: eight outlined header labels would be noise and the header row
+        # already carries a border-bottom. Its forced-colors affordance is
+        # covered two other ways, both asserted in
+        # test_the_active_sort_column_survives_forced_colors below: the focus
+        # ring from the block's own :focus-visible rule, and a Highlight
+        # underline plus a Highlight chevron on the ACTIVE column.
+        ".tbl th .sortbtn",
     }
     missing = sorted((borderless | transparent) - known)
     assert not missing, (
@@ -7385,3 +7409,467 @@ def test_a_missing_database_says_which_port_to_try() -> None:
     assert "Nothing is listening" in msg and "start Postgres" in msg, msg
     # and the happy path stays silent
     assert run(url32, {5432}) == "", "a reachable database still raises"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G3 · THE ORGS PAGE ANSWERS "IS THIS TENANT BROKEN"  (register #71, #77)
+#
+# Two halves. #71 is a column whose THREE non-happy states are the design, and
+# most of these guards run _orgLastEvent rather than reading it — the states
+# differ by a comparison each, and a grep for "never captured" passes with the
+# branch unreachable (A7's shape, twice paid for).
+#
+# #77 is the console's first sort. Counted before building: 16 pages, zero
+# aria-sort, zero sort handlers. quick-reference §230 is the only thing the
+# fact base has to say about it and it is the contract these assert.
+#
+# Bodies are read through _g3_bare(): this file explains itself in /* */ prose
+# quoting the very states being asserted, and _js_code strips only `//`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _g3_bare(name: str) -> str:
+    out = re.sub(r"/\*.*?\*/", "", _js_func(name), flags=re.S)
+    return re.sub(r"(?m)^\s*//.*$", "", out)
+
+
+_G3_SKIP = pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+
+#: Enough DOM to run the shipped cell formatter, the sorter and the header
+#: marker. Only the selector forms the code uses are implemented; anything else
+#: throws rather than quietly matching nothing.
+_G3_SHIM = r"""
+var RESET=[], RENDERED=0;
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDay(iso){ if(!iso)return '—';
+  var d=new Date(iso);
+  return d.getUTCFullYear()+'-'+('0'+(d.getUTCMonth()+1)).slice(-2)+'-'+('0'+d.getUTCDate()).slice(-2); }
+function pgReset(k){ RESET.push(k); }
+function renderOrgs(){ RENDERED++; }
+var EL={};
+function $(id){ return EL[id]||null; }
+function Th(col){ return {dataset:{sort:col}, attrs:{},
+  getAttribute:function(k){ return k in this.attrs?this.attrs[k]:null; },
+  setAttribute:function(k,v){ this.attrs[k]=String(v); },
+  removeAttribute:function(k){ delete this.attrs[k]; } }; }
+function mkTable(cols){
+  var ths=cols.map(Th);
+  EL.orgTbl={ querySelectorAll:function(sel){
+    if(sel!=='th[data-sort]') throw new Error('probe DOM cannot match '+sel);
+    return ths; } };
+  return ths;
+}
+function marks(ths){ return ths.map(function(t){
+  return t.dataset.sort+':'+(t.getAttribute('aria-sort')||'-'); }).join(' '); }
+var DAY=86400000;
+function org(o){ return Object.assign({name:'x',usage_this_month:0,
+  created_at:new Date(Date.now()-400*DAY).toISOString(), last_event_at:null}, o); }
+function ago(d){ return new Date(Date.now()-d*DAY).toISOString(); }
+"""
+
+
+def _run_g3(fns: tuple, body: str, consts: str = "") -> dict:
+    import json
+    import os
+    import tempfile
+    probe = (_G3_SHIM + "\n" + consts + "\n"
+             + "\n".join(_js_decl(f) for f in fns)
+             + "\nvar R={};\n" + body + "\nconsole.log(JSON.stringify(R));\n")
+    fd, path = tempfile.mkstemp(suffix=".js")
+    os.close(fd)
+    try:
+        Path(path).write_text(probe, encoding="utf-8")
+        # node writes utf-8 and needs to be decoded as utf-8. (pytest is the
+        # other way round; that harness judges by return code instead.)
+        proc = subprocess.run([shutil.which("node"), path], capture_output=True,
+                              text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    finally:
+        os.unlink(path)
+
+
+def _g3_const(*names: str) -> str:
+    """The shipped `const NAME=…;` declarations, VERBATIM, so a probe cannot
+    drift from the thresholds and column specs the page actually ships.
+
+    ⚠ Two traps, both hit on the first run. Sliced by BRACE BALANCE, not to the
+    first `;` — ORG_SORT_COLS' getters contain semicolons and a naive slice
+    emitted a truncated object that parsed as something else entirely. And
+    DEDUPED by source position, because NEW_ORG_DAYS and QUIET_DAYS share one
+    `const` line and emitting it twice is a redeclaration SyntaxError.
+    """
+    spans = {}
+    for n in names:
+        m = re.search(r"(?m)^(?:const|let)\s+[^;\n]*\b" + re.escape(n) + r"\b", SRC)
+        assert m, "%s is gone" % n
+        i, depth, j = m.start(), 0, m.start()
+        while j < len(SRC):
+            ch = SRC[j]
+            if ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                break
+            j += 1
+        spans[i] = SRC[i:j + 1]
+    return "\n".join(spans[k] for k in sorted(spans))
+
+
+# ── #71 · the column, and its states ────────────────────────────────────────
+
+def test_the_orgs_table_gained_the_column_that_answers_the_question() -> None:
+    """Seven columns described what a workspace IS. None of them said whether
+    anything was wrong with it, which is what the page is for."""
+    mk = _nocomment(SRC)
+    head = re.search(r'<table class="tbl cardify" id="orgTbl">.*?</thead>', mk, re.S)
+    assert head, "the org table moved"
+    cols = re.findall(r"<th[^>]*>(?:<button[^>]*>)?([A-Za-z ]+)", head.group(0))
+    assert cols == ["Org", "Plan", "This month", "Subscription", "Access",
+                    "Contact", "Last event", "Created"], cols
+
+
+def test_the_row_actually_calls_the_state_formatter() -> None:
+    """A6's lesson, and it was paid for on this exact kind of column: the
+    helper stayed perfect while renderStaff stopped calling it and every guard
+    stayed green. Guarding a definition is not guarding its use."""
+    cell = re.search(r'data-label="Last event"[^>]*>\$\{([^}]+)\}',
+                     _js_func("renderOrgs"))
+    assert cell, "the Last event cell moved or stopped being a template hole"
+    assert "_orgLastEvent(" in cell.group(1), (
+        "the row stopped calling the state formatter: " + cell.group(1))
+    assert "fmtTime(" not in cell.group(1), (
+        "the yearless formatter is at the call site of a dormancy column")
+
+
+@_G3_SKIP
+def test_the_four_states_are_four_different_answers() -> None:
+    """RUN. The states differ by one comparison each and every one of them is
+    reachable in production; a grep for the words passes with three of the four
+    branches dead.
+
+    'never captured' is NOT '0 days ago' and NOT an empty cell — it is a
+    different operational fact from quiet, and it is the row somebody is
+    hunting for."""
+    r = _run_g3(("_orgDaysSince", "_orgLastEvent"), """
+R.brandNew = _orgLastEvent(org({created_at:ago(2)}));
+R.never    = _orgLastEvent(org({created_at:ago(300)}));
+R.quiet    = _orgLastEvent(org({created_at:ago(300), last_event_at:ago(47)}));
+R.recent   = _orgLastEvent(org({created_at:ago(300), last_event_at:ago(3)}));
+""", _g3_const("NEW_ORG_DAYS"))
+    assert len(set(r.values())) == 4, "two states render identically: %s" % r
+    assert "no events yet" in r["brandNew"], r["brandNew"]
+    assert "never captured" in r["never"], r["never"]
+    assert "0" not in re.sub(r"\d+d", "", r["never"]), (
+        "a workspace that never captured is being reported as an age: " + r["never"])
+    assert "quiet · 47d" in r["quiet"], r["quiet"]
+    assert "chip" not in r["recent"], (
+        "a healthy tenant is wearing a status mark; the expected tier recedes: "
+        + r["recent"])
+
+
+@_G3_SKIP
+def test_never_captured_is_the_exception_tier_and_new_is_not() -> None:
+    """R2's ladder, and A6's finding about which tier may be quiet. .dim's
+    sub-3:1 mark is exempt precisely because it carries no meaning — A6 paid
+    for spending it on MFA-off, a live security state. A workspace that has
+    never captured after months is the most actionable row on the page, so it
+    takes the EXCEPTION tier; one that signed up on Tuesday genuinely is an
+    absence and takes .dim."""
+    r = _run_g3(("_orgDaysSince", "_orgLastEvent"), """
+R.brandNew = _orgLastEvent(org({created_at:ago(2)}));
+R.never    = _orgLastEvent(org({created_at:ago(300)}));
+R.quiet    = _orgLastEvent(org({created_at:ago(300), last_event_at:ago(60)}));
+""", _g3_const("NEW_ORG_DAYS", "QUIET_DAYS"))
+    assert 'class="chip dim"' in r["brandNew"], (
+        "a two-day-old workspace is being flagged: " + r["brandNew"])
+    assert 'class="chip warn"' in r["never"], (
+        "never-captured took the absence tier — the exemption A6 closed: "
+        + r["never"])
+    assert 'class="chip warn"' in r["quiet"], r["quiet"]
+    # and every tier is carried by a WORD, not by the mark alone
+    for k, v in r.items():
+        assert re.search(r">[a-z][^<]*<", v), "%s carries no word: %s" % (k, v)
+
+
+@_G3_SKIP
+def test_a_dormant_tenant_cannot_read_as_a_recent_one() -> None:
+    """The year, which A6 paid for on the staff page: fmtTime renders month,
+    day and clock and NO YEAR, so a two-year-old timestamp was
+    character-identical in form to a three-week-old one on the one column whose
+    job was spotting dormancy."""
+    body = _g3_bare("_orgLastEvent")
+    assert "fmtDay(" in body, "the dormancy column dropped the year again"
+    assert "fmtTime(" not in body, "the yearless formatter is back on this column"
+    r = _run_g3(("_orgDaysSince", "_orgLastEvent"), """
+R.old = _orgLastEvent(org({created_at:ago(900), last_event_at:ago(800)}));
+R.new = _orgLastEvent(org({created_at:ago(900), last_event_at:ago(35)}));
+""", _g3_const("NEW_ORG_DAYS", "QUIET_DAYS"))
+    assert "800d" in r["old"] and "35d" in r["new"], r
+    assert r["old"] != r["new"], "an 800-day silence renders as a 35-day one"
+
+
+@_G3_SKIP
+def test_the_thresholds_are_where_they_are_claimed_to_be() -> None:
+    """A threshold is a judgement, so the guard's job is that the judgement in
+    the comment is the judgement in the code — checked at the boundary, from
+    both sides, because an off-by-one here is a whole day of false alarms."""
+    r = _run_g3(("_orgDaysSince", "_orgLastEvent"), """
+R.d6  = _orgLastEvent(org({created_at:ago(6)}));
+R.d8  = _orgLastEvent(org({created_at:ago(8)}));
+R.q29 = _orgLastEvent(org({created_at:ago(300), last_event_at:ago(29)}));
+R.q31 = _orgLastEvent(org({created_at:ago(300), last_event_at:ago(31)}));
+""", _g3_const("NEW_ORG_DAYS", "QUIET_DAYS"))
+    assert "no events yet" in r["d6"], "a 6-day-old workspace is already an alarm"
+    assert "never captured" in r["d8"], "an 8-day-old empty workspace is still silent"
+    assert "chip" not in r["q29"], (
+        "29 days of quiet is being flagged — a tenant that captures monthly is "
+        "not broken: " + r["q29"])
+    assert "quiet · 31d" in r["q31"], r["q31"]
+
+
+def test_neither_threshold_can_become_an_alarm_nobody_can_justify() -> None:
+    """The numbers are judgements and are declared as such — so this pins the
+    RANGE a judgement is allowed to be, not the number. A grace of 1 day makes
+    every new workspace an incident; a quiet threshold of 7 cries wolf at every
+    tenant that captures weekly, which the register explicitly warns against."""
+    m = re.search(r"const NEW_ORG_DAYS=(\d+),\s*QUIET_DAYS=(\d+);", SRC)
+    assert m, "the thresholds are no longer declared together as constants"
+    grace, quiet = int(m.group(1)), int(m.group(2))
+    assert 3 <= grace <= 30, "a grace period of %d days is not defensible" % grace
+    assert 14 <= quiet <= 120, (
+        "a quiet threshold of %d days either cries wolf at a tenant that "
+        "captures weekly or never fires at all" % quiet)
+    assert grace < quiet, (
+        "the grace period is not shorter than the quiet threshold, so a "
+        "workspace can be 'new' and 'quiet' at once")
+
+
+def test_the_column_borrows_no_bar_and_no_scale() -> None:
+    """Deliberate: a relative-time cell is not a chart. A mark or a scale here
+    would make it one, and it would be a second, quieter meter beside C3.1's —
+    two components answering 'how is this tenant doing' in different visual
+    languages, one column apart."""
+    body = _g3_bare("_orgLastEvent")
+    for banned in ("qmeter", "<svg", "width:", "chart"):
+        assert banned not in body, (
+            "the last-event cell grew a %r; it is a word and a date" % banned)
+
+
+# ── #77 · the console's first sort ──────────────────────────────────────────
+
+def test_the_sort_header_is_a_button_and_the_mark_is_drawn() -> None:
+    """quick-reference §230 (`sortable-table`): aria-sort has to indicate the
+    current state — which means a real control, not a clickable <th>. And the
+    direction mark is an authored SVG: this file bans unicode standing in for
+    an icon system, and a guard that reads a rendered arrow back through a
+    subprocess gets mojibake unless every layer agrees on UTF-8."""
+    mk = _nocomment(SRC)
+    head = re.search(r'<table class="tbl cardify" id="orgTbl">.*?</thead>', mk, re.S).group(0)
+    sortable = re.findall(r'<th[^>]*data-sort="(\w+)"[^>]*>(.*?)</th>', head, re.S)
+    assert len(sortable) == 4, "expected four sortable headers, found %d" % len(sortable)
+    for col, inner in sortable:
+        assert re.search(r"<button[^>]*type=\"button\"", inner), (
+            "%s's header is not a real button" % col)
+        assert "onclick=\"orgSortPick('%s')\"" % col in inner, (
+            "%s's button is not wired to the picker" % col)
+        assert '<svg class="sortmark"' in inner, "%s has no drawn direction mark" % col
+        assert not re.search(r"[▲▼↑↓▴▾]", inner), (
+            "%s uses a unicode caret instead of the icon system" % col)
+
+
+@_G3_SKIP
+def test_only_one_column_ever_claims_to_be_the_sort() -> None:
+    """RUN over a stub header row. Two columns carrying aria-sort is worse than
+    none — a screen reader announces both and the table has no stated order."""
+    # ⚠ THE PROBE'S renderOrgs REPAINTS THE HEADERS BECAUSE THE SHIPPED ONE
+    # DOES, and that is asserted here rather than assumed — a stub that supplies
+    # wiring the product lacks is A6's failure with the polarity flipped.
+    assert "_orgSortMark()" in _g3_bare("renderOrgs"), (
+        "renderOrgs stopped repainting the headers, so aria-sort would freeze "
+        "on whatever column was active when the page loaded")
+    r = _run_g3(("orgSortPick", "_orgSortMark"), """
+renderOrgs=function(){ RENDERED++; _orgSortMark(); };
+var ths=mkTable(['name','usage','lastEvent','created']);
+_orgSortMark();               R.initial=marks(ths);
+orgSortPick('lastEvent');     R.picked=marks(ths);
+orgSortPick('lastEvent');     R.flipped=marks(ths);
+orgSortPick('name');          R.moved=marks(ths);
+R.resets=RESET.length; R.renders=RENDERED;
+""", _g3_const("ORG_SORT_COLS", "ORG_SORT") + "\nfunction _orgSorted(r){return r;}")
+    assert r["initial"] == "name:- usage:- lastEvent:- created:descending", (
+        "the default order is not stated on its own header: " + r["initial"])
+    assert r["picked"] == "name:- usage:- lastEvent:ascending created:-", r["picked"]
+    assert r["flipped"] == "name:- usage:- lastEvent:descending created:-", r["flipped"]
+    assert r["moved"] == "name:ascending usage:- lastEvent:- created:-", (
+        "the previous column kept its claim when the sort moved: " + r["moved"])
+    assert r["resets"] == 3 and r["renders"] == 3
+
+
+@_G3_SKIP
+def test_each_column_opens_in_the_direction_that_is_useful() -> None:
+    """A uniform 'descending first' would have opened Last event — the whole
+    reason this phase exists — on the least interesting end of the list."""
+    r = _run_g3(("orgSortPick",), """
+var ths=mkTable(['name','usage','lastEvent','created']);
+R.first={};
+['name','usage','lastEvent','created'].forEach(function(c){
+  ORG_SORT={col:'__none__',dir:'desc'};
+  orgSortPick(c); R.first[c]=ORG_SORT.dir;
+});
+""", _g3_const("ORG_SORT_COLS", "ORG_SORT")
+        + "\nfunction _orgSortMark(){} function _orgSorted(r){return r;}")
+    assert r["first"] == {"name": "asc", "usage": "desc",
+                          "lastEvent": "asc", "created": "desc"}, r["first"]
+
+
+@_G3_SKIP
+def test_a_sort_reorders_and_never_narrows() -> None:
+    """A7's scope line and C4's pager both count the FILTERED array. A sort that
+    dropped, deduped or mutated it would make the sentence above the table a
+    false statement about what is in the table."""
+    r = _run_g3(("_orgSorted",), """
+var src=[org({name:'c',last_event_at:ago(2)}),
+         org({name:'a',last_event_at:null,created_at:ago(1)}),
+         org({name:'b',last_event_at:ago(500)})];
+var before=src.map(function(o){return o.name}).join('');
+ORG_SORT={col:'lastEvent',dir:'asc'};
+var out=_orgSorted(src);
+R.len=out.length; R.order=out.map(function(o){return o.name}).join('');
+R.sourceUntouched=(src.map(function(o){return o.name}).join('')===before);
+R.sameSet=(out.slice().sort().length===src.length);
+ORG_SORT={col:'lastEvent',dir:'desc'};
+R.rev=_orgSorted(src).map(function(o){return o.name}).join('');
+""", _g3_const("ORG_SORT_COLS", "ORG_SORT"))
+    assert r["len"] == 3 and r["sameSet"], "the sort changed how many rows there are"
+    assert r["sourceUntouched"], (
+        "the sort reordered its input in place — for an unfiltered list that "
+        "array IS ORGS_ALL, so the cache the scope line counts got shuffled")
+    assert r["order"] == "bca", (
+        "longest-silent-first did not put the 500-day-old tenant top: " + r["order"])
+    assert r["rev"] == "acb", r["rev"]
+
+
+@_G3_SKIP
+def test_a_workspace_with_no_events_sorts_by_when_it_arrived() -> None:
+    """Sinking every never-captured row to one end would bury this morning's
+    signup among the abandoned ones and make the column's own two states
+    contradict its order. 'How long since we heard anything' counts creation as
+    the first thing we heard."""
+    r = _run_g3(("_orgSorted",), """
+ORG_SORT={col:'lastEvent',dir:'asc'};
+var out=_orgSorted([
+  org({name:'fresh-empty', created_at:ago(1),   last_event_at:null}),
+  org({name:'old-empty',   created_at:ago(600), last_event_at:null}),
+  org({name:'active',      created_at:ago(600), last_event_at:ago(2)})]);
+R.order=out.map(function(o){return o.name}).join(',');
+""", _g3_const("ORG_SORT_COLS", "ORG_SORT"))
+    assert r["order"] == "old-empty,active,fresh-empty", (
+        "a workspace created yesterday is being ranked with the abandoned "
+        "ones: " + r["order"])
+
+
+def test_sorting_returns_to_the_first_page() -> None:
+    """Stated decision. Re-sorting page 3 leaves the reader looking at a slice
+    of an order whose top they have never seen — and the point of sorting by
+    Last event is to bring the worst rows to the top, exactly where they would
+    not be looking. Same call a filter change makes."""
+    body = _g3_bare("orgSortPick")
+    assert "pgReset('orgs')" in body, "a re-sort leaves the pager where it was"
+    assert body.index("pgReset") < body.index("renderOrgs"), (
+        "the page is reset after the re-render, so the first paint is of the "
+        "old page against the new order")
+
+
+def test_the_sort_is_announced_where_the_table_already_announces() -> None:
+    """The console has role=status live regions on four scope lines and this
+    table's is one of them. A second announcement for the same table talks over
+    the first — so the order rides on the sentence a screen reader is already
+    listening to, and it is stated even at the default, because the default IS
+    an order."""
+    body = _g3_bare("renderOrgs")
+    assert "sortWord" in body and "sc.textContent" in body, (
+        "the scope line no longer carries the order")
+    assert body.index("sortWord=") < body.index("sc.textContent"), (
+        "the order is computed after the sentence it belongs to")
+    # ⚠ RUN IT. Every assertion above survives `const sortWord='';` — the
+    # announcement stops and the strings stay exactly where a grep looks for
+    # them. Found by mutation; C4's failure, checking a token not a behaviour.
+    if shutil.which("node"):
+        r = _run_g3(("_orgSortWord",), """
+R.said={};
+Object.keys(ORG_SORT_COLS).forEach(function(c){
+  ['asc','desc'].forEach(function(d){
+    ORG_SORT={col:c,dir:d}; R.said[c+'/'+d]=_orgSortWord(); }); });
+ORG_SORT={col:'__gone__',dir:'asc'}; R.unknown=_orgSortWord();
+""", _g3_const("ORG_SORT_COLS", "ORG_SORT"))
+        assert len(set(r["said"].values())) == 8, (
+            "two orders announce identically: %s" % r["said"])
+        for key, said in r["said"].items():
+            col, dr = key.split("/")
+            assert said.strip(), "%s announces nothing" % key
+            assert "·" in said, "%s does not join the sentence: %r" % (key, said)
+        assert "Last event, longest silent first" in r["said"]["lastEvent/asc"]
+        assert "Created, newest first" in r["said"]["created/desc"]
+        assert r["unknown"] == "", (
+            "an unrecognised sort key still announces something: %r" % r["unknown"])
+    mk = _nocomment(SRC)
+    assert mk.count('id="orgScope" role="status" aria-live="polite"') == 1
+    # no second live region was added to this page for the sort
+    page = _a2_page("orgs")
+    assert page.count("aria-live") == 2, (
+        "the orgs page has %d live regions; it had two (the scope line and the "
+        "table body) and a sort must not add a third" % page.count("aria-live"))
+
+
+def test_the_sort_did_not_become_a_filter_pill() -> None:
+    """C4's pills name FILTERS — things that narrow the list. A sort narrows
+    nothing, and putting it there is the conflation M4c's showDeleted decision
+    was made to avoid."""
+    body = _g3_bare("renderOrgs")
+    at = body.index("renderFilterPills(")
+    # to the call's OWN closing paren, by depth — the argument list ends in
+    # `],'orgPillClear()')` and slicing to a `];` finds nothing at all, which
+    # made the first version of this assert "SORT" against an empty string and
+    # pass for the wrong reason.
+    depth, j = 0, body.index("(", at)
+    while True:
+        if body[j] == "(":
+            depth += 1
+        elif body[j] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    pills = body[at:j + 1]
+    assert "renderFilterPills" in pills and len(pills) > 60, (
+        "the pill call did not slice; this guard would be asserting on nothing")
+    assert "SORT" not in pills.upper(), "the sort state leaked into the filter pills"
+
+
+def test_the_active_sort_column_survives_forced_colors() -> None:
+    """Referenced by name from the census guard's deliberate list. .sortbtn is
+    a borderless control and is deliberately NOT boxed — eight outlined header
+    labels would be noise — so its two affordances have to be here instead."""
+    block = _g2_forced_block()
+    flat = block.replace(" ", "")
+    assert ":focus-visible{outline:2pxsolidCanvasText" in flat, (
+        "the only way to see which header has focus is gone")
+    # ⚠ TOKEN-EXACT SELECTORS. The first version matched
+    # `.tbl th[aria-sort="ascending"][^{]*{`, which happily swallowed
+    # ` .sortmark,` and then measured the CHEVRON rule while asserting about the
+    # header — so deleting the header rule outright left it green. S1's
+    # change-of-subject, found by mutation.
+    def rule_for(sel: str) -> str:
+        for group, decl in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+            if any(o.strip() == sel for o in group.split(",")):
+                return decl
+        return ""
+    head = rule_for('.tbl th[aria-sort="ascending"]')
+    assert "Highlight" in head and "border-bottom" in head, (
+        "the ACTIVE sort column has no edge of its own in forced colors: %r" % head)
+    mark = rule_for('.tbl th[aria-sort="ascending"] .sortmark')
+    assert "Highlight" in mark, (
+        "the direction mark flattens to the same ink as every other header: %r" % mark)

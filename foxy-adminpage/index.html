@@ -1056,6 +1056,37 @@ html[data-theme="light"] .pg-wm{opacity:.06}
   position:sticky;top:0;z-index:1;
   background:var(--head-bg);
 }
+/* ── G3 · #77 · THE CONSOLE'S FIRST SORT ───────────────────────────────────
+   Counted before building: 16 pages, ZERO aria-sort, zero sort handlers on any
+   of them. The fact base is thin here and says one thing that matters —
+   quick-reference §230, `sortable-table`: "Data tables must support sorting
+   with aria-sort indicating current sort state (WCAG)". So the state lives on
+   the <th> and a real <button> takes the click.
+
+   The button inherits the header's own type rather than restating it: this is
+   the same header it always was, now pressable. Only the ACTIVE column lifts to
+   --ink, so a sorted table says which column it is sorted by at a glance
+   without four headers competing for the answer.
+
+   The mark is a DRAWN chevron, not a caret character. Two reasons, both already
+   paid for on this project: this file's rule against unicode standing in for an
+   icon system, and a guard that reads a rendered arrow back through a
+   subprocess gets mojibake unless every layer agrees on UTF-8. */
+.tbl th .sortbtn{
+  display:inline-flex;align-items:center;gap:5px;width:100%;
+  font:inherit;letter-spacing:inherit;text-transform:inherit;text-align:left;
+  color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;
+  border-radius:var(--r-xs);
+  transition:color var(--dur) ease;
+}
+.tbl th .sortbtn:hover{color:var(--ink)}
+.tbl th .sortbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tbl th[aria-sort="ascending"] .sortbtn,.tbl th[aria-sort="descending"] .sortbtn{color:var(--ink)}
+.sortmark{width:9px;height:9px;flex-shrink:0;opacity:.4;transition:transform var(--dur) ease,opacity var(--dur) ease}
+.tbl th[aria-sort="ascending"] .sortmark,.tbl th[aria-sort="descending"] .sortmark{opacity:1}
+/* descending flips the same chevron rather than swapping in a second glyph —
+   one drawn mark, one axis of meaning. */
+.tbl th[aria-sort="descending"] .sortmark{transform:rotate(180deg)}
 .tbl td{padding:var(--s-2) var(--s-3);border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink2)}
 .tbl tr:last-child td{border-bottom:none}
 .tbl tbody tr{cursor:default;transition:background var(--dur) ease,box-shadow var(--dur) ease}
@@ -2071,6 +2102,15 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
   .dock-badge,.topbadge,.voxswitch-track{
     border:1px solid ButtonBorder;
   }
+  /* G3 · the sort header is a control with no edge of its own; its census
+     entry is class A. The chevron survives — it is a stroked SVG on
+     currentColor — but which column is ACTIVE was carried entirely by --ink
+     against --muted, and forced-colors flattens both to CanvasText. */
+  .tbl th[aria-sort="ascending"],.tbl th[aria-sort="descending"]{
+    border-bottom:2px solid Highlight;
+  }
+  .tbl th[aria-sort="ascending"] .sortmark,
+  .tbl th[aria-sort="descending"] .sortmark{color:Highlight}
   /* .kpi .face is the card's whole coloured plate and .clay is the card — one
      boundary between them, not two nested ones. */
   .kpi .face{border:1px solid ButtonBorder}
@@ -2595,10 +2635,23 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
         </div>
         <div class="fpills" id="orgPills"></div>
         <table class="tbl cardify" id="orgTbl">
+          <!-- G3 · four of the eight sort. Plan, Subscription and Access are
+               enums whose alphabetical order carries nothing (free < max < pro
+               is not a ranking anyone wants) and Contact is free text; ordering
+               by them would be a control that appears to answer a question it
+               cannot. The four that do sort are the four with a real order:
+               a name, a count, and two times. -->
           <thead><tr>
-            <th scope="col">Org</th><th scope="col">Plan</th><th scope="col">This month</th><th scope="col">Subscription</th><th scope="col">Access</th><th scope="col">Contact</th><th scope="col">Created</th>
+            <th scope="col" data-sort="name"><button type="button" class="sortbtn" onclick="orgSortPick('name')">Org<svg class="sortmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button></th>
+            <th scope="col">Plan</th>
+            <th scope="col" data-sort="usage"><button type="button" class="sortbtn" onclick="orgSortPick('usage')">This month<svg class="sortmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button></th>
+            <th scope="col">Subscription</th>
+            <th scope="col">Access</th>
+            <th scope="col">Contact</th>
+            <th scope="col" data-sort="lastEvent"><button type="button" class="sortbtn" onclick="orgSortPick('lastEvent')">Last event<svg class="sortmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button></th>
+            <th scope="col" data-sort="created"><button type="button" class="sortbtn" onclick="orgSortPick('created')">Created<svg class="sortmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button></th>
           </tr></thead>
-          <tbody id="orgRows" aria-live="polite"><tr><td colspan="7" class="sub mono">loading…</td></tr></tbody>
+          <tbody id="orgRows" aria-live="polite"><tr><td colspan="8" class="sub mono">loading…</td></tr></tbody>
         </table><div id="orgPager"></div>
       </div>
     </section>
@@ -5279,7 +5332,7 @@ async function loadOrgs(){
   let r; try{ r=await api('/admin/v1/organizations'+inc); }catch(e){ r=null; }
   if(!r||!r.ok){
     $('orgPager').innerHTML='';
-    $('orgRows').innerHTML=faultRow(7,'Organizations did not load.','loadOrgs()',
+    $('orgRows').innerHTML=faultRow(8,'Organizations did not load.','loadOrgs()',
       r?('HTTP '+r.status):'no response from the API');
     return;
   }
@@ -5440,6 +5493,147 @@ function quotaMeter(o){
     +(word?'<span class="qmeter-w">'+word+'</span>':'')+'</div>'
     +'<div class="qmeter-t" aria-hidden="true">'+bar+'</div></div>';
 }
+/* ── G3 · #71 · IS SOMETHING WRONG WITH THIS TENANT ────────────────────────
+   The seven columns describe what a workspace IS. None of them answers the
+   question the page exists for, so this one reports the only operational fact
+   the ledger can give for free: when we last heard from it.
+
+   FOUR STATES, and the three that are not the happy path are the design:
+
+     no events yet   a workspace younger than the grace period that has not
+                     captured anything. ABSENCE tier. Integration takes days;
+                     this is not a fault and must not read as one.
+     never captured  older than the grace period and STILL nothing. EXCEPTION.
+                     Not "0 days ago" and not an empty cell — a workspace that
+                     has never captured is a different fact from a quiet one,
+                     and it is the most actionable row on the page.
+     quiet · Nd      captured once and stopped. EXCEPTION, with the date.
+     a date          captured recently. EXPECTED, so it recedes to the same
+                     quiet mono as Created and the eye skips it.
+
+   ⚠ BOTH THRESHOLDS ARE MINE, NOT MEASUREMENTS. Saying so is the point.
+
+   NEW_ORG_DAYS = 7. A week is long enough that a weekend and a sprint boundary
+   cannot fire it and short enough that a stalled onboarding is still warm. It
+   happens to equal the API's default `trial_days`, and it is deliberately NOT
+   read from there: that setting is not in CONFIG_SCHEMA, so this console cannot
+   see it — the same wall renderOrgs already refuses to guess past for
+   DEMO_APPROVAL_REQUIRED. Claiming a coupling the code does not have would be
+   worse than choosing a number and owning it.
+
+   QUIET_DAYS = 30. Deliberately NOT an alarm about weekly capture — a tenant
+   that sends once a week is not broken, and at 7 or 14 this column would cry
+   wolf at healthy workspaces. 30 days is the period the column two places to
+   its left already measures, so the two corroborate: when this says "quiet ·
+   31d", "This month" reads 0, and an operator can see they agree.
+
+   ⚠ NOT _lastSeen, AND THE SHAPES GENUINELY DIFFER — three ways. Its threshold
+   is 90 days, right for a staff sign-in and far too lax for a capture stream.
+   It has no grace period, because a staff account has no equivalent of "signed
+   up an hour ago". And its `never` is unconditionally the ABSENCE tier, which
+   is right for an account that has never signed in and wrong here: an org that
+   has never captured is the row you are hunting, and A6's finding was exactly
+   that .dim's sub-3:1 exemption does not cover a state that carries meaning.
+   What IS shared is shared: fmtDay, for the year A6 paid for. The day
+   arithmetic is one line and is not extracted — _lastSeen's body is guarded by
+   name and a shared helper would buy nothing but a second thing to keep in
+   step. */
+const NEW_ORG_DAYS=7, QUIET_DAYS=30;
+function _orgDaysSince(iso){
+  if(!iso) return null;
+  const d=Math.floor((Date.now()-new Date(iso).getTime())/86400000);
+  return isFinite(d)?d:null;
+}
+function _orgLastEvent(o){
+  const last=o.last_event_at, age=_orgDaysSince(o.created_at);
+  if(!last){
+    /* ABSENCE, and the word carries it — the tier's mark is exempt from 3:1
+       precisely because nothing depends on seeing it. */
+    if(age!==null&&age<NEW_ORG_DAYS)
+      return '<span class="chip dim">no events yet</span>';
+    return '<span class="chip warn">never captured</span>';
+  }
+  const days=_orgDaysSince(last);
+  if(days===null) return '<span class="chip dim">no events yet</span>';
+  const when='<span class="sub mono" style="font-size:10px;">'+esc(fmtDay(last))+'</span>';
+  return days>=QUIET_DAYS
+    ? '<span class="chip warn">quiet · '+days+'d</span> '+when
+    : '<span class="mono" style="font-size:11px;">'+esc(fmtDay(last))+'</span>';
+}
+
+/* ── G3 · #77 · SORT, ONCE, REUSABLY ───────────────────────────────────────
+   Built as a helper and wired to ONE table. Eight other pages have no filter
+   and no sort; applying this to all of them is a sweep and belongs in its own
+   phase, not bolted onto the end of this one.
+
+   Each column names the direction it opens in, because the useful first click
+   differs: a name wants A-Z, a count wants the biggest first, and Last event
+   wants the LONGEST SILENT first — the whole reason the column exists. A
+   uniform "descending first" would have made the one column this phase is for
+   open on the least interesting end.
+
+   ⚠ THE SORT KEY FOR A ROW WITH NO EVENTS IS ITS created_at, not zero. "How
+   long since we heard anything from this workspace" counts its creation as the
+   first thing we heard, so a workspace made this morning sorts as recent (it
+   is) and one abandoned in January sorts as old (it is). Sinking every
+   never-captured row to one end would have buried the brand-new ones with the
+   abandoned ones and made the column's own two states contradict its order. */
+const ORG_SORT_COLS={
+  name:      {label:'Org',        first:'asc',  asc:'A-Z',                 desc:'Z-A',
+              get:function(o){ return (o.name||'').toLowerCase(); }},
+  usage:     {label:'This month', first:'desc', asc:'least used first',    desc:'most used first',
+              get:function(o){ return o.usage_this_month||0; }},
+  lastEvent: {label:'Last event', first:'asc',  asc:'longest silent first', desc:'most recent first',
+              get:function(o){ const t=o.last_event_at||o.created_at;
+                               return t?new Date(t).getTime():0; }},
+  created:   {label:'Created',    first:'desc', asc:'oldest first',        desc:'newest first',
+              get:function(o){ return o.created_at?new Date(o.created_at).getTime():0; }},
+};
+/* The default is not "unsorted": the API returns created_at DESC, so the table
+   IS sorted on arrival and the header says which one rather than leaving four
+   blank. */
+let ORG_SORT={col:'created',dir:'desc'};
+function orgSortPick(col){
+  const spec=ORG_SORT_COLS[col]; if(!spec)return;
+  ORG_SORT={col:col, dir:ORG_SORT.col===col?(ORG_SORT.dir==='asc'?'desc':'asc'):spec.first};
+  /* Page 1. Re-sorting page 3 leaves the reader looking at a slice of an order
+     they have never seen the top of — and the point of sorting by Last event is
+     to bring the worst rows to the top, which is precisely where they would not
+     be looking. C4's pgReset is the same call a filter change makes. */
+  pgReset('orgs');
+  renderOrgs();
+}
+function _orgSorted(rows){
+  const spec=ORG_SORT_COLS[ORG_SORT.col]; if(!spec) return rows;
+  const mul=ORG_SORT.dir==='asc'?1:-1;
+  /* A COPY. rows is _orgsFiltered()'s array, which for an unfiltered list is
+     ORGS_ALL itself — sorting in place would quietly reorder the cache the
+     scope line counts and the next filter reads. */
+  return rows.slice().sort(function(a,b){
+    const x=spec.get(a), y=spec.get(b);
+    return x<y?-mul:x>y?mul:0;
+  });
+}
+/* Named so a guard can DRIVE it. Inline in renderOrgs this read
+   `sortWord=so?(...):''`, and swapping the whole expression for `''` left every
+   string a static guard looks for exactly where it was — the announcement
+   silently stopped and the guard stayed green. That is C4's failure (a token
+   checked instead of a behaviour) and it was found by mutation, not by
+   reading. */
+function _orgSortWord(){
+  const so=ORG_SORT_COLS[ORG_SORT.col];
+  return so?(' · '+so.label+', '+so[ORG_SORT.dir]):'';
+}
+/* aria-sort on the <th>, which is the state WCAG asks for and the only thing a
+   screen reader reads for this. Cleared from every other header — two columns
+   claiming to be the sort is worse than none. */
+function _orgSortMark(){
+  const t=$('orgTbl'); if(!t)return;
+  t.querySelectorAll('th[data-sort]').forEach(function(th){
+    if(th.dataset.sort===ORG_SORT.col)th.setAttribute('aria-sort',ORG_SORT.dir==='asc'?'ascending':'descending');
+    else th.removeAttribute('aria-sort');
+  });
+}
 function renderOrgs(){
   const all=ORGS_ALL, rows=_orgsFiltered();
   const off=$('showDeleted')&&$('showDeleted').checked?' · offboarded included':'';
@@ -5451,10 +5645,18 @@ function renderOrgs(){
      off and nobody ever will be. */
   const pend=_orgsPending().length;
   const wait=pend?' · '+pend+' awaiting approval':'';
+  /* The sort rides on the sentence that is ALREADY a role="status" live region.
+     A second announcement for the same table would talk over the first, and
+     this line is the one a screen reader is already listening to. It is stated
+     even at the default, because the default IS an order — a table sorted by
+     something it does not name is the confident-wrong-answer failure this
+     console keeps a register for. */
+  const sortWord=_orgSortWord();
   const sc=$('orgScope');
   if(sc) sc.textContent=(ORG_Q
     ? 'matching “'+ORG_Q+'” · '+rows.length+' of '+all.length+' organization'+(all.length===1?'':'s')
-    : all.length+' organization'+(all.length===1?'':'s'))+off+wait;
+    : all.length+' organization'+(all.length===1?'':'s'))+off+wait+sortWord;
+  _orgSortMark();
   /* The two CLIENT-SIDE filters only. `showDeleted` is deliberately absent:
      M4c split these controls by what they DO — it re-requests the list with
      include_deleted, these two narrow what has already arrived — and a pill
@@ -5467,11 +5669,13 @@ function renderOrgs(){
     ORG_PENDING_ONLY?{key:'status',val:'awaiting approval',off:"orgPillClear('pending')"}:null
   ],'orgPillClear()');
   /* The pager is handed the FILTERED array, so "1-25 of N" counts what the
-     table contains rather than what the fetch returned. */
-  const orgs=window.foxPageSlice(rows,pgState('orgs',25),'orgPager',renderOrgs,'Organization pages');
+     table contains rather than what the fetch returned. G3 sorts that same
+     array before slicing — a sort reorders, it never narrows, so the count the
+     pager and the scope line report is unchanged by it. */
+  const orgs=window.foxPageSlice(_orgSorted(rows),pgState('orgs',25),'orgPager',renderOrgs,'Organization pages');
   /* An empty result is not an empty list. "no organizations yet" is false when
      there are forty and none of them match. */
-  if(!all.length){$('orgRows').innerHTML='<tr><td colspan="7" class="sub mono">no organizations yet</td></tr>';return}
+  if(!all.length){$('orgRows').innerHTML='<tr><td colspan="8" class="sub mono">no organizations yet</td></tr>';return}
   /* THE EMPTY STATE EVERYONE WILL SEE. DEMO_APPROVAL_REQUIRED ships OFF, so on
      most deployments no organisation is ever pending and this is the normal
      case, not an edge one.
@@ -5487,13 +5691,13 @@ function renderOrgs(){
      confident wrong reason on the screen a staff member checks to find out
      whether anyone is waiting. */
   if(!rows.length&&ORG_PENDING_ONLY&&!ORG_Q){
-    $('orgRows').innerHTML='<tr><td colspan="7" class="sub" style="padding:14px 10px;line-height:1.6;">'
+    $('orgRows').innerHTML='<tr><td colspan="8" class="sub" style="padding:14px 10px;line-height:1.6;">'
       +'No organizations are awaiting approval.<br><span class="mono" style="font-size:11px;color:var(--muted);">'
       +'Whether any ever will is set by DEMO_APPROVAL_REQUIRED on the API, which this console cannot read.'
       +'</span></td></tr>';
     return;
   }
-  if(!rows.length){$('orgRows').innerHTML='<tr><td colspan="7" class="sub mono">no organizations match “'+esc(ORG_Q)+'”</td></tr>';return}
+  if(!rows.length){$('orgRows').innerHTML='<tr><td colspan="8" class="sub mono">no organizations match “'+esc(ORG_Q)+'”</td></tr>';return}
   $('orgRows').innerHTML=orgs.map(o=>{
     /* `.warn`, and the tier is a decision rather than a colour. The status
        vocabulary reads EXPECTED / EXCEPTION / ABSENCE, and a workspace waiting
@@ -5517,6 +5721,7 @@ function renderOrgs(){
       <td data-label="This month">${quotaMeter(o)}</td>
       <td data-label="Subscription">${sub}</td><td data-label="Access">${access}</td>
       <td data-label="Contact" class="mono" style="font-size:11px;">${esc(o.contact_email||'—')}</td>
+      <td data-label="Last event">${_orgLastEvent(o)}</td>
       <td data-label="Created" class="mono" style="font-size:11px;">${fmtDay(o.created_at)}</td>
     </tr>`;
   }).join('');
