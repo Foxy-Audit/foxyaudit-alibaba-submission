@@ -3601,17 +3601,32 @@ def test_a_value_nobody_typed_as_a_number_is_refused() -> None:
     round trip, which is a worse way to learn it. The rule is a digit test now,
     stated in words at the field, and the sign is allowed only when the key's
     own minimum is negative — read from the schema rather than assumed."""
-    v = _js_func("_cfgValidate")
+    # ⚠ RE-AIMED IN G1, NOT WEAKENED. The rule moved out of _cfgValidate into
+    # _wholeNumberError so the data browser could ask the same question instead
+    # of growing a second validator (#72). The assertions follow it there, and
+    # the wiring assertion below is NEW: an extraction that left _cfgValidate
+    # no longer calling the rule would satisfy every string here while the
+    # configuration card validated nothing at all.
+    v = _js_func("_wholeNumberError")
     assert "d+$/" in v, "the digit rule is gone"
     flat = v.replace(" ", "")
-    # Both patterns must exist AND the choice between them must be the key's
+    # Both patterns must exist AND the choice between them must be the caller's
     # own minimum. Asserting only that the comparison appears somewhere passed
     # while the rule was hardcoded, because the same comparison also picks the
     # wording of the message below it.
     assert "(min<0?" in flat and flat.count("d+$/") >= 2, (
-        "the sign rule is hardcoded instead of chosen by the key's own minimum"
+        "the sign rule is hardcoded instead of chosen by the caller's minimum"
     )
     assert "isSafeInteger" in v, "a number too large to store exactly is accepted again"
+    cfg = _js_func("_cfgValidate")
+    assert "_wholeNumberError(v,min)" in cfg.replace(" ", ""), (
+        "the configuration card no longer reaches the rule — it is guarded "
+        "above and applied to nothing"
+    )
+    assert "m.min" in cfg, (
+        "the minimum stopped coming from the key's own schema, so the sign "
+        "rule is hardcoded again one level up"
+    )
 
 
 def test_save_is_blocked_while_any_field_is_invalid() -> None:
@@ -6162,3 +6177,562 @@ def test_switching_tables_routes_through_the_same_clear() -> None:
     assert "DATA_FILTERS.length=0" not in body.replace(" ", ""), (
         "a second path still resets the filters by hand")
     assert "$('dataSearch').value=''" not in body.replace(" ", ""), body
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G1 · THE CONSOLE STOPS LOSING THINGS SILENTLY  (register #72, #87, #89)
+#
+# One family: the console changes or discards something and does not say so.
+#   #72  the data browser rewrote what you typed, guessing the type from the
+#        string instead of reading it off the column
+#   #87  saving a preference reloaded the card next to it, destroying a
+#        complete, valid, half-typed configuration edit
+#   #89  the poller moved the badge and never told the list, so who-owns-what
+#        was frozen at page load
+#
+# MOST OF THESE RUN THE CODE. C0 is the reason: a deleted `d.forEach` once left
+# 369 green tests behind it because every one of them was a grep. Where the rule
+# is about what a function PRODUCES — a string that must stay a string, a
+# payload that must not be sent, a strip that must not light up — the guard
+# drives the shipped function under node and reads what comes out.
+#
+# Bodies are read through _bare(): this console explains itself in /* */ prose
+# that quotes the very coercion being removed ("0123" -> 123 sits in a comment
+# four lines above the fix), so a guard that greps a raw body reads the
+# explanation and calls it the defect. _js_code strips only `//`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _bare(name: str) -> str:
+    """A function body with BOTH comment syntaxes gone."""
+    out = re.sub(r"/\*.*?\*/", "", _js_func(name), flags=re.S)
+    return re.sub(r"(?m)^\s*//.*$", "", out)
+
+
+_G1_SKIP = pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+
+
+def _run_g1(fns: tuple, shim: str, body: str) -> dict:
+    """Declare the SHIPPED functions over a stub DOM, run `body`, return R."""
+    import json
+    import os
+    import tempfile
+    probe = (shim + "\n" + "\n".join(_js_decl(f) for f in fns)
+             + "\nvar R={};\n(async function(){\n" + body
+             + "\nconsole.log(JSON.stringify(R));\n})();\n")
+    fd, path = tempfile.mkstemp(suffix=".js")
+    os.close(fd)
+    try:
+        Path(path).write_text(probe, encoding="utf-8")
+        # encoding="utf-8" is NOT optional. text=True alone decodes node's
+        # stdout with the system locale — cp1252 on this project's Windows
+        # runners — and every em dash and curly quote in these messages comes
+        # back as mojibake, so an assertion about correct output fails against
+        # correct output.
+        proc = subprocess.run([shutil.which("node"), path],
+                              capture_output=True, text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    finally:
+        os.unlink(path)
+
+
+# ── #72 · the data browser rewrites what you typed ──────────────────────────
+
+#: A DOM stub big enough to run openDataEdit and saveDataEdit for real.
+_G1_DATA_SHIM = r"""
+var SENT=null, TOASTS=[], MODAL=null, REFRESHED=0;
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toast(m,t){ TOASTS.push({m:m,t:t}); }
+function closeDataEdit(){} function refreshData(){ REFRESHED++; }
+function openModal(o){ MODAL=o; }
+function busy(btn,fn){ return fn(); }
+async function api(u,o){ SENT={url:u,body:JSON.parse(o.body)};
+  return {ok:true,status:200,json:async function(){return {};}}; }
+var EL={}, FIELDS=[];
+function mkin(id,val,type){ var e={id:id,value:val,type:type||'text',
+  dataset:{},focused:0,attrs:{},
+  classList:{toggle:function(){}},
+  setAttribute:function(k,v){this.attrs[k]=v;},
+  focus:function(){this.focused++;}};
+  EL[id]=e; return e; }
+function $(id){ return EL[id]||null; }
+var document={querySelectorAll:function(sel){ return FIELDS; }};
+var DATA_TABLE='', DATA_META=null, DATA_EDIT_ID='row-1', DATA_ROW_CACHE={};
+"""
+
+_G1_DATA_FNS = ("_dataColType", "_dataIsInt", "_wholeNumberError", "_dataValidate",
+             "dataFieldCheck", "saveDataEdit", "_dataRowLabel", "openDataEdit")
+
+
+def _g1_table_columns_decl() -> str:
+    """The shipped TABLE_COLUMNS literal, sliced by brace balance."""
+    at = SRC.index("const TABLE_COLUMNS")
+    i = SRC.index("{", at)
+    depth, j = 0, i
+    while j < len(SRC):
+        if SRC[j] == "{":
+            depth += 1
+        elif SRC[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return SRC[at:j + 2]
+        j += 1
+    raise AssertionError("TABLE_COLUMNS never closes")
+
+
+@_G1_SKIP
+def test_a_text_column_keeps_the_string_the_operator_typed() -> None:
+    """THE ONE THAT PROTECTS THE ROW. saveDataEdit read
+
+        (v.trim()!=='' && !isNaN(v)) ? Number(v) : v
+
+    which guesses the type from what the string LOOKS like, on production
+    tables. Leading zeros and trailing decimals are meaningful in exactly the
+    fields a staff browser gets used on — references, external ids, versions.
+
+    The last case is the severe one and is not in the register's wording:
+    Number('Infinity') is Infinity, JSON.stringify(Infinity) is null, and the
+    column is CLEARED. Run, not grepped: the old and new lines differ by one
+    ternary, and the corrupted values only exist after a JSON round trip."""
+    r = _run_g1(_G1_DATA_FNS, _g1_table_columns_decl() + _G1_DATA_SHIM, """
+DATA_TABLE='marketing_leads';
+DATA_META={editable_fields:['name','company','status','source']};
+mkin('dedit_name','0123'); mkin('dedit_company','1.20');
+mkin('dedit_status','new'); mkin('dedit_source','Infinity');
+await saveDataEdit(null);
+R.sent=SENT&&SENT.body.fields; R.toasts=TOASTS;
+""")
+    f = r["sent"]
+    assert f is not None, "nothing was sent at all: %s" % r["toasts"]
+    assert f["name"] == "0123", "a leading zero was stripped: %r" % (f["name"],)
+    assert f["company"] == "1.20", "a trailing decimal was dropped: %r" % (f["company"],)
+    assert f["source"] == "Infinity", (
+        "'Infinity' became %r — JSON.stringify turns it into null and the "
+        "column is CLEARED" % (f["source"],)
+    )
+    assert f["status"] == "new"
+
+
+@_G1_SKIP
+def test_a_numeric_column_is_still_sent_as_a_number() -> None:
+    """The fix must not overshoot into 'send everything as a string'. An
+    integer column gets a real number, and the leading zero the text column
+    keeps is correctly normalised HERE, because the column says integer."""
+    r = _run_g1(_G1_DATA_FNS, _g1_table_columns_decl() + _G1_DATA_SHIM, """
+DATA_TABLE='usage_daily';
+DATA_META={editable_fields:['logs_count','tokens_sum']};
+mkin('dedit_logs_count','0042'); mkin('dedit_tokens_sum','7');
+FIELDS=[EL.dedit_logs_count,EL.dedit_tokens_sum];
+FIELDS.forEach(function(e,i){ e.dataset.dkey=['logs_count','tokens_sum'][i]; });
+await saveDataEdit(null);
+R.sent=SENT&&SENT.body.fields;
+""")
+    f = r["sent"]
+    assert f is not None, "a valid numeric edit was refused"
+    assert f["logs_count"] == 42 and isinstance(f["logs_count"], int), (
+        "an integer column was sent as %r — the backend's _coerce can only "
+        "cast what it is handed" % (f["logs_count"],)
+    )
+    assert f["tokens_sum"] == 7
+
+
+@_G1_SKIP
+def test_nothing_is_patched_while_a_numeric_field_is_invalid() -> None:
+    """A7's refusal, on this dialog. '1.5' is the case that matters: it passes
+    the old isNaN test, becomes the float 1.5, and the backend's int() stores 1
+    — a silent truncation, the same family of loss as the string rewrite above.
+    Every field is checked rather than stopping at the first."""
+    r = _run_g1(_G1_DATA_FNS, _g1_table_columns_decl() + _G1_DATA_SHIM, """
+DATA_TABLE='usage_daily';
+DATA_META={editable_fields:['logs_count','breach_count']};
+mkin('dedit_logs_count','1.5'); mkin('dedit_breach_count','');
+FIELDS=[EL.dedit_logs_count,EL.dedit_breach_count];
+FIELDS.forEach(function(e,i){ e.dataset.dkey=['logs_count','breach_count'][i]; });
+await saveDataEdit(null);
+R.sent=SENT; R.toasts=TOASTS;
+R.bad1=EL.dedit_logs_count.attrs['aria-invalid'];
+R.bad2=EL.dedit_breach_count.attrs['aria-invalid'];
+R.focused=EL.dedit_logs_count.focused;
+""")
+    assert r["sent"] is None, "a request went out with an invalid field: %s" % r["sent"]
+    assert r["bad1"] == "true", "the decimal was accepted; int() would store 1"
+    assert r["bad2"] == "true", (
+        "the check stopped at the first failure, so the operator fixes one "
+        "field and only then discovers the next"
+    )
+    assert r["focused"] == 1, "the first bad field never took focus"
+    assert r["toasts"] and "2 fields" in r["toasts"][0]["m"], r["toasts"]
+
+
+@_G1_SKIP
+def test_only_a_numeric_field_carries_the_numeric_rule() -> None:
+    """The dialog is rendered, not grepped. A text column must come out with no
+    data-dkey, no numeric keyboard and no error box — if it had them, the rule
+    that refuses '1.5' would also refuse a company called '1.5'."""
+    r = _run_g1(_G1_DATA_FNS, _g1_table_columns_decl() + _G1_DATA_SHIM, """
+DATA_TABLE='marketing_leads'; DATA_META={editable_fields:['name']};
+DATA_ROW_CACHE['r1']={id:'r1',name:'0123'};
+openDataEdit('r1'); R.text=MODAL.bodyHTML;
+DATA_TABLE='usage_daily'; DATA_META={editable_fields:['logs_count']};
+DATA_ROW_CACHE['r2']={id:'r2',logs_count:5};
+openDataEdit('r2'); R.num=MODAL.bodyHTML;
+""")
+    assert "data-dkey" not in r["text"], (
+        "a text column was rendered with the numeric rule attached: " + r["text"]
+    )
+    assert "fielderr" not in r["text"], "a text column rendered an error box"
+    assert 'value="0123"' in r["text"], "the text field did not round-trip its value"
+    assert 'data-dkey="logs_count"' in r["num"], "the numeric field carries no rule"
+    assert 'aria-invalid="false"' in r["num"], "the numeric field has no validity state"
+    assert "aria-describedby" in r["num"], "the message is not bound to the field"
+    assert 'role="status"' in r["num"] and "aria-live" in r["num"], (
+        "the message is written into an element nothing announces"
+    )
+    assert "dataFieldCheck(this)" in r["num"], "the rule is never run as they type"
+    # the declared type is on screen, which is what explains the difference
+    assert "varchar(255)" in r["text"] and "integer" in r["num"]
+
+
+def test_the_type_is_read_from_the_column_not_from_the_value() -> None:
+    """The premise the whole fix rests on, checked rather than asserted.
+    editable_fields on the wire is a list of NAMES ONLY, so the type has to come
+    from TABLE_COLUMNS — and that map is hand-maintained, so a future migration
+    can register an editable column it has never heard of. Cross-read against
+    the backend registry that decides what is editable in the first place."""
+    reg = Path(__file__).resolve().parents[1] / "backend/app/routers/admin_data.py"
+    if not reg.exists():
+        pytest.skip("backend/app/routers/admin_data.py not in this checkout")
+    py = reg.read_text(encoding="utf-8")
+    # The response carries names only. If it ever carries types, this fix should
+    # move to the payload — so the guard notices rather than going on passing.
+    assert '"editable_fields": [] if table in _HARD_LOCKED else spec["editable"]' in py, (
+        "the data endpoint's editable_fields changed shape — re-check whether "
+        "it now carries the column type, which would be the better source"
+    )
+    cols = _g1_table_columns_decl()
+    registry = py[py.index("TABLE_REGISTRY:"):py.index("_HARD_LOCKED = frozenset")]
+    pairs = re.findall(r'"(\w+)":\s*\{.*?"editable":\s*\[([^\]]*)\]', registry, re.S)
+    assert len(pairs) >= 12, "the registry stopped parsing: %s tables" % len(pairs)
+    checked = 0
+    for table, fields in pairs:
+        names = re.findall(r'"(\w+)"', fields)
+        if not names:
+            continue
+        m = re.search(re.escape(table) + r":\s*\[(.*?)\]\],", cols, re.S)
+        assert m, f"{table} is editable server-side and absent from TABLE_COLUMNS"
+        declared = dict(re.findall(r"\['(\w+)','([^']*)'", m.group(1) + "]"))
+        for f in names:
+            assert f in declared, (
+                f"{table}.{f} is editable but TABLE_COLUMNS declares no type "
+                f"for it — the dialog would treat it as text, and a numeric "
+                f"column sent as a string is the defect this phase closed"
+            )
+            checked += 1
+    assert checked >= 10, "only %s editable columns were checked" % checked
+
+
+def test_there_is_still_one_whole_number_rule() -> None:
+    """A7 wrote it; #72 needed the same question asked. Two copies is how two
+    surfaces come to disagree about what a number is, so the rule was lifted out
+    rather than re-typed — and both callers have to actually reach it (A6: a
+    helper whose body was guarded and whose call site was not)."""
+    assert "_wholeNumberError(" in _bare("_cfgValidate"), "the config card lost the rule"
+    assert "_wholeNumberError(" in _bare("_dataValidate"), "the data browser lost the rule"
+    for fn in ("_cfgValidate", "_dataValidate"):
+        assert "isSafeInteger" not in _bare(fn), f"{fn} re-typed the rule instead"
+        assert "d+$/" not in _bare(fn), f"{fn} carries a second digit pattern"
+    assert "_dataValidate(" in _bare("dataFieldCheck"), "the check reads no rule"
+    save = _bare("saveDataEdit")
+    assert "dataFieldCheck(" in save, "saveDataEdit validates nothing"
+    head = save[: save.index("const fields=")]
+    assert "api(" not in head, "a request can be sent while a field is invalid"
+    cond = re.search(r"if\s*\(([^)]*)\)\s*\{\s*bad\[0\]", head)
+    assert cond and "bad" in cond.group(1), (
+        "the refusal is gated on something other than the failed set — a "
+        "constant here reopens the defect with every string above still present"
+    )
+
+
+def test_the_data_browser_does_not_invent_a_floor() -> None:
+    """-Infinity, not 0. The backend registry states no minimum for any editable
+    numeric column, and a floor invented here would make a value the database
+    accepts unenterable — the mirror image of the bug being fixed."""
+    v = _bare("_dataValidate")
+    assert "-Infinity" in v, "a minimum was invented for columns that declare none"
+    assert "cannot be cleared" in v, (
+        "an emptied numeric box says nothing here — the API answers it with "
+        "\"bad value for 'logs_count'\", which is a worse way to learn it"
+    )
+
+
+# ── #87 · saving one card discards another ──────────────────────────────────
+
+_G1_PREFS_SHIM = r"""
+var CALLED=[], SENT=null;
+var EL={}; function $(id){ return EL[id]||null; }
+function mk(id,checked){ return EL[id]={id:id,checked:!!checked,textContent:'',value:''}; }
+['prefMsg','setName'].forEach(function(i){ mk(i); });
+function loadSessions(){ CALLED.push('loadSessions'); }
+function loadConfig(){ CALLED.push('loadConfig'); }
+function loadSettings(){ CALLED.push('loadSettings'); }
+function refreshCurrent(){ CALLED.push('refreshCurrent'); }
+var ME={email:'a@b.c'}, window={PREFS:{}};
+var NEXT={};
+async function api(u,o){ SENT=JSON.parse(o.body);
+  return {ok:true,json:async function(){ return {preferences:NEXT}; }}; }
+"""
+
+
+@_G1_SKIP
+def test_saving_a_notification_toggle_repaints_nothing() -> None:
+    """savePrefs called refreshCurrent(), and savePrefs can only fire from
+    Settings — the four toggles are its only callers — so refreshCurrent() meant
+    loadSettings(), which resets #setName from ME and calls loadConfig().
+    Flipping 'system alerts' threw away an unsaved display name and a
+    superadmin's half-typed Platform configuration.
+
+    A7's validator raised the stakes rather than lowering them: before it an
+    interrupted config edit was probably invalid anyway; now it can be a
+    complete, valid change destroyed in silence.
+
+    Run, because the difference is a branch: a grep for 'loadSessions' passes
+    whether or not the branch can fire, and a condition stuck at true repaints
+    on every toggle again."""
+    r = _run_g1(("savePrefs",), _G1_PREFS_SHIM, """
+window.PREFS={hide_sensitive_metadata:true,notify_system:true};
+['prefHideSensitive','prefNotifBroadcasts','prefNotifTargeted','prefNotifSystem']
+  .forEach(function(i){ mk(i,true); });
+EL.prefNotifSystem.checked=false;
+NEXT={hide_sensitive_metadata:true,notify_broadcasts:true,notify_targeted:true,notify_system:false};
+await savePrefs();
+R.calledNotif=CALLED.slice(); R.msg=EL.prefMsg.textContent;
+CALLED.length=0;
+EL.prefHideSensitive.checked=false;
+NEXT={hide_sensitive_metadata:false,notify_broadcasts:true,notify_targeted:true,notify_system:false};
+await savePrefs();
+R.calledMask=CALLED.slice();
+""")
+    assert r["msg"].endswith("saved"), "the save stopped reporting itself: %r" % r["msg"]
+    assert r["calledNotif"] == [], (
+        "a notification toggle still repaints the page, and there is nothing "
+        "on it that the preference reaches: %s" % r["calledNotif"]
+    )
+    assert r["calledMask"] == ["loadSessions"], (
+        "the mask change repainted %s — it must repaint what the preference "
+        "actually reaches, and nothing else" % r["calledMask"]
+    )
+
+
+def test_the_preference_save_cannot_reach_the_configuration_card() -> None:
+    """The three names that destroyed the edit, by name, so a future 'just call
+    the page loader' cannot come back through a different door."""
+    body = _bare("savePrefs")
+    for fn in ("refreshCurrent", "loadSettings", "loadConfig"):
+        assert fn not in body, (
+            "savePrefs calls %s() again — that reloads Platform configuration "
+            "over whatever is typed into it" % fn
+        )
+
+
+def test_the_mask_repaint_still_covers_everything_it_reaches() -> None:
+    """The scoping is only complete while loadSessions is the ONLY thing inside
+    loadSettings' reach that renders a masked value. sens() reads PREFS when it
+    builds its markup, so an already-rendered value never changes on its own: if
+    a second sens() call site lands on a Settings card, this scope is wrong and
+    the mask silently stops applying to it."""
+    settings = _bare("loadSettings")
+    reach = [f for f in ("_syncPrefToggles", "loadSessions", "loadConfig",
+                         "loadAnnouncements") if f + "(" in settings]
+    assert "loadSessions" in reach, "loadSettings no longer loads the sessions table"
+    painters = [f for f in reach if re.search(r"(?<![\w.])sens\(", _bare(f))]
+    assert painters == ["loadSessions"], (
+        "the mask now reaches %s inside Settings, so repainting only the "
+        "sessions table leaves the rest showing the old default" % painters
+    )
+    assert "loadSessions()" in _bare("savePrefs"), "and nothing repaints it"
+
+
+# ── #89 · the inbox never refreshes ─────────────────────────────────────────
+
+_G1_INBOX_SHIM = r"""
+var COUNTS=[], LIST=null, LOADED=0;
+var EL={}; function $(id){ return EL[id]||null; }
+function mk(id){ EL[id]={id:id,textContent:'',innerHTML:'',style:{},cls:{}};
+  EL[id].classList={ add:function(c){EL[id].cls[c]=1;},
+    remove:function(c){delete EL[id].cls[c];},
+    contains:function(c){return !!EL[id].cls[c];} };
+  return EL[id]; }
+['inboxStale','inboxStaleMsg','inboxBadge','logoBadge','topInboxBadge',
+ 'inboxList','inboxDetail','inboxFilters'].forEach(mk);
+function renderInboxFilters(){} function renderInboxList(){}
+function renderInboxDetail(){}
+function fault(a,b,c){ return 'FAULT'; }
+var INBOX=[], INBOX_OPEN=null;
+async function api(u){
+  if(u.indexOf('unread-count')>=0)
+    return {ok:true,json:async function(){ return {unread:COUNTS.shift()}; }};
+  LOADED++;
+  return {ok:true,json:async function(){ return LIST; }};
+}
+function strip(){ return {on:!!EL.inboxStale.cls.on, msg:EL.inboxStaleMsg.textContent,
+  badge:EL.inboxBadge.textContent}; }
+/* SAID records, for every non-empty sentence written into the live region,
+   whether the strip was already visible at that instant. A sentence written
+   into a display:none span announces nothing, so showing must come first. */
+var SAID=[], _msgText='';
+Object.defineProperty(EL.inboxStaleMsg,'textContent',{
+  get:function(){ return _msgText; },
+  set:function(v){ _msgText=v;
+    if(v)SAID.push(EL.inboxStale.cls.on?'shown':'hidden'); }});
+"""
+
+_G1_INBOX_FNS = ("updateInboxBadge", "_inboxStale", "pollInbox", "_inboxRemark",
+              "loadInbox")
+
+
+@_G1_SKIP
+def test_the_poller_offers_the_reload_instead_of_performing_it() -> None:
+    """The poller updated the badge and never touched the list, so who claimed
+    what was frozen at page load — two operators can claim and email the same
+    prospect, and the list is stalest during a spike, which is exactly when that
+    happens. It must not simply call loadInbox(): that rebuilds the pane under
+    someone mid-read and fights the open message. It offers, and the offer goes
+    away when it stops being true."""
+    r = _run_g1(_G1_INBOX_FNS, _G1_INBOX_SHIM, """
+LIST={items:[],unread:3};
+COUNTS=[3];  await loadInbox();  R.fresh=strip(); R.mark=INBOX_MARK;
+COUNTS=[5];  await pollInbox();  R.grew=strip();
+COUNTS=[6];  await pollInbox();  R.grewMore=strip();
+COUNTS=[3];  await pollInbox();  R.back=strip();
+COUNTS=[2];  await pollInbox();  R.fell=strip();
+R.loaded=LOADED; R.said=SAID;
+""")
+    assert r["fresh"]["on"] is False, "a freshly loaded list already claims to be stale"
+    assert r["mark"] == 3, "the baseline was not taken: %s" % r["mark"]
+    assert r["grew"]["on"] is True, "two messages arrived and the list said nothing"
+    assert r["grew"]["msg"] == "2 messages have arrived since this list loaded.", r["grew"]
+    assert r["grewMore"]["msg"] == "3 messages have arrived since this list loaded."
+    assert r["back"]["on"] is False, (
+        "the count returned to the baseline and the offer stayed on screen"
+    )
+    assert r["fell"]["on"] is True and "Someone else" in r["fell"]["msg"], r["fell"]
+    assert r["loaded"] == 1, (
+        "the poller reloaded the list %s times — that yanks the row out from "
+        "under whoever is reading it" % r["loaded"]
+    )
+    assert "loadInbox" not in _bare("pollInbox"), "the poller reloads the list again"
+    # Every sentence has to land in a live region that is already on screen.
+    # Written first and shown second, it changes inside display:none and is
+    # never announced — the strip is then visible only to people who look.
+    assert r["said"] and set(r["said"]) == {"shown"}, (
+        "a sentence was written into the offer while it was still hidden: %s"
+        % r["said"]
+    )
+
+
+@_G1_SKIP
+def test_the_baseline_and_the_reading_come_from_one_authority() -> None:
+    """THE ONE THAT KEEPS THE OFFER HONEST. /inbox/unread-count counts the whole
+    table; /inbox caps at 500 rows and reports `unread` over that window (A5,
+    filed under this same entry). Past the cap the two disagree permanently, so
+    a baseline taken from the list value would park a wrong 'new mail' offer on
+    screen forever — and the badge would flip between two numbers every 20s.
+
+    Modelled as a capped list reporting 4 against a real 900."""
+    r = _run_g1(_G1_INBOX_FNS, _G1_INBOX_SHIM, """
+LIST={items:[],unread:4};
+COUNTS=[900]; await loadInbox(); R.afterLoad=strip(); R.mark=INBOX_MARK;
+COUNTS=[900]; await pollInbox(); R.steady=strip();
+COUNTS=[901]; await pollInbox(); R.one=strip();
+""")
+    assert r["mark"] == 900, (
+        "the baseline came from the capped list (%s), not the authority" % r["mark"]
+    )
+    assert r["afterLoad"]["badge"] == "99+", (
+        "the badge was set from the capped window: %r" % r["afterLoad"]["badge"]
+    )
+    assert r["afterLoad"]["on"] is False and r["steady"]["on"] is False, (
+        "the two sources were compared against each other, so a large inbox "
+        "shows a permanent, wrong 'new mail' offer"
+    )
+    assert r["one"]["msg"] == "One message has arrived since this list loaded.", r["one"]
+
+
+@_G1_SKIP
+def test_our_own_click_does_not_come_back_as_someone_elses_message() -> None:
+    """Opening a message marks it read, which drops the whole-table count by
+    one. Left alone that reads as 'someone else has read a message' — the
+    console accusing the operator of being a second operator."""
+    r = _run_g1(_G1_INBOX_FNS, _G1_INBOX_SHIM, """
+LIST={items:[],unread:9};
+COUNTS=[9]; await loadInbox();
+COUNTS=[8]; await _inboxRemark(); R.afterOpen=strip(); R.mark=INBOX_MARK;
+COUNTS=[8]; await pollInbox();    R.steady=strip();
+COUNTS=[9]; await pollInbox();    R.real=strip();
+""")
+    assert r["afterOpen"]["on"] is False, (
+        "reading a message told the operator that somebody else had read it"
+    )
+    assert r["mark"] == 8, "the baseline was not re-taken: %s" % r["mark"]
+    assert r["steady"]["on"] is False
+    assert r["real"]["on"] is True, (
+        "the baseline moved too far and a genuinely new message is now silent"
+    )
+    assert "_inboxRemark" in _bare("openMessage"), (
+        "openMessage polls without re-taking the baseline, so every message "
+        "opened raises a false alarm"
+    )
+
+
+def test_the_stale_offer_is_a_control_not_a_notice() -> None:
+    """The whole strip is the button. A notice with a button inside it is a
+    nested container offering a choice with one option — and it has to reload on
+    activation, not merely describe itself."""
+    mk = _nocomment(_page("inbox"))
+    m = re.search(r'<button[^>]*id="inboxStale"[^>]*>', mk)
+    assert m, "the offer is not a button"
+    assert 'onclick="loadInbox()"' in m.group(0), (
+        "the offer describes the staleness and does nothing about it"
+    )
+    assert 'class="inbox-stale"' in m.group(0)
+    assert 'id="inboxStaleMsg"' in mk and 'aria-live="polite"' in mk, (
+        "the sentence lands in an element nothing announces"
+    )
+    rule = _scope(".inbox-stale{")
+    assert "display:none" in rule, "the offer is on screen with nothing to offer"
+    assert "display:flex" in _scope(".inbox-stale.on{"), "it can never be shown"
+    # the ordering that makes the live region work is driven, not grepped —
+    # see the SAID assertion in test_the_poller_offers_the_reload_...
+
+
+def test_the_stale_offer_is_legible_on_the_tint_it_sits_on() -> None:
+    """--info-soft is an ALPHA fill, so the ink is measured against the
+    COMPOSITED surface rather than against the token — a probe that only parses
+    the rgba() measures a colour nobody sees. The border is measured on both
+    sides: this is a control, and .annbar's --line2 resolves to ~1.3:1 over the
+    same tint, which is a boundary that is not there."""
+    rule = _scope(".inbox-stale{")
+    assert "background:var(--info-soft)" in rule and "color:var(--infoc)" in rule, rule
+    assert "border:1px solid var(--infoc)" in rule, (
+        "the control's boundary went back to a stroke that does not measure"
+    )
+    for theme in ("dark", "light"):
+        scope = _scope(":root{") if theme == "dark" else _scope('html[data-theme="light"]{')
+        m = re.search(r"--info-soft:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)", scope)
+        assert m, f"--info-soft is no longer an rgba in the {theme} scope"
+        rgb = [int(m[1]), int(m[2]), int(m[3])]
+        a = float(m[4])
+        panel = _token("--surf", theme)
+        base = [int(panel.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+        tint = "#%02x%02x%02x" % tuple(
+            round(rgb[i] * a + base[i] * (1 - a)) for i in range(3))
+        ink = _ratio(_token("--infoc", theme), tint)
+        assert ink >= 4.5, f"{theme}: the sentence is {ink:.2f}:1 on its own tint"
+        edge_in = _ratio(_token("--infoc", theme), tint)
+        edge_out = _ratio(_token("--infoc", theme), panel)
+        assert edge_in >= 3.0 and edge_out >= 3.0, (
+            f"{theme}: the boundary is {edge_in:.2f}:1 inside / {edge_out:.2f}:1 "
+            f"outside — a control has to be findable from both sides"
+        )

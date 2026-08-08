@@ -1496,6 +1496,38 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
 .inbox-row.on .sub,.inbox-row.on .mono{color:var(--foxink) !important;opacity:.85}
 .inbox-row.pri{box-shadow:inset 3px 0 0 var(--accent)}
 
+/* ── G1 · #89 · THE LIST SAYS WHEN IT HAS FALLEN BEHIND ─────────────────────
+   The whole strip IS the control. A notice with a button inside it would be a
+   nested container offering a choice with one option — the only thing to do
+   with "this list is out of date" is reload it, so the sentence is the button.
+
+   It borrows .annbar's palette rather than inventing a fourth notice colour:
+   --info-soft over --infoc is this console's measured word for a fact worth
+   seeing, and that ink was already tuned over the composited tint. Measured
+   again here because the strip sits on .clay's --surf, not on the page:
+     dark   --infoc on the composited tint   4.66:1
+     light  --infoc on the composited tint   6.34:1
+   The border is --infoc rather than --line2: .annbar is a notice and can let
+   its tint carry it, but this is a control, and --line2 measures 1.25-1.30:1
+   over the same tint — a boundary that is not there. --infoc clears 3:1
+   against BOTH the tint inside it and the panel outside it.
+
+   It is deliberately NOT a .fielderr. A7's 4px mark is the EXCEPTION
+   treatment, and a list that has fallen behind is information the operator can
+   take or leave, not a breach (R2's status vocabulary). */
+.inbox-stale{
+  display:none;width:100%;text-align:left;
+  align-items:baseline;justify-content:space-between;gap:var(--s-2);
+  margin-bottom:var(--s-3);padding:var(--s-2) var(--s-3);
+  background:var(--info-soft);color:var(--infoc);
+  border:1px solid var(--infoc);border-radius:var(--r-sm);
+  font-family:var(--disp);font-size:11.5px;line-height:1.45;cursor:pointer;
+  transition:background var(--dur) ease;
+}
+.inbox-stale.on{display:flex}
+.inbox-stale:hover{background:var(--surf2)}
+.inbox-stale .act{font-weight:700;white-space:nowrap;text-decoration:underline;text-underline-offset:2px}
+
 /* ── the four marks a row carries, and what the SELECTED row does to them ──
    A5. renderInboxList wrote these four as inline hues on bare spans, so the
    override directly above could not reach them — it keys off the two utility
@@ -2610,6 +2642,10 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
           <label class="sr-only" for="inboxSearch">Search messages</label>
           <input class="cin" id="inboxSearch" placeholder="Search sender, subject, message…" oninput="renderInboxList()" style="margin-bottom:8px;">
           <div id="inboxFilters" role="group" aria-label="Filter messages" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+          <!-- Offered, never performed: the poller finds out the list is stale
+               and says so here. Reloading a list somebody is reading yanks the
+               row out from under them. Hidden until there is something to say. -->
+          <button class="inbox-stale" id="inboxStale" type="button" onclick="loadInbox()"><span id="inboxStaleMsg" aria-live="polite"></span><span class="act">Refresh the list</span></button>
           <div id="inboxList" aria-live="polite" onkeydown="inboxKey(event)"><div class="sub" style="padding:16px;">Loading…</div></div>
         </div>
         <div class="clay pad" id="inboxDetail" style="min-height:320px;"><div class="sub" style="text-align:center;padding:60px 0;">Select a message to read and reply.</div></div>
@@ -3385,6 +3421,51 @@ function _dataRowLabel(pk){
     .find(k=>row[k]!=null&&String(row[k]).trim()!=='');
   return named?(String(row[named]).slice(0,48)+' · '+pk):pk;
 }
+/* ── G1 · #72 · THE TYPE COMES FROM THE COLUMN, NOT FROM THE STRING ──────────
+   saveDataEdit read `(v.trim()!=='' && !isNaN(v)) ? Number(v) : v`. It guessed
+   the type from what the string LOOKED like — the same coercion family A7
+   closed on the configuration card, running against production tables:
+
+     "1.20"     -> 1.2         a version, a reference, an amount, renormalised
+     "0123"     -> 123         every leading zero stripped
+     "0x10"     -> 16
+     "1e3"      -> 1000
+     " 12 "     -> 12
+     "Infinity" -> Infinity -> JSON.stringify -> null -> THE COLUMN IS CLEARED
+
+   The backend does coerce — admin_data._coerce casts to the column's Python
+   type — but it can only cast what it is HANDED. A String column handed the
+   number 1.2 stores "1.2"; an Integer column handed 1.5 stores 1, because
+   int() truncates without complaining. The corruption is decided here, so it
+   is fixed here, and the backend is left alone.
+
+   ⚠ editable_fields ON THE WIRE IS A LIST OF NAMES ONLY. It carries no types
+   (backend/app/routers/admin_data.py returns spec["editable"], a list of
+   strings), so the type is read from TABLE_COLUMNS — the schema map this same
+   page already renders, which does declare one for every editable column on
+   every registered table. A field the map does not know is treated as TEXT and
+   sent through untouched: the string is what the operator typed, and _coerce
+   still casts it correctly at the far end. Guessing would be the defect. */
+function _dataColType(f){
+  const c=(TABLE_COLUMNS[DATA_TABLE]||[]).find(x=>x[0]===f);
+  return c?String(c[1]).toLowerCase():'';
+}
+function _dataIsInt(f){return /^(smallint|integer|bigint)$/.test(_dataColType(f));}
+function _dataValidate(inp){
+  const v=inp.value.trim();
+  if(v==='') return 'Enter a whole number. This column cannot be cleared from here.';
+  /* No floor. The registry states none, and inventing one would make a value
+     the database accepts unenterable — the failure A7 read out of the schema
+     rather than assuming. */
+  return _wholeNumberError(v,-Infinity);
+}
+function dataFieldCheck(inp){
+  const msg=_dataValidate(inp), box=$('derr-'+inp.dataset.dkey);
+  inp.classList.toggle('invalid',!!msg);
+  inp.setAttribute('aria-invalid',msg?'true':'false');
+  if(box){ box.textContent=msg||''; box.classList.toggle('on',!!msg); }
+  return !msg;
+}
 function openDataEdit(pk){
   const row=DATA_ROW_CACHE[pk];
   if(!row||!DATA_META){toast('row not found — try refreshing','error');return}
@@ -3396,7 +3477,20 @@ function openDataEdit(pk){
         <input type="checkbox" id="dedit_${esc(f)}" ${val?'checked':''}> ${esc(f)}
       </label>`;
     }
-    return `<label class="flabel" for="dedit_${esc(f)}">${esc(f)}</label><input class="cin" id="dedit_${esc(f)}" value="${esc(val===null||val===undefined?'':String(val))}">`;
+    /* The declared type is shown beside the name. It is the reason the field
+       behaves the way it does — why "0123" survives in one box and is refused
+       in the next — and it is read from the schema rather than asserted. */
+    const t=_dataColType(f);
+    const tag=t?` <span class="sub mono" style="font-size:9px;">${esc(t)}</span>`:'';
+    const cur=esc(val===null||val===undefined?'':String(val));
+    if(_dataIsInt(f)){
+      const eid='derr-'+esc(f);
+      return `<label class="flabel" for="dedit_${esc(f)}">${esc(f)}${tag}</label>`
+        +`<input class="cin" id="dedit_${esc(f)}" data-dkey="${esc(f)}" inputmode="numeric" aria-invalid="false" aria-describedby="${eid}"`
+        +` oninput="dataFieldCheck(this)" onblur="dataFieldCheck(this)" value="${cur}">`
+        +`<div class="fielderr" id="${eid}" role="status" aria-live="polite"></div>`;
+    }
+    return `<label class="flabel" for="dedit_${esc(f)}">${esc(f)}${tag}</label><input class="cin" id="dedit_${esc(f)}" value="${cur}">`;
   }).join('');
   openModal({eyebrow:DATA_TABLE, title:'Edit '+_dataRowLabel(pk),
     bodyHTML:'<div id="dataEditFields">'+fields+'</div>',
@@ -3407,11 +3501,25 @@ function closeDataEdit(){closeModal();DATA_EDIT_ID=null}
 async function saveDataEdit(btn){
   return busy(btn,async function(){
     if(!DATA_META)return;
+    /* A7's refusal, on this dialog. Every numeric field is checked rather than
+       stopping at the first, so the operator sees all of them at once, and
+       nothing is PATCHed while any of them is wrong — a save that goes through
+       with one field dropped is how "saved" became a false statement about
+       what had happened. */
+    const nums=[].slice.call(document.querySelectorAll('#dataEditFields [data-dkey]'));
+    const bad=nums.filter(function(inp){ return !dataFieldCheck(inp); });
+    if(bad.length){
+      bad[0].focus();
+      toast(bad.length===1?'One field needs fixing before this can be saved.'
+                          :(bad.length+' fields need fixing before this can be saved.'),'error');
+      return;
+    }
     const fields={};
     for(const f of DATA_META.editable_fields){
       const el=$('dedit_'+f);
       if(el.type==='checkbox')fields[f]=el.checked;
-      else fields[f]=(el.value.trim()!==''&&!isNaN(el.value))?Number(el.value):el.value;
+      else if(_dataIsInt(f))fields[f]=Number(el.value.trim());
+      else fields[f]=el.value;   /* a text column gets the string, untouched */
     }
     const r=await api(`/admin/v1/data/${DATA_TABLE}/${DATA_EDIT_ID}`,{method:'PATCH',
       headers:{'content-type':'application/json'},body:JSON.stringify({fields})});
@@ -4127,9 +4235,13 @@ async function loadInbox(){
   $('inboxList').innerHTML='<div>'+Array(4).fill('<div class="inbox-row" style="pointer-events:none;opacity:.6;"><div style="height:12px;width:58%;background:var(--surf2);border-radius:4px;"></div><div style="height:10px;width:86%;background:var(--surf2);border-radius:4px;margin-top:8px;"></div></div>').join('')+'</div>';
   let r;try{r=await api('/admin/v1/inbox')}catch(e){r=null}
   if(!r||!r.ok){$('inboxList').innerHTML=fault('The support inbox did not load.','',"loadInbox()");return;}
-  const d=await r.json(); INBOX=d.items||[]; updateInboxBadge(d.unread);
+  const d=await r.json(); INBOX=d.items||[];
   renderInboxFilters(); renderInboxList();
   if(INBOX_OPEN){const it=INBOX.find(x=>x.id===INBOX_OPEN); it?renderInboxDetail(it):($('inboxDetail').innerHTML='<div class="sub" style="text-align:center;padding:60px 0;">Select a message to read &amp; reply.</div>');}
+  /* The list is fresh, so the strip goes away and the badge and the baseline
+     both come from /unread-count — not from d.unread, which counts a 500-row
+     window and is the second source this used to be. */
+  await _inboxRemark();
 }
 function renderInboxList(){
   const q=_inboxQuery(), el=$('inboxList');
@@ -4166,7 +4278,7 @@ async function openMessage(id){
      one number. The list endpoint caps at 500 and reports `unread` over that
      window; /unread-count counts the whole table. Past the cap those two
      already disagree, and this made a third. Ask the authority instead. */
-  if(!it.read){try{await api('/admin/v1/inbox/'+id+'/read',{method:'POST'})}catch(e){} it.read=true; pollInbox();}
+  if(!it.read){try{await api('/admin/v1/inbox/'+id+'/read',{method:'POST'})}catch(e){} it.read=true; _inboxRemark();}
   renderInboxList(); renderInboxDetail(it);
   /* renderInboxList replaced the row that had focus, so focus fell to <body>
      and arrow navigation had nothing to step from. Put it back on the row the
@@ -4259,7 +4371,60 @@ async function releaseMsg(id,btn){return busy(btn,async function(){
   if(!r||!r.ok)toast((r&&(await r.json().catch(()=>({}))).detail)||'Could not release the lock.','error');
   await loadInbox();});}
 function updateInboxBadge(n){n=n||0;['inboxBadge','logoBadge','topInboxBadge'].forEach(id=>{const b=$(id);if(!b)return;if(n>0){b.textContent=n>99?'99+':n;b.style.display='';}else b.style.display='none';});}
-async function pollInbox(){try{const r=await api('/admin/v1/inbox/unread-count');if(r.ok){updateInboxBadge((await r.json()).unread);}}catch(e){}}
+/* ── G1 · #89 · THE POLLER MOVED A NUMBER AND TOLD NOBODY ────────────────────
+   It updated the badge and never touched the list, so who claimed what and who
+   already replied was frozen at page load. Two operators can claim and email
+   the same prospect — and the list is stalest during a spike, which is exactly
+   when that happens.
+
+   It OFFERS the reload rather than performing it. Calling loadInbox() from the
+   poller would rebuild the pane under someone mid-read, and this page keeps an
+   open message (INBOX_OPEN) that a reload fights.
+
+   ⚠ THE BASELINE IS ALWAYS THE SAME AUTHORITY, and that is the whole trick.
+   A5 filed it under this entry: /inbox/unread-count counts the WHOLE table,
+   while /inbox caps at 500 rows and reports `unread` over that window. On any
+   inbox past the cap those two disagree permanently, so comparing one against
+   the other would park a wrong "new mail" strip on screen forever. INBOX_MARK
+   is a reading of /unread-count and is only ever compared against later
+   readings of /unread-count.
+
+   That also closes the disagreement rather than widening it. loadInbox used to
+   set the badge from the capped list value while the poller set it from the
+   whole-table count, so past 500 the badge flipped between two numbers every
+   20 seconds. It now takes the badge from the authority too — one source, the
+   same one openMessage already deferred to. The cost is stated: if
+   /unread-count is unreachable the badge holds its last value until the next
+   poll, instead of quietly swapping to a number that means something else.
+
+   ⚠ LIMIT, STATED RATHER THAN PAPERED OVER: this only sees the unread COUNT.
+   Another operator CLAIMING a message changes no count, so a pure claim
+   collision is still invisible until a reload. Catching that needs the server
+   to report the list's own version, which is a backend field and its own
+   decision — not this phase. */
+let INBOX_MARK=null;
+function _inboxStale(n){
+  const el=$('inboxStale'), msg=$('inboxStaleMsg'); if(!el||!msg)return;
+  if(n===null||INBOX_MARK===null||n===INBOX_MARK){el.classList.remove('on');msg.textContent='';return;}
+  /* Class first, then the sentence: the span is display:none until the strip
+     is shown, and a live region nothing can see announces nothing. */
+  el.classList.add('on');
+  const d=n-INBOX_MARK;
+  msg.textContent=d>0
+    ? (d===1?'One message has arrived since this list loaded.'
+            :d+' messages have arrived since this list loaded.')
+    : 'Someone else has read a message since this list loaded.';
+}
+async function pollInbox(){
+  try{const r=await api('/admin/v1/inbox/unread-count');
+    if(r.ok){const n=(await r.json()).unread||0;updateInboxBadge(n);_inboxStale(n);return n;}
+  }catch(e){}
+  return null;
+}
+/* Re-take the baseline. The count just moved because WE moved it, and our own
+   click must not come back as somebody else's message. Blanking the mark first
+   is what makes the poll inside this call silent. */
+async function _inboxRemark(){INBOX_MARK=null;_inboxStale(null);INBOX_MARK=await pollInbox();}
 
 /* ──────────── notifications (Phase D) ──────────── */
 function toggleNotif(e){ if(e){e.stopPropagation();}
@@ -4479,8 +4644,36 @@ async function savePrefs(){
     notify_system:$('prefNotifSystem').checked};
   m.textContent='saving…';
   let r; try{ r=await api('/admin/v1/auth/preferences',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({preferences:prefs})}); }catch(e){ r=null; }
-  if(r&&r.ok){ const d=await r.json(); window.PREFS=Object.assign({},d.preferences); if(ME) ME.preferences=d.preferences; m.textContent='✓ saved';
-    if(typeof refreshCurrent==='function') refreshCurrent(); }   // re-render current page so the mask default updates
+  if(r&&r.ok){ const d=await r.json();
+    /* ── G1 · #87 · SAVING ONE CARD NO LONGER DISCARDS THE ONE NEXT TO IT ────
+       This was refreshCurrent(), and savePrefs can only fire from Settings —
+       the four toggles are the only callers — so refreshCurrent() meant
+       loadSettings(), which resets #setName from ME and calls loadConfig().
+       Flipping a notification toggle threw away an unsaved display name and
+       whatever a superadmin had typed into Platform configuration.
+
+       A7's validator raised the stakes rather than lowering them: before it,
+       an interrupted config edit was probably invalid anyway, and now it can
+       be a complete, valid, half-typed change destroyed in silence.
+
+       ⚠ THE REPAINT WAS RIGHT AND IS KEPT. The sensitive-metadata mask is a
+       render-time default — sens() reads PREFS when it builds its markup, so
+       already-rendered values do not change on their own. It is SCOPED to what
+       the preference actually reaches instead of being removed.
+
+       On this page that is exactly one thing: sens() has one call site inside
+       loadSettings' reach, the session IP in the active-sessions table. Every
+       other sens() call site (orgs, org360, audit, revenue, webhooks) lives on
+       a page that runs its own loader when it is next opened, so nothing else
+       needs repainting now. The three notification toggles change no rendering
+       at all and so now fetch nothing.
+
+       Scoped rather than making the config card survive a repaint, because the
+       config card is not the only casualty — the unsaved display name is the
+       other — and rescuing one would have left the other. */
+    const maskWas=!!(window.PREFS||{}).hide_sensitive_metadata;
+    window.PREFS=Object.assign({},d.preferences); if(ME) ME.preferences=d.preferences; m.textContent='✓ saved';
+    if(maskWas!==!!(d.preferences||{}).hide_sensitive_metadata) loadSessions(); }
   else { const d=r?await r.json().catch(()=>({})):{}; m.textContent=(d.detail||'could not save preferences'); }
 }
 
@@ -6170,14 +6363,17 @@ async function loadConfig(){
    negative, so the rule comes from the schema rather than from an assumption —
    every key ships min:0 today, and reading it means a future signed key does not
    quietly become unenterable. */
-function _cfgValidate(inp){
-  const m=CONFIG_META[inp.dataset.cfgkey]||{}, v=inp.value.trim();
-  /* Only `int` has a rule anyone can state. Every key the API ships is int
-     today; anything else passes through untouched rather than being judged by a
-     rule that was not written for it. */
-  if(m.type!=='int') return null;
-  const min=(typeof m.min==='number')?m.min:0;
-  if(v==='') return 'Enter a value. Leaving this empty would save 0.';
+/* ⚠ G1 LIFTED THE RULE OUT OF _cfgValidate SO THERE IS STILL ONE OF IT. The
+   data browser needs the same question asked of the same operator in the same
+   words (#72), and writing a second validator is how two surfaces come to
+   disagree about what a number is. `min` is the lowest value the CALLER will
+   accept — pass -Infinity where the schema states no floor, which selects the
+   signed pattern and makes the floor comparison a no-op.
+
+   Empty is deliberately not judged here: what an empty box MEANS differs
+   between the two callers. A config PUT would save 0; a data PATCH is rejected
+   by the column. Each caller says its own sentence. */
+function _wholeNumberError(v,min){
   if(!(min<0?/^-?\d+$/:/^\d+$/).test(v))
     return min<0
       ? 'Whole numbers only — no decimal point and no separators.'
@@ -6186,6 +6382,16 @@ function _cfgValidate(inp){
   if(!Number.isSafeInteger(n)) return 'That number is too large to store exactly.';
   if(n<min) return 'Must be '+min+' or more.';
   return null;
+}
+function _cfgValidate(inp){
+  const m=CONFIG_META[inp.dataset.cfgkey]||{}, v=inp.value.trim();
+  /* Only `int` has a rule anyone can state. Every key the API ships is int
+     today; anything else passes through untouched rather than being judged by a
+     rule that was not written for it. */
+  if(m.type!=='int') return null;
+  const min=(typeof m.min==='number')?m.min:0;
+  if(v==='') return 'Enter a value. Leaving this empty would save 0.';
+  return _wholeNumberError(v,min);
 }
 function cfgFieldCheck(inp){
   const msg=_cfgValidate(inp), box=$('cfgerr-'+inp.dataset.cfgkey);
