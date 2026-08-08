@@ -373,6 +373,28 @@ def test_the_verify_step_actually_gates(reported, offset, should_pass, tmp_path)
     # encoding="utf-8": text=True alone decodes cp1252 here (C1).
     proc = subprocess.run([shutil.which("bash"), str(script)], env=env,
                           capture_output=True, text=True, encoding="utf-8")
+
+    # ⚠ ADDED AT THE MERGE GATE. `shutil.which("bash")` on Windows resolves to
+    # the WSL relay (C:\Windows\system32\bash.EXE), which exits NON-ZERO with
+    # "execvpe(/bin/bash) failed" when WSL is not provisioned. The skipif above
+    # only asks whether bash is on PATH, not whether it RUNS.
+    #
+    # That is fatal to the three negative cases specifically: they assert
+    # `returncode != 0`, and a harness that cannot start bash returns exactly
+    # that. Measured here -- 3 of the 4 parameters passed on this machine while
+    # the step was never executed at all, and they would pass with the verify
+    # step DELETED. The harness was failing in the same direction as the defect
+    # it was testing for.
+    #
+    # So: prove the step RAN before believing what its exit code means. Its own
+    # `echo` is the evidence; a bash that never started cannot have produced it.
+    ran = "server TimeZone=" in (proc.stdout or "")
+    if not ran:
+        pytest.skip(
+            "bash on PATH but not usable (%s), so the step never executed -- "
+            "skipping rather than reading its exit code as a verdict: %s"
+            % (shutil.which("bash"), (proc.stderr or "").strip()[:120]))
+
     if should_pass:
         assert proc.returncode == 0, (
             "the step rejected a legitimately skewed database:\n%s%s"
