@@ -4047,23 +4047,213 @@ function paintCrumbLogo(){
   const m=document.querySelector('.dock-mark img'), s=document.querySelector('.crumb-logo');
   if(m&&s&&m.src)s.src=m.src;
 }
-function go(page,el){
+/* ── G4 · #73 · EVERY PAGE HAS AN ADDRESS ──────────────────────────────────
+   Seventeen pages and one URL. Nobody could send a colleague a link to the
+   dead-letter queue, Back left the console entirely, and a reload dropped an
+   operator back on Overview mid-investigation.
+
+   The fact base has three rules on this and all three are load-bearing here
+   (ux · Navigation): Deep Linking — "URLs should reflect current state for
+   sharing"; Back Button, severity HIGH — "users expect back to work
+   predictably … preserve navigation history properly"; and Active State —
+   "current page should be visually indicated", which is why a route that
+   cannot light a dock button is not finished. It has nothing on hash-vs-path
+   for a plain HTML app; that choice is mine and is stated below.
+
+   FOUR DECISIONS, EACH WITH ITS REASON:
+
+   1 · A HASH, not a path. This console is a single static file served at one
+       route; a path form would need the server to rewrite every URL to it, and
+       that is a deploy change for a console with no build step.
+
+   2 · WHAT IS IN THE ADDRESS: the page, and for a tenant its id. That is all.
+       O3_TAB, O3_LEDGER_OFF, O3_BREACH_OFF, G3's sort, A7's search and C4's
+       pills are deliberately OUT. The test is whether a human can read the
+       address and know what they will get: "#/orgs/9f2c…" answers that,
+       "#/orgs/9f2c…?tab=ledger&off=150&sort=lastEvent:asc" does not. A scroll
+       offset in a URL is a URL nobody can read, and a shared link that also
+       transplants the sender's filters would show the receiver a different
+       table from the one they were told about.
+
+   3 · A BAD ADDRESS IS SILENT. No toast: a mistyped URL is the browser's
+       business, and an error for it is noise on arrival.
+
+   4 · THE ROLE IS RE-CHECKED HERE. enter() unhides the Staff button behind
+       can('superadmin'), which guards the BUTTON — the only way to reach
+       go('staff') was to click something hidden. A typable #/staff removes
+       that accident. */
+
+/* Pages a role cannot hold. ONE map, read by the router AND the command
+   palette. The palette carried its own copy of this rule and it had already
+   drifted — twelve of seventeen pages, missing deadletter, anchors, alerts,
+   campaigns and org360 — which is exactly how a second list lets #/staff back
+   in. CTX stays the page whitelist; this is only the role overlay on it. */
+const PAGE_MIN_ROLE={staff:'superadmin'};
+
+/* Four pages have no dock button of their own and borrow one. This is not new
+   with routing: navTo() looked up [data-page] directly, so reaching Dead
+   letters from the command palette ALREADY left the whole dock unlit, and
+   openOrg has always had to light the Orgs button by hand. One map, so a
+   route, a palette entry and a click all reach the same button. */
+const PAGE_DOCK={deadletter:'health',anchors:'health',alerts:'health',org360:'orgs'};
+function _dockFor(page){
+  return document.querySelector('.dock-item[data-page="'+(PAGE_DOCK[page]||page)+'"]');
+}
+
+/* THE ONE PAGE SWITCH. go() and openOrg() each carried their own five-line
+   copy of it and had already diverged — openOrg never reset the stagger
+   custom properties, and go() knew nothing about borrowed dock buttons. A
+   router that hooked only go() would not have seen the tenant drill-down at
+   all, which is the single most link-worthy page on this console.
+
+   ⚠ IT DOES NOT TOUCH THE CRUMB, and that is why openOrg is not folded into
+   go(). go() ends with setTopbarContext(page), which for org360 prints the
+   generic "Organization" — it would overwrite openOrg's "Loading…" and then
+   race renderO3Header's tenant name. The crumb has exactly two writers on
+   that page and they stay its own. */
+function _showPage(page,dockEl){
+  var _pg=$('page-'+page); if(!_pg)return false;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  var _pg=$('page-'+page); _pg.classList.add('active');
+  _pg.classList.add('active');
   if(!reduced()){[].forEach.call(_pg.children,function(c,i){c.style.setProperty('--i',i);});}
   document.querySelectorAll('.dock-item').forEach(n=>n.classList.remove('active'));
-  if(el)el.classList.add('active');
+  if(dockEl)dockEl.classList.add('active');
   CUR_PAGE=page;
-  setTopbarContext(page);
-  const fn=_loaders()[page]; if(fn)fn();
   window.scrollTo({top:0,behavior:'smooth'});
+  return true;
+}
+function go(page,el){
+  if(!_showPage(page,el||_dockFor(page)))return;
+  setTopbarContext(page);
+  _routeSync(page);
+  const fn=_loaders()[page]; if(fn)fn();
 }
 function refreshCurrent(){if(CUR_PAGE==='org360'&&O3_ID){openOrg(O3_ID);return;} const fn=_loaders()[CUR_PAGE]; if(fn)fn();}
-function navTo(page){go(page,document.querySelector('.dock-item[data-page="'+page+'"]'));}
+function navTo(page){go(page,_dockFor(page));}
+
+/* ── writing the address ─────────────────────────────────────────────────── */
+let _ROUTING=false;
+function _hashFor(page,id){ return '#/'+(page==='org360'&&id?('orgs/'+encodeURIComponent(id)):page); }
+/* A REFRESH IS NOT A NAVIGATION. refreshCurrent() and _orgActionDone() both
+   re-enter openOrg with the same id, and _orgActionDone fires after every
+   suspend, enable, plan change and offboard — each would otherwise stack a
+   history entry, and Back would walk the operator through six copies of the
+   page they are already on. Comparing against the address we are already at
+   covers all of them without either caller having to know about routing. */
+function _routeSync(page,id){
+  if(_ROUTING)return;                    // applying a route is not making one
+  const want=_hashFor(page,id);
+  if(location.hash===want)return;        // no duplicate entry for where we are
+  try{ history.pushState(null,'',want); }catch(e){}
+}
+
+/* ── reading the address ─────────────────────────────────────────────────── */
+const _ROUTE_UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function _routeParse(hash){
+  const raw=String(hash||'').replace(/^#\/?/,'').split('?')[0];
+  let parts;
+  try{ parts=raw.split('/').filter(Boolean).map(decodeURIComponent); }
+  catch(e){ parts=[]; }                  // a stray % is a malformed URI, not a crash
+  if(!parts.length)return {page:'overview'};
+  if(parts[0]==='orgs'&&parts[1])return {page:'org360',id:parts[1]};
+  return {page:parts[0]};
+}
+function _routeResolve(hash){
+  const r=_routeParse(hash);
+  if(r.page==='org360'){
+    /* An id that is not an id is a MISTYPED ADDRESS, not a missing tenant, so
+       it lands on the list — the section they asked for — rather than on
+       Overview, which throws that away. A well-formed id that does not exist
+       is a different answer and openOrg already gives it: a fault card naming
+       the tenant, which beats silently redirecting somebody away from the row
+       they were sent to look at. */
+    return _ROUTE_UUID.test(r.id||'')?r:{page:'orgs'};
+  }
+  if(!CTX[r.page])return {page:'overview'};
+  const need=PAGE_MIN_ROLE[r.page];
+  if(need&&!can(need))return {page:'overview'};
+  return r;
+}
+function _routeApply(hash){
+  const r=_routeResolve(hash);
+  _ROUTING=true;
+  try{
+    if(r.page==='org360')openOrg(r.id);
+    else if(r.page!==CUR_PAGE)go(r.page);
+    /* Already here: repaint the page and dock state without re-running the
+       loader. This is the cold-boot case — CUR_PAGE starts at 'overview' and
+       enter() has just loaded it — and re-fetching on arrival would double
+       every request on the most common sign-in there is. */
+    else { _showPage(r.page,_dockFor(r.page)); setTopbarContext(r.page); }
+  } finally { _ROUTING=false; }
+  /* The address is normalised to what actually happened, so the URL never
+     claims a page the console is not showing. replaceState, not push:
+     arriving is not a navigation, and Back must leave the console rather than
+     bounce between a bad address and its correction. */
+  /* ── G4.2 · AND THE CONSOLE DOES NOT TRY TO DISCARD THE ENTRY ─────────────
+     Correcting #/nope in place leaves a second, identical #/overview right
+     after the first, so the next Back press moves between two entries with the
+     same hash, fires no hashchange, and appears to do nothing. G4.1 tried to
+     discard that entry with history.back(), gated on `want===_ROUTE_AT`.
+
+     ⚠ THAT WAS NOT A PROOF, AND CALLING IT ONE WAS THE MISTAKE. _ROUTE_AT is
+     the last address THIS DOCUMENT settled on; the entry behind the cursor is
+     a different fact, and the two coincide only when the bogus entry happened
+     to be pushed from the entry immediately behind it. The `if(ME)` gate pulls
+     them apart on its own: a hash edited at the sign-in gate is never
+     corrected, because the listener declines to run without ME. Sign in, press
+     Back onto one of those, and the correction fires, backs onto ANOTHER
+     uncorrected entry, corrects again, backs again — one press chaining out of
+     the console. Exactly the failure the condition was written to prevent.
+
+     There is no honest test available. history.state can say whether the
+     CURRENT entry is one of ours; nothing can say what the entry behind it
+     holds, and every candidate is another heuristic wearing the word "proof" —
+     this phase has now produced two of those.
+
+     SO IT IS DROPPED, DELIBERATELY. The cost is one dead Back press after
+     typing an address that does not resolve: a rare action, with an obvious
+     recovery, and the second press works. The cost of being wrong the other
+     way is walking an operator out of the console mid-investigation. Choosing
+     the smaller defect and writing down why is the better answer than a
+     cleverer condition nobody can verify. */
+  const want=_hashFor(r.page,r.id);
+  if(location.hash!==want){ try{ history.replaceState(null,'',want); }catch(e){} }
+}
+/* hashchange, not popstate. pushState does not fire hashchange, so writing the
+   address cannot re-enter this; Back and Forward do fire it, and so does a
+   human editing the address bar. Listening to both would apply every route
+   twice. The ME guard is the sign-in gate: a hash typed before sign-in stays
+   in the URL untouched and is applied by enter(), which is what makes a deep
+   link survive authentication. */
+window.addEventListener('hashchange',function(){ if(ME)_routeApply(location.hash); });
+
+/* ── G4.1 · SIGNING OUT LEAVES NO ADDRESS BEHIND ────────────────────────────
+   ONE function, two callers, because there were two sign-out paths and only
+   one of them cleared the hash: doLogout did, logoutEverywhere did not — and
+   logout-everywhere is the STRONGER sign-out, the one somebody reaches for
+   precisely when they want nothing of theirs left on the machine. A third
+   sign-out path is how this gets missed again, so the line lives here rather
+   than being copied a third time.
+
+   The reason is the same for both: location.reload() on its own keeps the
+   hash, so signing out of #/audit and back in drops the NEXT person straight
+   into it — and they may hold a different role, or be a different operator.
+   Sign-out is an explicit "I am done here". The reset gate clears its token
+   with this same line. */
+function _signOutReload(){
+  try{ history.replaceState(null,'',location.pathname); }catch(e){}
+  location.reload();
+}
 function toggleTheme(){const next=document.documentElement.dataset.theme==='dark'?'light':'dark';setTheme(next);const t=$('darkModeToggle');if(t)t.checked=(next==='dark');}
 
 /* ──────────── support inbox ──────────── */
-function goOps(page){go(page,$('navOps'))}
+/* goOps was go(page,$('navOps')) and PAGE_DOCK now resolves those three to the
+   same button — #navOps IS the [data-page="health"] item — so this is the same
+   element by a route that a hash can also take. Kept as a name because
+   thirty-two call sites read it, and "go to an ops page" says more at the call
+   site than navTo does. */
+function goOps(page){navTo(page)}
 /* A fault is not an empty, and this console of all consoles has to say which.
    "No policy breaches for this tenant" is the good news staff came to confirm;
    "the breach endpoint returned 500" is an incident. Both used to render as the
@@ -4755,7 +4945,7 @@ function confirmLogoutEverywhere(){
 }
 async function logoutEverywhere(){
   let r; try{ r=await api('/admin/v1/auth/logout-all',{method:'POST'}); }catch(e){ r=null; }
-  if(r&&r.ok){ location.reload(); }   // this device's session is revoked too → back to the gate
+  if(r&&r.ok){ _signOutReload(); }   // this device's session is revoked too → back to the gate, and the address goes with it
   else toast(r?('Could not log out everywhere (HTTP '+r.status+').'):'No response from the API — every session is still active.','error');
 }
 document.addEventListener('click',function(e){ const w=$('topNotifWrap'); if(w && !w.contains(e.target)){ const p=$('notifPanel');
@@ -4974,6 +5164,14 @@ function enter(me){
   loadBanner();
   pollInbox(); if(!window.__inboxTimer) window.__inboxTimer=setInterval(pollInbox,20000);
   pollNotif(); if(!window.__notifTimer) window.__notifTimer=setInterval(pollNotif,20000);
+  /* G4 · LAST, and only here. The role has to be known before a route can be
+     refused, and navStaff has to be unhidden above or #/staff would light a
+     button nobody can see. boot() is far too early — ME does not exist yet —
+     and that is also exactly why a deep link survives the sign-in gate for
+     free: nothing between the address bar and this line reads the hash, so it
+     is still sitting in the URL whether the operator arrived already signed in
+     or typed a password first. */
+  _routeApply(location.hash);
 }
 $('gateForm').addEventListener('submit',async e=>{
   e.preventDefault();$('gErr').textContent='';
@@ -5045,7 +5243,10 @@ $('gateReset').addEventListener('submit',async e=>{
   $('gateReset').style.display='none';$('gateForm').style.display='';
   $('gErr').textContent='password reset — please sign in.';
 });
-async function doLogout(){await api('/admin/v1/auth/logout',{method:'POST'});location.reload()}
+async function doLogout(){
+  await api('/admin/v1/auth/logout',{method:'POST'});
+  _signOutReload();
+}
 
 /* ──────────── overview ──────────── */
 /* A5 - a bucket of zero drew a bar. The floor was Math.max(2,...) and .funbar i
@@ -5751,23 +5952,151 @@ async function orgPlan(id,current){
 
 /* ──────────── org 360 (tenant drill-down) ──────────── */
 let O3_ID=null, O3_DATA=null, O3_TAB='overview', O3_LEDGER_OFF=0, O3_BREACH_OFF=0, O3_LEDGER_BREACH=false;
+/* ── G4.1 · TWO TENANTS CANNOT BE ON SCREEN AT ONCE ─────────────────────────
+   Pre-existing, and routing turned it from a fast double-click into a
+   two-keystroke reproduction: Back and Forward between two tenants leaves two
+   openOrg calls in flight, and the LATER RESPONSE WINS renderO3Header. The
+   action buttons carry d.id, so an operator gets one tenant's Suspend and
+   Offboard sitting above another tenant's ledger. On this console.
+
+   ⚠ THE BUTTONS ARE NOT THE BUG and are deliberately left reading d.id: they
+   must act on the tenant whose data is on screen. The defect is that two
+   tenants are on screen at all.
+
+   ⚠ AND IT IS NOT ONLY openOrg. Checked rather than assumed — five async
+   painters on this page await api() and then write #o3Panel or the header,
+   and every one of them reads O3_ID at REQUEST time: openOrg, o3LoadList,
+   o3LoadLedger, o3LoadBreaches and orgVerify. A counter in openOrg alone
+   would still let tenant A's ledger land under tenant B's header, because
+   that response was already in flight when the tenant changed.
+
+   ⚠ G4.2 · AND ONE COUNTER WAS WRONG, because the five painters do not write
+   the same place. Scoped to a single integer they cancel EACH OTHER:
+
+     head + O3_DATA   openOrg
+     #o3Panel         o3LoadList, o3LoadLedger, o3LoadBreaches
+     #o3VerifyState   orgVerify
+
+   Two clicks reproduced it. #o3Tabs is static markup and openOrg never
+   cleared it, so the previous tenant's tab bar sat live above a panel still
+   reading "loading…". Clicking Ledger there bumped the shared counter and
+   openOrg's own response was dropped: the header stayed "Loading…" with no
+   Suspend and no Offboard, and O3_DATA stayed null — so the next click on
+   Overview ran `const d=O3_DATA; d.contact_email` and threw. With a previous
+   tenant already rendered it was worse than a crash: O3_DATA held tenant A
+   while the address and every pager read tenant B, which is precisely the
+   mixing the counter was added to remove.
+
+   It cut both ways. Verify chain during a tab load stranded #o3Panel on
+   "loading…" forever, because orgVerify bumped the shared counter and then
+   wrote a different node entirely; and a tab click during a verify dropped
+   the verdict and its toast, leaving "verifying…" with nothing left to
+   resolve it.
+
+   SO THE GENERATION IS PER REGION — three counters, one per thing that can be
+   written — rather than a keyed map or the tenant id. The tenant id alone
+   cannot express the races WITHIN one tenant (Ledger then Breaches, or two
+   quick page clicks), and a map keyed by anything finer just re-encodes these
+   same three names with more ceremony. Three names, because there are three
+   nodes.
+
+   TWO RULES HOLD IT TOGETHER:
+     · a NEW TENANT invalidates everything — openOrg bumps all three, so an
+       in-flight panel load and an in-flight verify both die with it;
+     · and openOrg must not cancel ITSELF. It ends by calling o3Tab, which
+       bumps `panel` only, so its own `head` token survives its last line.
+
+   o3Tab bumps `panel` even though it awaits nothing, and that is load-bearing:
+   renderO3Overview and renderO3Policy are SYNCHRONOUS and take no token, so
+   without the bump a slow ledger response would still be current when it
+   landed and would paint straight over the Overview the operator had just
+   switched to. */
+const O3_REGIONS=['head','panel','verify'];
+let O3_GEN={head:0,panel:0,verify:0};
+/* Take a token for one region. */
+function _o3Take(region){ return ++O3_GEN[region]; }
+/* Everything at once, and the caller gets a token for EVERY region rather than
+   just one — openOrg writes the header on the success path and #o3Panel on the
+   failure path, which are two different nodes and therefore two tokens. */
+function _o3TakeAll(){
+  const t={}; O3_REGIONS.forEach(function(r){ t[r]=++O3_GEN[r]; }); return t;
+}
+function _o3Stale(region,tok){ return O3_GEN[region]!==tok; }
 function _orgActionDone(){ if(CUR_PAGE==='org360'&&O3_ID){openOrg(O3_ID);} else {loadOrgs();} }
 async function openOrg(id){
+  /* EVERY REGION, and not only on a new tenant. THREE things call openOrg,
+     and the guard that derives them from source is what found the third:
+     _orgActionDone repaints the SAME tenant after every suspend, enable, plan
+     change and offboard; refreshCurrent does it on every Refresh; and
+     _routeApply does it whenever an address resolves to a tenant, which
+     includes Back and Forward onto the one already showing. So an in-flight
+     chain verify dies here in cases where the tenant has not changed at all.
+
+     That is the behaviour we want and the sentence that used to sit here was
+     what was wrong: a verify is a statement about the ledger as it was BEFORE
+     the action that just landed, and letting it resolve afterwards would print
+     a verdict about a state the operator can no longer see. Superseding it is
+     right; claiming only a new tenant does so was not.
+
+     A token per region, because openOrg writes two different nodes: the header
+     when the tenant loads, #o3Panel when it does not. */
+  const gen=_o3TakeAll();
   O3_ID=id; O3_TAB='overview'; O3_LEDGER_OFF=0; O3_BREACH_OFF=0; O3_LEDGER_BREACH=false;
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  $('page-org360').classList.add('active'); CUR_PAGE='org360';
+  /* G4 · the drill-down goes through the shared page switch and writes its own
+     address. It is NOT folded into go(): go() ends with setTopbarContext(page),
+     which for org360 prints the generic "Organization" over the two writers
+     this page actually has — the "Loading…" below and renderO3Header's tenant
+     name. _showPage deliberately does not touch the crumb, so both survive. */
+  _showPage('org360',_dockFor('org360'));
   setTopbarContext('org360','Loading…');
-  document.querySelectorAll('.dock-item').forEach(n=>n.classList.remove('active'));
-  const od=document.querySelector('.dock-item[data-page="orgs"]'); if(od)od.classList.add('active');
-  window.scrollTo({top:0,behavior:'smooth'});
+  /* ⚠ THIS LINE'S POSITION IS LOAD-BEARING. _ROUTING is a synchronous flag and
+     _routeApply clears it in a finally that runs as soon as this function
+     hits its first await — so the suppression only covers the prefix ABOVE
+     that await. It is correct exactly because _routeSync sits here, before the
+     fetch. Moved below it, applying a route would push a history entry for the
+     route it is applying, and Back would stop working on the drill-down. */
+  _routeSync('org360',id);
+  /* G4.2 · THE TAB BAR IS STATIC MARKUP and openOrg never cleared it, so the
+     previous tenant's selection sat lit above a panel reading "loading…" — a
+     small lie of its own, and the reason this window was clickable into a
+     crash at all. Nothing is pressed while nothing is loaded; o3Tab lights one
+     again the moment there is something to light. */
+  document.querySelectorAll('#o3Tabs [data-tab]').forEach(b=>b.setAttribute('aria-pressed','false'));
   $('o3Sub').textContent=''; $('o3Chips').innerHTML=''; $('o3Actions').innerHTML='';
   $('o3Usage').innerHTML=''; $('o3Kpis').innerHTML=''; $('o3VerifyState').textContent='';
   $('o3Panel').innerHTML='<div class="sub mono" style="padding:14px;">loading…</div>';
   let r; try{ r=await api('/admin/v1/organizations/'+id+'/overview'); }catch(e){ r=null; }
-  if(!r||!r.ok){ setTopbarContext('org360'); $('o3Panel').innerHTML='<div class="clay pad">'+fault('This organization did not load.',(r?'HTTP '+r.status:'no response from the API'),"openOrg(O3_ID)")+'</div>'; return; }
-  O3_DATA=await r.json();
+  /* A later openOrg is in flight, so this answer is about a tenant nobody is
+     looking at any more. Dropped BEFORE the fault branch too: an older
+     tenant's failure must not paint an error over a newer tenant's page. */
+  if(_o3Stale('head',gen.head))return;
+  if(!r||!r.ok){
+    setTopbarContext('org360');
+    /* ⚠ THE PANEL TOKEN FOR THE PANEL WRITE. This branch writes #o3Panel, which
+       every other writer of that node holds a `panel` token for — and it was
+       checking `head`, so a tab clicked during a FAILING tenant load did not
+       invalidate this notice: it painted "did not load" over rows that had
+       loaded fine, or was wiped by them a moment later. The same shared-node
+       confusion the region split fixed, one level down.
+
+       The crumb reset above stays on `head` because that is the node it
+       writes. If a tab did claim the panel, the operator keeps the data they
+       asked for — those endpoints are per-org and independent of /overview, so
+       the tenant is not broken, only its overview call is — and the header
+       says so by having no actions on it. */
+    if(!_o3Stale('panel',gen.panel))
+      $('o3Panel').innerHTML='<div class="clay pad">'+fault('This organization did not load.',(r?'HTTP '+r.status:'no response from the API'),"openOrg(O3_ID)")+'</div>';
+    return;
+  }
+  const _d=await r.json();
+  if(_o3Stale('head',gen.head))return;   // json() is a second await, and a second chance to be overtaken
+  O3_DATA=_d;
   renderO3Header(O3_DATA);
-  o3Tab('overview');
+  /* O3_TAB, not the literal 'overview'. The tab bar is live while the header
+     loads, so a click during that window has already set O3_TAB — and forcing
+     Overview here would quietly throw that click away. With no click it is
+     still 'overview', reset at the top of this function. */
+  o3Tab(O3_TAB);
 }
 function renderO3Header(d){
   /* the org's name is the page's name, so it lands in the crumb rather than in
@@ -5864,6 +6193,11 @@ function _spark(hostId){
   return (face?getComputedStyle(face).getPropertyValue('--spark'):'').trim()||'#FF6A1A';
 }
 function o3Tab(name){
+  /* A new tab is new intended content, so anything still in flight for the old
+     one is now stale — clicking Ledger then Breaches must not let the slower
+     of the two win the panel. PANEL ONLY: a tab change says nothing about the
+     header that is still arriving, or about a verify running beside it. */
+  _o3Take('panel');
   O3_TAB=name;
   document.querySelectorAll('#o3Tabs [data-tab]').forEach(b=>
     b.setAttribute('aria-pressed',b.dataset.tab===name?'true':'false'));
@@ -5911,9 +6245,13 @@ function renderO3Policy(){
   $('o3Panel').innerHTML=_dgrid(rows);
 }
 async function o3LoadList(kind,render){
+  const gen=_o3Take('panel');
   let r; try{ r=await api('/admin/v1/organizations/'+O3_ID+'/'+kind); }catch(e){ r=null; }
+  if(_o3Stale('panel',gen))return;
   if(!r||!r.ok){ $('o3Panel').innerHTML='<div class="clay pad">'+fault('That tab did not load.',(r?'HTTP '+r.status:'no response from the API'),"openOrg(O3_ID)")+'</div>'; return; }
-  render(await r.json());
+  const _d=await r.json();
+  if(_o3Stale('panel',gen))return;
+  render(_d);
 }
 function renderO3Users(rows){
   if(!rows.length){ $('o3Panel').innerHTML='<div class="clay pad"><div class="chart-empty">No dashboard users.<span class="hint">This tenant uses the SDK only — nobody has been invited to the dashboard.</span></div></div>'; return; }
@@ -6025,11 +6363,14 @@ function pgReset(key){ if(PG[key])PG[key].page=1; }
 /* P5 · dir is a page NUMBER now, not a +1/-1 nudge: foxPager can jump straight
    to page 9, which prev/next could never express. */
 async function o3LoadLedger(page){
+  const gen=_o3Take('panel');
   if(page)O3_LEDGER_OFF=Math.max(0,(page-1)*50);
   const bo=O3_LEDGER_BREACH?'&breaches_only=true':'';
   let r; try{ r=await api('/admin/v1/organizations/'+O3_ID+'/logs?limit=50&offset='+O3_LEDGER_OFF+bo); }catch(e){ r=null; }
+  if(_o3Stale('panel',gen))return;
   if(!r||!r.ok){ $('o3Panel').innerHTML='<div class="clay pad">'+fault('The ledger did not load.',(r?'HTTP '+r.status:'no response from the API'),"o3LoadLedger()")+'</div>'; return; }
   const d=await r.json();
+  if(_o3Stale('panel',gen))return;
   /* the range string that used to sit here ("N rows · 1–50") is what foxPager
      already prints twelve pixels below, in a different format. One fact, one
      place; the filter keeps the row to itself. */
@@ -6046,10 +6387,13 @@ async function o3LoadLedger(page){
     total:d.total,label:'Ledger pages',onPage:o3LoadLedger});
 }
 async function o3LoadBreaches(page){
+  const gen=_o3Take('panel');
   if(page)O3_BREACH_OFF=Math.max(0,(page-1)*50);
   let r; try{ r=await api('/admin/v1/organizations/'+O3_ID+'/breaches?limit=50&offset='+O3_BREACH_OFF); }catch(e){ r=null; }
+  if(_o3Stale('panel',gen))return;
   if(!r||!r.ok){ $('o3Panel').innerHTML='<div class="clay pad">'+fault('Breaches did not load.',(r?'HTTP '+r.status:'no response from the API'),"o3LoadBreaches()")+'</div>'; return; }
   const d=await r.json();
+  if(_o3Stale('panel',gen))return;
   if(!d.total){ $('o3Panel').innerHTML='<div class="clay pad"><div class="chart-empty">No policy breaches for this tenant.<span class="hint">Every graded interaction has come back clean.</span></div></div>'; return; }
   /* ⚠ The `return` below MUST keep its value on the same line. It used to end
      the line, with the row string starting on the next one — ASI closed the
@@ -6068,10 +6412,17 @@ async function o3LoadBreaches(page){
 }
 async function orgVerify(){
   if(!O3_ID)return;
+  /* The slowest request on this page, and the one whose answer means the most:
+     "chain intact" printed against a tenant nobody is looking at any more,
+     inside a different tenant's header, is close to the worst sentence this
+     console could produce. Same generation, same drop. */
+  const gen=_o3Take('verify');
   $('o3VerifyState').innerHTML='<span class="sub mono">verifying…</span>';
   let r; try{ r=await api('/admin/v1/organizations/'+O3_ID+'/verify'); }catch(e){ r=null; }
+  if(_o3Stale('verify',gen))return;
   if(!r||!r.ok){ $('o3VerifyState').innerHTML='<span class="chip bad">verify failed</span>'; return; }
   const d=await r.json();
+  if(_o3Stale('verify',gen))return;
   $('o3VerifyState').innerHTML=d.ok
     ? '<span class="chip safe">✓ chain intact · '+num(d.count)+' rows</span>'
     : '<span class="chip bad">✗ '+esc(d.detail)+(d.first_broken_seq?(' @ seq '+d.first_broken_seq):'')+'</span>';
@@ -7337,12 +7688,16 @@ document.addEventListener('click',function(e){
 /* ---- command palette (Cmd/Ctrl-K) + shortcuts help ---- */
 var CMDK=null,_cmdkItems=[],_cmdkSel=0;
 function _cmdkCommands(){
-  var pages=[['overview','Overview',null],['health','System health',null],['orgs','Organizations',null],
-    ['traffic','Traffic',null],['staff','Staff','superadmin'],['data','Data browser',null],
-    ['revenue','Revenue',null],['security','Security',null],['audit','Audit log',null],
-    ['leads','Leads',null],['inbox','Inbox',null],['settings','Settings',null]];
+  /* G4 · the role no longer rides in a third column here. This list carried
+     its own copy of "staff is superadmin-only" while the router needed the
+     same rule, and two copies of a permission is how one of them gets missed.
+     PAGE_MIN_ROLE is the single source; this array is now only labels. */
+  var pages=[['overview','Overview'],['health','System health'],['orgs','Organizations'],
+    ['traffic','Traffic'],['staff','Staff'],['data','Data browser'],
+    ['revenue','Revenue'],['security','Security'],['audit','Audit log'],
+    ['leads','Leads'],['inbox','Inbox'],['settings','Settings']];
   var cmds=[];
-  pages.forEach(function(p){ if(p[2]&&!can(p[2]))return; cmds.push({cat:'Go to',label:p[1],act:function(){navTo(p[0]);}}); });
+  pages.forEach(function(p){ var need=PAGE_MIN_ROLE[p[0]]; if(need&&!can(need))return; cmds.push({cat:'Go to',label:p[1],act:function(){navTo(p[0]);}}); });
   cmds.push({cat:'Actions',label:'Refresh this page',act:refreshCurrent});
   cmds.push({cat:'Actions',label:'Toggle light / dark',act:toggleTheme});
   cmds.push({cat:'Actions',label:'Keyboard shortcuts',act:showShortcuts});

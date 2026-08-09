@@ -7873,3 +7873,1377 @@ def test_the_active_sort_column_survives_forced_colors() -> None:
     mark = rule_for('.tbl th[aria-sort="ascending"] .sortmark')
     assert "Highlight" in mark, (
         "the direction mark flattens to the same ink as every other header: %r" % mark)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G4 · EVERY PAGE HAS AN ADDRESS  (register #73)
+#
+# ROUTING IS BEHAVIOUR, so nearly all of these RUN it. A static guard here is
+# almost worthless: "#/staff falls back to overview" is one comparison, and a
+# grep for PAGE_MIN_ROLE passes with the branch unreachable — which is A7's
+# shape and the single sharpest thing in this phase.
+#
+# Bodies read through _g4_bare(): this file explains itself in /* */ prose that
+# quotes the very hashes and roles being asserted, and _js_code strips only //.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _g4_bare(name: str) -> str:
+    out = re.sub(r"/\*.*?\*/", "", _js_func(name), flags=re.S)
+    return re.sub(r"(?m)^\s*//.*$", "", out)
+
+
+_G4_SKIP = pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+
+_G4_FNS = ("_dockFor", "_showPage", "go", "navTo", "goOps", "_hashFor",
+           "_routeSync", "_routeParse", "_routeResolve", "_routeApply")
+_G4_CONSTS = ("PAGE_MIN_ROLE", "PAGE_DOCK", "_ROUTE_UUID", "CTX")
+
+#: A DOM with the real dock inventory and the real page ids, both read out of
+#: the shipped markup — a probe that invented its own would be testing a COPY
+#: of the console's navigation (F2) and would stay green while the real dock
+#: lost a button.
+_G4_SHIM = r"""
+var LOADED=[], CRUMB=[], SCROLLED=0, OPENED=[], TOASTS=[];
+var HIST=[];                      // every push/replace/back, in order
+var location={hash:'', pathname:'/admin/'};
+/* G4.1 · A REAL ENTRY STACK, not a call log. The double-Back defect only
+   exists as a relationship between ADJACENT entries — two of them reading the
+   same hash — so a shim that records calls and nothing else cannot see it, and
+   the first version of this one could not. STACK/IDX is the smallest model
+   that can: push truncates the forward entries, replace overwrites in place,
+   and back moves the cursor and fires the listener ONLY when the hash actually
+   changed, which is exactly the browser rule the defect turns on. */
+var STACK=[], IDX=-1;
+function _hashOf(u){ var i=String(u).indexOf('#'); return i>=0?String(u).slice(i):''; }
+var history={
+  pushState:function(a,b,u){ var h=_hashOf(u); HIST.push(['push',u]);
+    STACK=STACK.slice(0,IDX+1); STACK.push(h); IDX=STACK.length-1; location.hash=h; },
+  replaceState:function(a,b,u){ var h=_hashOf(u); HIST.push(['replace',u]);
+    if(IDX<0){ STACK=[h]; IDX=0; } else STACK[IDX]=h;
+    location.hash=h; },
+  back:function(){ HIST.push(['back','']); _step(-1); }};
+function _step(d){
+  var n=IDX+d; if(n<0||n>=STACK.length)return 'left the console';
+  var changed=(STACK[n]!==location.hash);
+  IDX=n; location.hash=STACK[n];
+  /* the shipped listener's body, and only its body — that it is REGISTERED on
+     hashchange and nowhere else is guarded statically by
+     test_the_router_listens_on_hashchange_and_only_there. */
+  if(changed && ME)_routeApply(location.hash);
+  return changed?'moved':'DEAD PRESS';
+}
+/* the browser when a human edits the address bar: a new entry, then the event */
+function typeHash(h){
+  STACK=STACK.slice(0,IDX+1); STACK.push(h); IDX=STACK.length-1; location.hash=h;
+  if(ME)_routeApply(location.hash);
+}
+function pressBack(){ return _step(-1); }
+function pressForward(){ return _step(1); }
+function entries(){ return STACK.slice(); }
+var window={scrollTo:function(){SCROLLED++;}, addEventListener:function(){}};
+function El(tag,attrs){ var e={tag:tag, attrs:attrs||{}, cls:{},
+  classList:{ add:function(c){this._o.cls[c]=1;}, remove:function(c){delete this._o.cls[c];},
+              contains:function(c){return !!this._o.cls[c];} },
+  style:{ setProperty:function(){} }, children:[],
+  getAttribute:function(k){ return k in this.attrs?String(this.attrs[k]):null; },
+  setAttribute:function(k,v){ this.attrs[k]=String(v); } };
+  /* data-* mirrored onto .dataset, because the shipped o3Tab reads
+     b.dataset.tab and the probe drives the real one. */
+  e.dataset={};
+  Object.keys(e.attrs).forEach(function(k){
+    if(k.indexOf('data-')===0)e.dataset[k.slice(5).replace(/-(\w)/g,function(m,c){return c.toUpperCase()})]=e.attrs[k]; });
+  return e; }
+function mk(tag,attrs){ var e=El(tag,attrs); e.classList._o=e; return e; }
+var PAGES={}, DOCK=[];
+/* the tenant page's tab bar — static markup in the shipped file, which is the
+   whole reason it stays live above a loading panel */
+var O3TABS=['overview','users','keys','ledger','breaches','policy'].map(function(t){
+  var e=mk('button',{'data-tab':t,'aria-pressed':'false'}); return e; });
+function pressedTab(){ var a=O3TABS.filter(function(b){return b.attrs['aria-pressed']==='true'});
+  return a.length?a.map(function(b){return b.attrs['data-tab']}).join('+'):null; }
+function addPage(id){ var e=mk('section',{id:'page-'+id}); PAGES['page-'+id]=e; return e; }
+function addDock(page,id){ var e=mk('button',{'data-page':page,id:id||''}); DOCK.push(e); return e; }
+var document={
+  getElementById:function(id){ return PAGES[id]||DOCK.filter(function(d){return d.attrs.id===id})[0]||null; },
+  querySelectorAll:function(sel){
+    if(sel==='.page')return Object.keys(PAGES).map(function(k){return PAGES[k]});
+    if(sel==='.dock-item')return DOCK;
+    if(sel==='#o3Tabs [data-tab]')return O3TABS;
+    throw new Error('probe DOM cannot match '+sel); },
+  querySelector:function(sel){
+    var m=sel.match(/^\.dock-item\[data-page="([\w-]+)"\]$/);
+    if(!m)throw new Error('probe DOM cannot match '+sel);
+    return DOCK.filter(function(d){return d.attrs['data-page']===m[1]})[0]||null; }};
+function $(id){ return document.getElementById(id); }
+function reduced(){ return true; }
+function setTopbarContext(p,o){ CRUMB.push(o||p); }
+function toast(m){ TOASTS.push(m); }
+function _loaders(){ var o={}; PAGE_IDS.forEach(function(p){ o[p]=function(){LOADED.push(p);} }); return o; }
+var ME=null;
+var ROLE_RANK={viewer:0,operator:1,superadmin:2};
+var can=function(min){ return ME && ROLE_RANK[ME.platform_role]>=ROLE_RANK[min]; };
+var O3_ID=null,O3_TAB='overview',O3_LEDGER_OFF=0,O3_BREACH_OFF=0,O3_LEDGER_BREACH=false;
+async function openOrg(id){ OPENED.push(id); O3_ID=id;
+  _showPage('org360',_dockFor('org360')); setTopbarContext('org360','Loading…');
+  _routeSync('org360',id); }
+function activePage(){ var a=Object.keys(PAGES).filter(function(k){return PAGES[k].cls.active});
+  return a.length===1?a[0].replace('page-',''):('['+a.length+' active]'); }
+function litDock(){ var a=DOCK.filter(function(d){return d.cls.active});
+  return a.length?a.map(function(d){return d.attrs['data-page']}).join('+'):null; }
+function reset(){ LOADED=[];CRUMB=[];OPENED=[];TOASTS=[];HIST=[];STACK=[];IDX=-1;
+  Object.keys(PAGES).forEach(function(k){PAGES[k].cls={}}); DOCK.forEach(function(d){d.cls={}}); }
+"""
+
+
+def _g4_pages_and_dock() -> str:
+    """The real page ids and the real dock inventory, from the markup."""
+    import json
+    mk = _nocomment(SRC)
+    pages = re.findall(r'<section class="page(?: active)?" id="page-([\w-]+)"', mk)
+    dock = re.findall(r'<button class="dock-item(?: active)?" data-page="([\w-]+)"'
+                      r'(?:[^>]*?id="([\w-]+)")?', mk)
+    assert len(pages) >= 16, "only %d pages found in the markup" % len(pages)
+    assert len(dock) >= 12, "only %d dock items found" % len(dock)
+    js = ["var PAGE_IDS=%s;" % json.dumps(pages)]
+    js += ["addPage(%s);" % json.dumps(p) for p in pages]
+    js += ["addDock(%s,%s);" % (json.dumps(p), json.dumps(i)) for p, i in dock]
+    return "\n".join(js)
+
+
+def _g4_const(*names: str) -> str:
+    spans = {}
+    for n in names:
+        m = re.search(r"(?m)^(?:const|let)\s+[^;\n]*\b" + re.escape(n) + r"\b", SRC)
+        assert m, "%s is gone" % n
+        i, depth, j = m.start(), 0, m.start()
+        while j < len(SRC):
+            ch = SRC[j]
+            if ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                break
+            j += 1
+        spans[i] = SRC[i:j + 1]
+    return "\n".join(spans[k] for k in sorted(spans))
+
+
+def _run_g4(body: str, extra: str = "") -> dict:
+    import json as _json
+    import os
+    import tempfile
+    probe = ("var CUR_PAGE='overview';\nvar _ROUTING=false;\n"
+             + _g4_const(*_G4_CONSTS) + "\n" + _G4_SHIM + "\n"
+             + _g4_pages_and_dock() + "\n"
+             + "\n".join(_js_decl(f) for f in _G4_FNS) + "\n" + extra
+             + "\nvar R={};\n(async function(){\n" + body
+             + "\nconsole.log(JSON.stringify(R));\n})();\n")
+    fd, path = tempfile.mkstemp(suffix=".js")
+    os.close(fd)
+    try:
+        Path(path).write_text(probe, encoding="utf-8")
+        # node writes utf-8 and must be decoded as utf-8. (pytest is the
+        # opposite; that harness judges by return code.)
+        proc = subprocess.run([shutil.which("node"), path], capture_output=True,
+                              text=True, encoding="utf-8")
+        assert proc.returncode == 0, proc.stderr
+        return _json.loads(proc.stdout.strip().splitlines()[-1])
+    finally:
+        os.unlink(path)
+
+
+# ── the address resolves to a page ──────────────────────────────────────────
+
+@_G4_SKIP
+def test_every_page_in_the_whitelist_has_a_working_address() -> None:
+    """CTX is the page whitelist and it has seventeen entries. Driven for all of
+    them rather than spot-checked: the borrowed-dock cases and org360 are
+    exactly the ones a three-page sample misses."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+R.rows={};
+Object.keys(CTX).forEach(function(p){
+  if(p==='org360')return;                       // needs an id; covered below
+  reset(); CUR_PAGE='__none__'; location.hash='';
+  _routeApply('#/'+p);
+  R.rows[p]={page:activePage(), dock:litDock(), hash:location.hash, loaded:LOADED.join(',')};
+});
+""")
+    for page, got in r["rows"].items():
+        assert got["page"] == page, "#/%s landed on %s" % (page, got["page"])
+        assert got["hash"] == "#/" + page, "#/%s normalised to %s" % (page, got["hash"])
+        assert got["loaded"] == page, "#/%s ran loaders %r" % (page, got["loaded"])
+        assert got["dock"], (
+            "#/%s lights no dock button — the fact base's Active State rule, "
+            "and a restored page whose nav item is dark is a worse lie than no "
+            "routing" % page)
+
+
+@_G4_SKIP
+def test_the_four_borrowed_dock_buttons_light_the_right_one() -> None:
+    """Three ops pages and the tenant drill-down have no dock button of their
+    own. This is not new with routing — navTo() looked up [data-page] directly,
+    so the command palette's "Dead letters" ALREADY left the dock unlit."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+R.lit={};
+['deadletter','anchors','alerts','health'].forEach(function(p){
+  reset(); CUR_PAGE='__none__'; _routeApply('#/'+p); R.lit[p]=litDock(); });
+reset(); CUR_PAGE='__none__';
+_routeApply('#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73');
+R.lit.org360=litDock(); R.org360Page=activePage();
+""")
+    assert r["lit"] == {"deadletter": "health", "anchors": "health",
+                        "alerts": "health", "health": "health",
+                        "org360": "orgs"}, r["lit"]
+    assert r["org360Page"] == "org360"
+
+
+@_G4_SKIP
+def test_a_bad_address_lands_somewhere_useful_and_says_nothing() -> None:
+    """A mistyped URL is the browser's business. An error toast for it is noise
+    on arrival, and blanking the console is worse — the page must never end up
+    with zero .page.active.
+
+    ⚠ AN UNKNOWN ID IS NOT AN UNKNOWN PAGE. #/orgs/not-a-uuid names a section
+    we understand, so it lands on the LIST rather than throwing that away for
+    Overview. A well-formed id that does not exist is a different answer and
+    openOrg already gives it — a fault card naming the tenant."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+R.cases={};
+['#/nope','#/','','#!/orgs','#/orgs/not-a-uuid','#/orgs/','#/org360',
+ '#/%E0%A4%A','#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73/ledger/3'
+].forEach(function(h){
+  reset(); CUR_PAGE='__none__'; location.hash='';
+  _routeApply(h);
+  R.cases[h||'(empty)']={page:activePage(), hash:location.hash,
+                         toasts:TOASTS.length, opened:OPENED.length};
+});
+""")
+    # #/org360 is the INTERNAL page key with no tenant named. It resolves to the
+    # list for the same reason #/orgs/ does — the section is understood, the
+    # tenant is not — and the guard was written expecting Overview before the
+    # run corrected it. Consistent beats surprising: every incomplete tenant
+    # address lands in one place.
+    want = {"#/nope": "overview", "#/": "overview", "(empty)": "overview",
+            "#!/orgs": "overview", "#/orgs/not-a-uuid": "orgs", "#/orgs/": "orgs",
+            "#/org360": "orgs", "#/%E0%A4%A": "overview"}
+    for h, page in want.items():
+        got = r["cases"][h]
+        assert got["page"] == page, "%s landed on %s, expected %s" % (h, got["page"], page)
+        assert got["toasts"] == 0, "%s produced a toast: %s" % (h, got["toasts"])
+        assert got["hash"] == "#/" + page, (
+            "%s left the address claiming %s while showing %s"
+            % (h, got["hash"], got["page"]))
+    deep = r["cases"]["#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73/ledger/3"]
+    assert deep["page"] == "org360" and deep["opened"] == 1, (
+        "extra path segments broke the tenant route: %s" % deep)
+    assert deep["hash"] == "#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73", (
+        "the address kept a segment the console does not honour: " + deep["hash"])
+
+
+# ── the role trap ───────────────────────────────────────────────────────────
+
+@_G4_SKIP
+def test_a_viewer_cannot_type_their_way_onto_the_staff_page() -> None:
+    """THE SHARPEST THING IN THIS PHASE. can('superadmin') guards the BUTTON —
+    enter() hides #navStaff — and the only way to reach go('staff') used to be
+    clicking something hidden. A typable #/staff removes that accident.
+
+    Driven with THREE roles, because a rule tested only with the role that is
+    allowed is a rule whose refusal branch has never fired (A7), and one tested
+    only with the role that is refused would pass with the page removed
+    entirely."""
+    r = _run_g4("""
+R.by={};
+['viewer','operator','superadmin'].forEach(function(role){
+  ME={platform_role:role};
+  reset(); CUR_PAGE='__none__'; location.hash='';
+  _routeApply('#/staff');
+  R.by[role]={page:activePage(), hash:location.hash, loaded:LOADED.join(',')};
+});
+ME=null; reset(); CUR_PAGE='__none__';
+_routeApply('#/staff'); R.signedOut=activePage();
+""")
+    for role in ("viewer", "operator"):
+        got = r["by"][role]
+        assert got["page"] == "overview", (
+            "a %s typed #/staff and got %s" % (role, got["page"]))
+        assert got["hash"] == "#/overview", (
+            "the address still says staff to a %s: %s" % (role, got["hash"]))
+        assert "staff" not in got["loaded"], (
+            "a %s's browser still fetched the staff list: %s" % (role, got["loaded"]))
+    assert r["by"]["superadmin"]["page"] == "staff", (
+        "a superadmin cannot reach the staff page either — the gate refuses "
+        "everyone, which passes a one-role test and is not the fix")
+    assert r["signedOut"] == "overview", "a null ME resolves to a staff page"
+
+
+def test_the_role_rule_lives_in_exactly_one_place() -> None:
+    """The command palette carried its own copy of "staff is superadmin-only"
+    while the router needed the same rule. Two copies of a permission is how
+    one of them gets missed."""
+    body = _g4_bare("_cmdkCommands")
+    assert "PAGE_MIN_ROLE[" in body, "the palette stopped reading the shared rule"
+    assert "'superadmin'" not in body, (
+        "a role literal is back in the palette's own list: it can now disagree "
+        "with the router about who may reach a page")
+    resolve = _g4_bare("_routeResolve")
+    assert "PAGE_MIN_ROLE[" in resolve and "can(" in resolve, (
+        "route resolution does not consult the role at all")
+    m = re.search(r"const PAGE_MIN_ROLE=\{([^}]*)\}", SRC)
+    assert m and "staff" in m.group(1), "the one page that is gated is not in the map"
+
+
+# ── history discipline ──────────────────────────────────────────────────────
+
+@_G4_SKIP
+def test_back_goes_back_a_page_and_arriving_does_not() -> None:
+    """The fact base's Back Button rule is severity HIGH: "preserve navigation
+    history properly". A real navigation pushes; arriving at an address, and
+    correcting a bad one, replace — otherwise Back bounces between a mistyped
+    URL and its correction instead of leaving the console."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset(); location.hash='';
+_routeApply('');            R.arrive=HIST.slice();
+reset(); navTo('audit');    R.nav=HIST.slice();
+reset(); navTo('orgs');     R.nav2=HIST.slice();
+reset(); location.hash=''; CUR_PAGE='__none__';
+_routeApply('#/nope');      R.bad=HIST.slice();
+""")
+    assert all(h[0] == "replace" for h in r["arrive"]), (
+        "arriving at the console pushed a history entry: %s" % r["arrive"])
+    assert r["nav"] == [["push", "#/audit"]], r["nav"]
+    assert r["nav2"] == [["push", "#/orgs"]], r["nav2"]
+    assert r["bad"] and all(h[0] == "replace" for h in r["bad"]), (
+        "a mistyped address became a history entry of its own, so Back returns "
+        "to it: %s" % r["bad"])
+
+
+@_G4_SKIP
+def test_a_refresh_is_not_a_navigation() -> None:
+    """_orgActionDone fires after every suspend, enable, plan change and
+    offboard, and refreshCurrent after every Refresh click — both re-enter
+    openOrg with the same id. Each would otherwise stack an entry and Back
+    would walk the operator through six copies of the page they are on."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+var ID='9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73';
+reset(); location.hash='';
+await openOrg(ID);          R.first=HIST.slice();
+reset();
+await openOrg(ID);          R.again=HIST.slice();
+await openOrg(ID);          R.thrice=HIST.slice();
+reset(); navTo('orgs'); navTo('orgs'); navTo('orgs');
+R.samePage=HIST.slice();
+""")
+    assert r["first"] == [["push", "#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73"]], r["first"]
+    assert r["again"] == [] and r["thrice"] == [], (
+        "re-opening the same tenant stacked history: %s" % (r["again"] + r["thrice"]))
+    assert r["samePage"] == [["push", "#/orgs"]], (
+        "clicking the page you are already on stacked entries: %s" % r["samePage"])
+
+
+@_G4_SKIP
+def test_applying_a_route_never_writes_a_new_entry() -> None:
+    """Back fires hashchange, which applies the route, which calls go() — and
+    go() writes the address. Without the guard flag that turns one Back press
+    into a new forward entry and the operator can never leave.
+
+    ⚠ THE THIRD CASE IS THE ONLY ONE THAT SEES THE FLAG, and the first version
+    of this guard did not have it. When the address already matches, _routeSync
+    short-circuits on its own hash comparison and the flag is never consulted —
+    so deleting `if(_ROUTING)return` left the first two cases green. It is a
+    CORRECTED address that discriminates: resolving #/nope leaves location.hash
+    at '#/nope' while go('overview') wants '#/overview', the two differ, and
+    without the flag that becomes a pushed entry. Back would then return to
+    #/nope, re-correct, push again — a trap the operator cannot walk out of."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset(); location.hash='#/audit'; CUR_PAGE='overview';
+_routeApply('#/audit');     R.applied=HIST.slice(); R.page=activePage();
+reset(); location.hash='#/orgs/9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73'; CUR_PAGE='orgs';
+_routeApply(location.hash); R.appliedOrg=HIST.slice(); R.orgPage=activePage();
+reset(); location.hash='#/nope'; CUR_PAGE='audit';
+_routeApply(location.hash); R.corrected=HIST.slice(); R.badPage=activePage();
+""")
+    assert r["page"] == "audit" and r["applied"] == [], (
+        "applying a route pushed: %s" % r["applied"])
+    assert r["orgPage"] == "org360" and r["appliedOrg"] == [], (
+        "applying a tenant route pushed: %s" % r["appliedOrg"])
+    assert r["badPage"] == "overview"
+    assert [h[0] for h in r["corrected"]] == ["replace"], (
+        "correcting a bad address wrote %s — Back now returns to the bad "
+        "address, which corrects again, forever" % r["corrected"])
+
+
+def test_the_router_listens_on_hashchange_and_only_there() -> None:
+    """pushState does not fire hashchange, so writing the address cannot
+    re-enter the router; Back, Forward and a hand-edited address bar all do.
+    Adding popstate as well would apply every route twice."""
+    mk = _nocomment(SRC)
+    assert "addEventListener('hashchange'" in mk, "nothing listens for Back"
+    assert mk.count("addEventListener('hashchange'") == 1, "two hashchange listeners"
+    assert "addEventListener('popstate'" not in mk, (
+        "popstate is listened for as well; a Back press would apply its route "
+        "twice, and the second application would fight the first")
+    lis = re.search(r"addEventListener\('hashchange',function\(\)\{([^}]*)\}", mk)
+    # ⚠ THIS is where the ME condition is guarded. The sign-in-gate probe models
+    # the listener's BODY rather than registering it, so removing the condition
+    # is invisible there — it has to be caught here, at the registration.
+    assert lis and "ME" in lis.group(1), (
+        "the router runs before sign-in, so a hash typed at the gate would be "
+        "consumed before enter() could honour it")
+
+
+# ── what does NOT go in the address ─────────────────────────────────────────
+
+def test_no_client_state_rides_in_the_address() -> None:
+    """The test is whether a human can read the address and know what they will
+    get. A tab, a row offset, a sort key or a search term would each make a
+    shared link show the receiver a different table from the one they were told
+    about — and a scroll offset in a URL is a URL nobody can read."""
+    writer = _g4_bare("_hashFor") + _g4_bare("_routeSync") + _g4_bare("_routeApply")
+    for leak in ("O3_TAB", "O3_LEDGER_OFF", "O3_BREACH_OFF", "ORG_SORT",
+                 "ORG_Q", "orgSearch", "INBOX_FILTER", "DATA_PAGE"):
+        assert leak not in writer, "%s is being written into the address" % leak
+    # ⚠ RUN IT for the query string. The first version asserted `"?" not in`
+    # the source, which the ternary inside _hashFor satisfies by accident —
+    # a guard that was red against correct code and would have gone green
+    # against any `?tab=` appended with a different operator.
+    if shutil.which("node"):
+        out = _run_g4("""
+ME={platform_role:'superadmin'};
+R.hashes=[_hashFor('overview'),_hashFor('audit'),
+          _hashFor('org360','9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73'),
+          _hashFor('org360')];
+""")
+        for h in out["hashes"]:
+            assert "?" not in h and "&" not in h, (
+                "the address grew a query string: %r" % h)
+            assert h.count("/") <= 2, "the address grew a segment: %r" % h
+
+
+# ── the shape that made routing possible ────────────────────────────────────
+
+def test_there_is_exactly_one_page_switch() -> None:
+    """go() and openOrg() each carried their own copy and had already diverged.
+    A router that hooked only go() would not have seen the tenant drill-down —
+    the single most link-worthy page on the console."""
+    js = "\n".join(_script_blocks())
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
+    # ⚠ THE DEACTIVATION, not every query for .page. The first version counted
+    # any querySelectorAll('.page') and flagged paintWordmarks, which walks the
+    # same collection to write each page's wordmark and switches nothing — a
+    # guard that would have blocked this phase over an unrelated paint pass.
+    hits = re.findall(r"querySelectorAll\('\.page'\)[^;]*classList\.remove\('active'\)", js)
+    assert len(hits) == 1, (
+        "%d functions clear the active page; there must be one" % len(hits))
+    assert "querySelectorAll('.page')" in _g4_bare("_showPage"), (
+        "the one page switch is no longer _showPage")
+    for caller in ("go", "openOrg"):
+        assert "_showPage(" in _g4_bare(caller), "%s bypasses the page switch" % caller
+
+
+def test_the_page_switch_never_touches_the_crumb() -> None:
+    """This is why openOrg is NOT folded into go(). go() ends with
+    setTopbarContext(page), which for org360 prints the generic "Organization"
+    over the two writers that page actually has — openOrg's "Loading…" and
+    renderO3Header's tenant name."""
+    assert "setTopbarContext" not in _g4_bare("_showPage"), (
+        "the shared page switch sets the crumb, so the tenant name is "
+        "overwritten by the word 'Organization' on every drill-down")
+    assert "setTopbarContext('org360','Loading…')" in _g4_bare("openOrg")
+    assert "setTopbarContext('org360'" in _g4_bare("renderO3Header")
+    assert "go(" not in re.sub(r"_routeSync\(|goOps\(", "", _g4_bare("openOrg")), (
+        "openOrg routes through go(), which would overwrite its crumb")
+
+
+def test_the_route_is_applied_only_once_the_role_is_known() -> None:
+    """boot() is too early — ME does not exist — and navStaff must already be
+    unhidden or #/staff would light a button nobody can see."""
+    body = _g4_bare("enter")
+    assert "_routeApply(location.hash)" in body, "the address is never honoured"
+    assert body.index("navStaff") < body.index("_routeApply"), (
+        "the route is applied before the staff button is unhidden")
+    assert "_routeApply" not in _g4_bare("boot"), (
+        "boot() applies the route, before ME exists — every deep link would "
+        "resolve as if the reader held no role")
+
+
+def test_a_deep_link_survives_the_sign_in_gate() -> None:
+    """Nothing between the address bar and enter() reads the hash, which is what
+    makes this work. The reset gate's replaceState is the one line that clears
+    it, and it runs only after a password reset — where the operator is being
+    sent to the login form, not to a deep link."""
+    mk = _nocomment(SRC)
+    assert "history.replaceState(null,'',location.pathname)" in mk, (
+        "the reset gate stopped clearing its token from the address")
+    boot = _g4_bare("boot")
+    for reader in ("location.hash", "_routeApply", "_routeParse"):
+        assert reader not in boot, (
+            "boot() consumes the address at %r, before sign-in" % reader)
+    # and the gate's own submit path must not clear it either
+    gate = SRC[SRC.index("$('gateForm').addEventListener"):]
+    gate = gate[:gate.index("let _mfaEmail")]
+    assert "location.hash" not in gate and "replaceState" not in gate, (
+        "signing in clears the address, so a deep link dies at the gate")
+
+
+def test_signing_out_clears_the_address() -> None:
+    """Decision, not an oversight: location.reload() alone keeps the hash, so
+    signing out of #/audit and back in drops the NEXT person straight into it —
+    and they may hold a different role or be a different operator.
+
+    ⚠ BOTH PATHS, and there were two. G4 cleared the address in doLogout and
+    left logoutEverywhere reloading with the hash intact — and logout-
+    everywhere is the STRONGER sign-out, the one somebody reaches for exactly
+    when they want nothing of theirs left on the machine. So this asserts the
+    behaviour is in ONE place and that every sign-out path reaches it: a third
+    path that reloads on its own fails here."""
+    helper = _g4_bare("_signOutReload")
+    assert "replaceState(null,'',location.pathname)" in helper, (
+        "the shared sign-out no longer clears the address")
+    assert helper.index("replaceState") < helper.index("location.reload"), (
+        "the address is cleared after the reload, so it is not cleared at all")
+    for fn in ("doLogout", "logoutEverywhere"):
+        body = _g4_bare(fn)
+        assert "_signOutReload()" in body, (
+            "%s does not route through the shared sign-out, so its address "
+            "survives" % fn)
+        assert "location.reload()" not in body, (
+            "%s reloads on its own, bypassing the address clear — which is "
+            "exactly how logoutEverywhere was missed" % fn)
+    # and nothing else in the file may reload past it
+    js = re.sub(r"/\*.*?\*/", "", "\n".join(_script_blocks()), flags=re.S)
+    reloads = re.findall(r"location\.reload\(\)", js)
+    assert len(reloads) == 1, (
+        "%d call sites reload the console; there must be one, inside "
+        "_signOutReload" % len(reloads))
+
+
+# ── G4.1 · the three fixes ──────────────────────────────────────────────────
+
+@_G4_SKIP
+def test_a_corrected_address_costs_one_dead_back_press_and_no_more() -> None:
+    """THE DECISION, PINNED. Correcting #/nope in place leaves a second,
+    identical #/overview after the first, so the next Back press moves between
+    two entries with the same hash and appears to do nothing.
+
+    G4.1 discarded that entry with history.back(), gated on a comparison it
+    called a proof. It was not one, and the gate is gone — see the note in
+    _routeApply. Nothing available can read the entry behind the cursor, so the
+    dead press is accepted instead: a rare action, an obvious recovery, and the
+    second press works. This asserts the cost is exactly that — ONE press, not
+    two, and never a call to back()."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset();
+_routeApply('');            // arrive on overview
+navTo('audit');
+typeHash('#/overview');
+typeHash('#/nope');         // browser pushes; the router corrects in place
+R.hash=location.hash; R.page=activePage(); R.entries=entries();
+R.first=pressBack();        // the accepted cost
+R.second=pressBack();       // and it is only one
+R.hashAfter=location.hash; R.pageAfter=activePage();
+R.wentBack=HIST.filter(function(h){return h[0]==='back'}).length;
+""")
+    assert r["page"] == "overview" and r["hash"] == "#/overview", r
+    assert r["wentBack"] == 0, (
+        "the console called history.back() — the discard is back, and with it "
+        "the sign-in-gate chain that walks an operator out")
+    assert r["first"] == "DEAD PRESS", (
+        "the accepted cost changed shape: %s" % r["first"])
+    assert r["second"] == "moved", (
+        "the SECOND press must work; two dead presses is a different defect")
+    assert r["hashAfter"] == "#/audit" and r["pageAfter"] == "audit", (
+        "Back landed on %s / %s" % (r["hashAfter"], r["pageAfter"]))
+
+
+@_G4_SKIP
+def test_a_hash_edited_at_the_sign_in_gate_cannot_chain_back_out() -> None:
+    """The sequence that killed the old gate, driven, and the reason there is
+    no discard any more. The listener declines to run without ME, so hashes
+    typed before sign-in are never corrected; after signing in, Back walks onto
+    them one at a time. Each one is corrected on arrival — that part is right
+    and stays — but not one of them may reach for history.back(), or a single
+    press cascades out of the console."""
+    r = _run_g4("""
+ME=null;                       // at the gate: the listener declines to run
+reset();
+typeHash('#/nope');
+typeHash('#/also-nope');
+typeHash('#/still-nope');
+R.uncorrected=entries();
+ME={platform_role:'superadmin'};
+_routeApply(location.hash);    // enter() applies the route once ME exists
+R.afterSignIn=location.hash;
+R.p1=pressBack(); R.h1=location.hash;
+R.p2=pressBack(); R.h2=location.hash;
+R.wentBack=HIST.filter(function(h){return h[0]==='back'}).length;
+R.left=(R.p1==='left the console'||R.p2==='left the console');
+""")
+    assert r["uncorrected"] == ["#/nope", "#/also-nope", "#/still-nope"], (
+        "the router corrected a hash before sign-in, which would consume a "
+        "deep link at the gate: %s" % r["uncorrected"])
+    assert r["afterSignIn"] == "#/overview", r["afterSignIn"]
+    assert r["wentBack"] == 0, (
+        "one Back press fired %d history.back() calls — this is the chain that "
+        "walks an operator out of the console" % r["wentBack"])
+    assert r["left"] is False, (
+        "pressing Back left the console entirely: %s / %s" % (r["p1"], r["p2"]))
+
+@_G4_SKIP
+def test_a_fresh_tab_on_a_bad_address_is_not_walked_out_of_the_console() -> None:
+    """THE TRAP IN THE OBVIOUS FIX, and why the console no longer reaches for
+    it. history.back() called blind when a correction discards an entry leaves
+    a fresh tab entirely — open #/nope as the first thing in a new tab and
+    there is no previous entry to return to.
+
+    ⚠ THE OLD EXPLANATION HERE WAS STALE AND SAID THE OPPOSITE of the shipped
+    code: it presented the discarded gate as sound reasoning, fifty lines from
+    a comment recording that it was not. A guard docstring contradicting the
+    code it guards is a wrong tooltip in the one place people go to learn what
+    the code means — and it is now checked, which is why this paragraph
+    describes the old wording instead of reproducing it.
+
+    The assertions are unchanged and still right: on a cold bad address the
+    console corrects the URL, stays put, and never calls back()."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset();
+_routeApply('#/nope');      // cold, first thing in the tab
+R.entries=entries(); R.hash=location.hash; R.page=activePage();
+R.wentBack=HIST.filter(function(h){return h[0]==='back'}).length;
+R.back=pressBack();
+""")
+    assert r["page"] == "overview" and r["hash"] == "#/overview"
+    assert r["entries"] == ["#/overview"], (
+        "a cold bad address left %s in the stack" % r["entries"])
+    assert r["back"] == "left the console", (
+        "there is an entry to go back to that the console invented: %s" % r["back"])
+    # ⚠ THE CALL, not its outcome. The shim declines to move past the start of
+    # its stack — which is what a browser does when there is genuinely nothing
+    # before the console — so an unconditional history.back() looked harmless
+    # here. In a real tab there is almost always something before it, and that
+    # something is another site. The router must not reach for back() at all
+    # unless it can prove where it lands.
+    assert r["wentBack"] == 0, (
+        "the router called history.back() on a cold bad address, with no "
+        "previous entry of its own to return to")
+
+
+@_G4_SKIP
+def test_correcting_a_bad_address_does_not_recurse() -> None:
+    """Order matters and is the other half of the trap. Replacing FIRST and then
+    going back changes no hash, so no second hashchange fires. Going back first
+    would leave the bogus #/nope in the forward entry and Forward would
+    re-correct it, forever."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset();
+_routeApply(''); navTo('audit'); typeHash('#/overview');
+typeHash('#/nope');
+R.writes=HIST.filter(function(h){return h[0]!=='back'}).length;
+pressBack();
+R.fwd=pressForward();
+R.fwdHash=location.hash; R.fwdPage=activePage();
+R.entries=entries();
+""")
+    assert r["writes"] <= 4, (
+        "correcting one address wrote %d history entries" % r["writes"])
+    assert "#/nope" not in r["entries"], (
+        "the bogus address survived in a forward entry, so Forward re-corrects "
+        "it: %s" % r["entries"])
+    assert r["fwdPage"] == "overview" and r["fwdHash"] == "#/overview", r
+
+
+# ── the tenant race ─────────────────────────────────────────────────────────
+
+_O3_PAINTERS = ("openOrg", "o3LoadList", "o3LoadLedger", "o3LoadBreaches",
+                "orgVerify")
+
+
+#: Which region each painter's PRIMARY write belongs to, and therefore which
+#: one may cancel it. This is the whole of the G4.2 fix: one counter made them
+#: cancel each other.
+_O3_REGION = {"openOrg": "head", "o3LoadList": "panel", "o3LoadLedger": "panel",
+              "o3LoadBreaches": "panel", "orgVerify": "verify"}
+
+#: ⚠ AND THE SECOND NODE A PAINTER MAY WRITE, with the reason. openOrg paints
+#: the header when the tenant loads and #o3Panel when it does NOT, so it holds
+#: a token for both — it was checking `head` for the panel write, which meant a
+#: tab clicked during a FAILING load did not invalidate the "did not load"
+#: notice: it painted over rows that had loaded fine, or was wiped by them.
+#: Anything not listed here may check only its own region.
+_O3_ALSO_WRITES = {"openOrg": {"panel"}}
+
+
+def _o3_async_painters() -> set:
+    """Every async function that awaits api() and then writes the tenant page.
+    DERIVED FROM SOURCE, so a sixth one added later fails until somebody
+    decides which region it belongs to."""
+    js = re.sub(r"/\*.*?\*/", "", "\n".join(_script_blocks()), flags=re.S)
+    found = set()
+    for m in re.finditer(r"async function (\w+)\s*\(", js):
+        name = m.group(1)
+        i = js.index("{", m.end() - 1)
+        depth, j = 0, i
+        while j < len(js):
+            if js[j] == "{":
+                depth += 1
+            elif js[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        body = js[i:j + 1]
+        if "await api(" in body and ("$('o3" in body or "renderO3" in body):
+            found.add(name)
+    return found
+
+
+def test_every_async_painter_takes_a_token_for_the_region_it_writes() -> None:
+    """The census, kept — it is what found that this was never only openOrg —
+    now with the region each painter belongs to. A painter taking the wrong
+    region is the G4.2 defect in miniature: it would cancel, and be cancelled
+    by, work that writes a different node entirely."""
+    assert _o3_async_painters() == set(_O3_REGION), (
+        "the set of async painters on the tenant page changed: %s"
+        % sorted(_o3_async_painters() ^ set(_O3_REGION)))
+    for fn, region in _O3_REGION.items():
+        body = _g4_bare(fn)
+        take = "_o3TakeAll()" if fn == "openOrg" else "_o3Take('%s')" % region
+        assert take in body, "%s does not take a %s token (%s)" % (fn, region, take)
+        assert "_o3Stale('%s'," % region in body, (
+            "%s never drops a stale response for its own region" % fn)
+        allowed = {region} | _O3_ALSO_WRITES.get(fn, set())
+        for other in ("head", "panel", "verify"):
+            if other not in allowed:
+                assert "_o3Stale('%s'," % other not in body, (
+                    "%s checks the %s region, which it does not write" % (fn, other))
+        # A SECOND REGION IS ONLY HONEST IF THE WRITE IT GUARDS SITS UNDER IT.
+        # Listing a region here without a matching write would turn this from a
+        # guard into a permission slip.
+        for other in sorted(_O3_ALSO_WRITES.get(fn, set())):
+            m = re.search(r"_o3Stale\('" + other + r"',[^)]*\)\)?\s*\$\('(\w+)'\)", body)
+            assert m, (
+                "%s takes a %s token and no %s write sits under it — an unused "
+                "second region is a check that cannot be wrong" % (fn, other, other))
+            assert other in m.group(1).lower(), (
+                "%s guards its %s check over a write to #%s"
+                % (fn, other, m.group(1)))
+        assert body.index("await api(") < body.index("_o3Stale("), (
+            "%s checks its token before it awaits anything, which is a branch "
+            "that cannot fire" % fn)
+    # o3Tab AWAITS NOTHING and still has to bump, because renderO3Overview and
+    # renderO3Policy are synchronous and take no token: without it a slow
+    # ledger response is still current when it lands and paints over the
+    # Overview the operator just switched to.
+    tab = _g4_bare("o3Tab")
+    assert "_o3Take('panel')" in tab, "a tab change cancels nothing in flight"
+    for other in ("head", "verify"):
+        assert "_o3Take('%s')" % other not in tab and "_o3TakeAll" not in tab, (
+            "a tab change cancels the %s region, which it does not write" % other)
+    # and openOrg is the ONLY thing that invalidates everything
+    allbump = [f for f in _O3_REGION if "_o3TakeAll" in _g4_bare(f)]
+    assert allbump == ["openOrg"], (
+        "%s invalidates every region; only a tenant change may" % allbump)
+
+
+@_G4_SKIP
+def test_the_cancellation_matrix_is_exactly_as_intended() -> None:
+    """⚠ BOTH DIRECTIONS, DELIBERATELY. A guard that only proves cancellation
+    passes with everything cancelling everything — which is exactly the bug
+    G4.2 fixes. Every cell asserts cancels OR does-not-cancel on purpose.
+
+              head(openOrg)   panel(loaders)   verify(orgVerify)
+      openOrg      yes*             yes              yes
+      o3Tab         no              yes               no
+      loader        no              yes               no
+      verify        no               no               yes
+
+    *a previous openOrg. Its own token must survive its own last line, which
+    calls o3Tab."""
+    r = _run_g4("""
+R.m={};
+function cell(bump,region){
+  var tok=_o3Take(region);          // somebody is mid-flight in `region`
+  bump();                           // and then this happens
+  return _o3Stale(region,tok) ? 'cancels' : 'survives';
+}
+['head','panel','verify'].forEach(function(region){
+  R.m['openOrg/'+region]=cell(function(){ _o3TakeAll(); },region);
+  R.m['o3Tab/'+region] =cell(function(){ _o3Take('panel'); },region);
+  R.m['loader/'+region]=cell(function(){ _o3Take('panel'); },region);
+  R.m['verify/'+region]=cell(function(){ _o3Take('verify'); },region);
+});
+// and openOrg must not cancel ITSELF: it ends by calling o3Tab
+var own=_o3TakeAll();               // a token per region, not one integer
+_o3Take('panel');                   // o3Tab, from openOrg's own last line
+R.selfCancel=_o3Stale('head',own.head) ? 'cancels itself' : 'survives';
+/* and the panel token openOrg carries for its FAULT write is cancelled by the
+   very same call, which is the point: a tab claimed the panel. */
+R.faultPanel=_o3Stale('panel',own.panel) ? 'cancelled' : 'survives';
+""", extra=_g4_const("O3_REGIONS") + _G4_GEN_INIT
+     + "\n".join(_js_decl(f) for f in ("_o3Take", "_o3TakeAll", "_o3Stale")))
+    want = {
+        "openOrg/head": "cancels", "openOrg/panel": "cancels", "openOrg/verify": "cancels",
+        "o3Tab/head": "survives", "o3Tab/panel": "cancels", "o3Tab/verify": "survives",
+        "loader/head": "survives", "loader/panel": "cancels", "loader/verify": "survives",
+        "verify/head": "survives", "verify/panel": "survives", "verify/verify": "cancels",
+    }
+    for cell, expect in want.items():
+        assert r["m"][cell] == expect, (
+            "%s: %s, expected %s — %s" % (cell, r["m"][cell], expect,
+            "a region is cancelling work it does not write"
+            if expect == "survives" else "a stale response can still paint"))
+    assert r["selfCancel"] == "survives", (
+        "openOrg cancels itself on its own last line, so the header never "
+        "renders and O3_DATA stays null")
+    assert r["faultPanel"] == "cancelled", (
+        "openOrg's panel token survives a tab change, so a failing tenant "
+        "load would still paint 'did not load' over the tab the operator "
+        "switched to")
+
+@_G4_SKIP
+def test_the_slower_tenant_cannot_paint_over_the_faster_one() -> None:
+    """RUN, with the responses landing out of order — which is the only order
+    that reproduces it. Tenant A is requested first and answers LAST; its header
+    must not appear, because by then the operator is looking at B.
+
+    ⚠ THE REAL openOrg IS DECLARED LAST, ON PURPOSE. The shared shim carries a
+    stub of it for the routing probes, and without re-declaring the shipped one
+    here this test drove the stub and proved nothing — F2's shape exactly, a
+    guard green from birth against a copy of the thing it names."""
+    r = _run_g4("""
+var A='aaaaaaaa-0000-4000-8000-000000000001';
+var B='bbbbbbbb-0000-4000-8000-000000000002';
+var PAINTED=[], RESOLVE={};
+/* the real openOrg writes half a dozen #o3* elements before it fetches; the
+   shim only models pages and dock items, so anything else answers with a
+   throwaway node rather than null. */
+var _$=$; $=function(id){ return _$(id)||{textContent:'',innerHTML:'',style:{},
+  classList:{add:function(){},remove:function(){}}}; };
+renderO3Header=function(d){ PAINTED.push(d.name); };
+o3Tab=function(){};
+api=function(u){                      // one deferred promise per tenant
+  var id=u.indexOf(A)>=0?'A':'B';
+  return new Promise(function(res){ RESOLVE[id]=function(){
+    res({ok:true,status:200,json:function(){return Promise.resolve(
+      {id:(id==='A'?A:B), name:'tenant '+id});}}); }; });
+};
+ME={platform_role:'superadmin'};
+reset();
+var pa=openOrg(A);
+var pb=openOrg(B);
+RESOLVE.B(); await pb;                // B answers first
+RESOLVE.A(); await pa;                // A answers last, and must be dropped
+R.painted=PAINTED; R.o3id=O3_ID;
+/* AND THE SAME RACE WHERE THE STALE TENANT FAILS. The success path is checked
+   twice over (after the fetch and after json()), so removing the first check
+   alone is masked by the second — it exists for THIS case: an older tenant's
+   error must not paint a fault card over a newer tenant's page. */
+PAINTED=[]; RESOLVE={}; CRUMB=[];
+api=function(u){ var id=u.indexOf(A)>=0?'A':'B';
+  return new Promise(function(res){ RESOLVE[id]=function(){
+    res(id==='A' ? {ok:false,status:500,json:function(){return Promise.resolve({});}}
+                 : {ok:true,status:200,json:function(){return Promise.resolve(
+                     {id:B,name:'tenant B'});}}); }; }); };
+var qa=openOrg(A), qb=openOrg(B);
+RESOLVE.B(); await qb;
+RESOLVE.A(); await qa;
+R.paintedAfterFail=PAINTED; R.crumb=CRUMB[CRUMB.length-1];
+R.panel=$('o3Panel').innerHTML;
+/* AND THE WINDOW BETWEEN THE TWO AWAITS. A's fetch lands and passes the first
+   check; the operator opens B; only THEN does A's body finish arriving. Both
+   checks are needed and this is the only sequence that can tell them apart. */
+PAINTED=[]; RESOLVE={};
+var JSONA=null;
+api=function(u){ var id=u.indexOf(A)>=0?'A':'B';
+  return new Promise(function(res){ RESOLVE[id]=function(){
+    res({ok:true,status:200,json:function(){
+      if(id==='B')return Promise.resolve({id:B,name:'tenant B'});
+      return new Promise(function(r2){ JSONA=function(){ r2({id:A,name:'tenant A'}); }; });
+    }}); }; }); };
+var ra=openOrg(A);
+RESOLVE.A();                       // A's FETCH lands; openOrg(A) is now inside json()
+await new Promise(function(r){setTimeout(r,0)});
+R.jsonPending=(JSONA!==null);      // proves we really are between the two awaits
+var rb=openOrg(B); RESOLVE.B(); await rb;
+JSONA(); await ra;                 // A's body finally arrives, and must be dropped
+R.paintedAfterSlowBody=PAINTED;
+""", extra="var renderO3Header,o3Tab,api,O3_DATA=null;\n"
+     + _g4_const("O3_REGIONS") + _G4_GEN_INIT
+     + "\n".join(_js_decl(f) for f in ("_o3Take", "_o3TakeAll", "_o3Stale"))
+     + "\n" + _js_decl("openOrg"))
+    assert r["painted"] == ["tenant B"], (
+        "the header was painted %s — a stale tenant reached the screen" % r["painted"])
+    assert r["o3id"].startswith("bbbbbbbb"), r["o3id"]
+    assert r["paintedAfterFail"] == ["tenant B"], (
+        "the failing older tenant disturbed the newer one: %s"
+        % r["paintedAfterFail"])
+    assert "did not load" not in (r["panel"] or ""), (
+        "an older tenant's failure painted a fault card over the tenant the "
+        "operator is actually looking at: %r" % r["panel"])
+    assert r["crumb"] != "org360", (
+        "the crumb was reset by a stale tenant's failure")
+    assert r["jsonPending"] is True, (
+        "the probe never reached the gap between the two awaits, so what "
+        "follows proves nothing")
+    assert r["paintedAfterSlowBody"] == ["tenant B"], (
+        "a response whose BODY finished arriving after the tenant changed "
+        "still painted: %s — the check after r.json() is the one that catches "
+        "this, and the check after the fetch cannot" % r["paintedAfterSlowBody"])
+
+
+def test_the_action_buttons_still_act_on_the_tenant_on_screen() -> None:
+    """⚠ THE BUTTONS ARE NOT THE BUG. renderO3Header builds them from d.id, and
+    that is correct: they must act on the tenant whose data is being shown. The
+    defect was that two tenants could be on screen at once. Rewriting them to
+    read O3_ID would look like a fix and would instead make them act on whatever
+    the most recent request was about, which is worse."""
+    body = _g4_bare("renderO3Header")
+    assert "d.id" in body, "the header stopped naming the tenant it is drawing"
+    acts = re.findall(r"onclick=\"[a-zA-Z_]+\('\$\{([^}]+)\}'", body)
+    assert acts, "the tenant actions are no longer wired from the header"
+    for a in acts:
+        assert "d.id" in a, (
+            "an action button reads %r instead of the tenant it is drawn for" % a)
+
+
+def test_the_route_write_stays_above_the_first_await() -> None:
+    """FILED, NOT FIXED — the comment is the deliverable. _ROUTING is a
+    synchronous flag cleared in a finally that runs the moment openOrg hits its
+    first await, so the suppression only ever covered openOrg's prefix. It is
+    correct today only because _routeSync sits above the fetch."""
+    body = _g4_bare("openOrg")
+    assert body.index("_routeSync(") < body.index("await api("), (
+        "the route write moved below the first await, where _ROUTING has "
+        "already been cleared — applying a route now pushes an entry for the "
+        "route it is applying, and Back stops working on the drill-down")
+    raw = _js_func("openOrg").lower()
+    assert "load-bearing" in raw, (
+        "the note explaining why this position matters is gone, so the next "
+        "person moves it")
+
+
+# ── G4.2 · the two collisions the single counter created ────────────────────
+
+#: ⚠ PER-ID NODES. The first version routed every non-o3Panel id's innerHTML
+#: into ONE string, so four header writes cleared it while the real
+#: #o3VerifyState write (textContent, not innerHTML) did not — and a head-token
+#: write landing on the verify node, exactly what the region split exists to
+#: prevent, was invisible. Both properties are recorded, per id, and NODES is
+#: readable from a probe so a test can assert which node actually moved.
+#: O3_GEN derived from the SHIPPED region list rather than restated beside
+#: it — half-derived is how the two drift apart with nothing failing.
+_G4_GEN_INIT = "\nvar O3_GEN={};O3_REGIONS.forEach(function(r){O3_GEN[r]=0;});\n"
+
+
+_G42_O3 = ("var NODES={},TOASTS2=[];\n"
+           "function _node(id){ var n=NODES[id]; if(n)return n;\n"
+           "  var _h='',_t='';\n"
+           "  n=NODES[id]={id:id,style:{},classList:{add:function(){},remove:function(){}},\n"
+           "    get innerHTML(){return _h;}, set innerHTML(v){_h=String(v);},\n"
+           "    get textContent(){return _t;}, set textContent(v){_t=String(v);}};\n"
+           "  return n; }\n"
+           "var _$g=$; $=function(id){ return _$g(id)||_node(id); };\n"
+           "function nodeText(id){ var n=NODES[id]; return n?(n.innerHTML||n.textContent):''; }\n"
+           "function fault(a,b,c){ return 'FAULT:'+a; }\n"
+           "function num(n){ return String(n); }\n"
+           "function esc(x){ return String(x); }\n"
+           "function toast(m){ TOASTS2.push(m); }\n"
+           "var O3_ID='9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73';\n"
+           "var O3_LEDGER_OFF=0,O3_BREACH_OFF=0,O3_LEDGER_BREACH=false;\n"
+           "var api,renderO3Header,o3Tab,O3_DATA=null;\n")
+
+
+def _run_o3(body: str) -> dict:
+    """Drive the real tenant-page painters against deferred responses."""
+    return _run_g4(body, extra=(
+        _g4_const("O3_REGIONS") + _G4_GEN_INIT
+        + _G42_O3
+        + "\n".join(_js_decl(f) for f in ("_o3Take", "_o3TakeAll", "_o3Stale"))
+        # ⚠ THE REAL o3Tab AND openOrg, not a stand-in that calls the counter
+        # itself. Every one of these probes used to bump the region by hand,
+        # which meant mutating o3Tab or openOrg changed nothing they could see
+        # — F2's shape, a guard exercising the primitive instead of its caller.
+        + "\nfunction renderO3Overview(){ _node('o3Panel').innerHTML='OVERVIEW'; }"
+          "\nfunction renderO3Policy(){ _node('o3Panel').innerHTML='POLICY'; }"
+          "\nfunction renderO3Users(r){ _node('o3Panel').innerHTML='USERS:'+r.length; }"
+          "\nfunction renderO3Keys(r){ _node('o3Panel').innerHTML='KEYS'; }"
+          "\nfunction o3LoadLedger(){ _node('o3Panel').innerHTML='LEDGER'; }"
+          "\nfunction o3LoadBreaches(){ _node('o3Panel').innerHTML='BREACHES'; }"
+          "\nvar O3_TAB='overview';\n"
+        + "\n".join(_js_decl(f) for f in ("o3LoadList", "orgVerify", "o3Tab"))
+        + "\n" + _js_decl("openOrg")))
+
+
+@_G4_SKIP
+def test_a_verify_does_not_strand_the_panel_on_loading() -> None:
+    """THE FIRST COLLISION THE SINGLE COUNTER CREATED. orgVerify bumped the
+    shared counter and then wrote #o3VerifyState — a different node entirely —
+    so pressing Verify chain while a tab was still loading dropped the tab's
+    response and left #o3Panel reading "loading…" with nothing left in flight
+    to replace it."""
+    r = _run_o3("""
+var R1=null,R2=null;
+api=function(u){ return new Promise(function(res){
+  if(u.indexOf('/verify')>=0) R2=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve({ok:true,count:12});}}); };
+  else R1=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve([{email:'a@b.c',role:'admin'}]);}}); };
+}); };
+_node('o3Panel').innerHTML='<div>loading…</div>';
+var pl=o3LoadList('users',function(rows){ _node('o3Panel').innerHTML='USERS:'+rows.length; });
+var pv=orgVerify();                 // Verify chain, while the tab is loading
+R2(); await pv;                     // the verify answers first
+R1(); await pl;                     // and the tab's own response follows
+R.panel=nodeText('o3Panel'); R.verify=nodeText('o3VerifyState'); R.toasts=TOASTS2.length;
+""")
+    assert r["panel"] == "USERS:1", (
+        "the panel is stranded at %r — a verify cancelled a tab load it does "
+        "not write" % r["panel"])
+    assert "chain intact" in r["verify"], r["verify"]
+
+
+@_G4_SKIP
+def test_a_tab_click_does_not_swallow_a_running_verify() -> None:
+    """THE SAME COLLISION FROM THE OTHER SIDE. A tab or pager click during a
+    verify dropped the verdict AND its toast, and "verifying…" never resolved
+    because nothing else writes that node."""
+    r = _run_o3("""
+var RV=null,RL=null;
+api=function(u){ return new Promise(function(res){
+  if(u.indexOf('/verify')>=0) RV=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve({ok:true,count:9});}}); };
+  else RL=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve([]);}}); };
+}); };
+var pv=orgVerify();
+o3Tab('keys');                      // the REAL tab switch, mid-verify
+var pl=o3LoadList('keys',function(rows){ _node('o3Panel').innerHTML='KEYS'; });
+RL(); await pl;
+RV(); await pv;
+R.verify=nodeText('o3VerifyState'); R.panel=nodeText('o3Panel'); R.toasts=TOASTS2.length;
+""")
+    assert "chain intact" in r["verify"], (
+        "the verdict was dropped and #o3VerifyState is stranded at %r — "
+        "nothing else writes that node, so it says 'verifying…' forever"
+        % r["verify"])
+    assert r["toasts"] == 1, (
+        "the verify's toast went with it: %s toasts" % r["toasts"])
+    assert r["panel"] == "KEYS"
+
+
+@_G4_SKIP
+def test_a_new_tenant_still_invalidates_everything() -> None:
+    """The rule that keeps region scoping from reopening the original race: a
+    tenant change must kill an in-flight PANEL load and an in-flight VERIFY as
+    well as the header, or tenant A's ledger lands under tenant B's name — which
+    is the defect the counter was introduced for."""
+    r = _run_o3("""
+var RV=null,RL=null;
+/* THREE routes, not two: openOrg fetches /overview and the first version of
+   this probe let that call overwrite RL, so resolving "the list" actually
+   resolved openOrg and the list never answered at all. */
+api=function(u){ return new Promise(function(res){
+  if(u.indexOf('/verify')>=0) RV=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve({ok:true,count:9});}}); };
+  else if(u.indexOf('/overview')>=0) { /* openOrg: never answers, it only needs
+      to have BUMPED */ }
+  else RL=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve([{email:'stale@a.example'}]);}}); };
+}); };
+_node('o3Panel').innerHTML='B PANEL'; _node('o3VerifyState').innerHTML='B VERIFY';
+var pl=o3LoadList('users',function(rows){ _node('o3Panel').innerHTML='STALE:'+rows.length; });
+var pv=orgVerify();
+renderO3Header=function(){};
+openOrg('bbbbbbbb-0000-4000-8000-000000000002');   // the REAL tenant change
+RL(); await pl;
+RV(); await pv;
+R.panel=nodeText('o3Panel'); R.verify=nodeText('o3VerifyState');
+
+/* AND TWO PANEL LOADS RACING EACH OTHER — the same region, no tenant change.
+   A loader that reads the counter instead of taking a token still loses to a
+   tenant change, so only this can see it: two quick page clicks, and the
+   slower answer must not overwrite the faster one. */
+_node('o3Panel').innerHTML=''; var RA=null,RB=null,seq=0;
+api=function(){ var which=++seq;
+  return new Promise(function(res){ var fn=function(){ res({ok:true,status:200,
+    json:function(){return Promise.resolve([{n:which}]);}}); };
+    if(which===1)RA=fn; else RB=fn; }); };
+var p1=o3LoadList('users',function(rows){ _node('o3Panel').innerHTML='PAGE'+rows[0].n; });
+var p2=o3LoadList('users',function(rows){ _node('o3Panel').innerHTML='PAGE'+rows[0].n; });
+RB(); await p2;                     // the second click answers first
+RA(); await p1;                     // the first click answers last
+R.racedPanel=nodeText('o3Panel');
+""")
+    # openOrg writes its own "loading…" into the panel, which is correct for a
+    # tenant change — the first version of this assertion demanded the node be
+    # untouched and failed against right behaviour, the same way the VERIFY one
+    # did. What must never appear is the STALE tenant's rows.
+    assert "STALE" not in r["panel"], (
+        "a previous tenant's tab response painted over the new one: %r" % r["panel"])
+    # ⚠ "verifying…" IS WRITTEN SYNCHRONOUSLY, before the tenant changes, so
+    # finding it here is correct — the first version of this assertion demanded
+    # the node be untouched and failed against right behaviour. What must never
+    # land is the stale VERDICT.
+    assert "chain intact" not in r["verify"], (
+        "a previous tenant's chain verdict painted over the new one: %r" % r["verify"])
+    assert r["racedPanel"] == "PAGE2", (
+        "two overlapping panel loads: the slower answer won and painted %r. A "
+        "loader that READS the counter rather than taking a token still loses "
+        "to a tenant change, so only two loaders racing each other can see it"
+        % r["racedPanel"])
+
+
+@_G4_SKIP
+def test_the_tab_bar_does_not_show_the_previous_tenants_selection() -> None:
+    """The small lie that made the crash reachable. #o3Tabs is static markup and
+    openOrg never cleared it, so the previous tenant's tab sat lit above a panel
+    reading "loading…" — inviting exactly the click that broke it. Nothing is
+    pressed while nothing is loaded."""
+    r = _run_g4("""
+ME={platform_role:'superadmin'};
+reset();
+O3TABS[3].setAttribute('aria-pressed','true');    // a previous tenant's Ledger
+R.before=pressedTab();
+api=function(){ return new Promise(function(){}); };   // never answers: mid-load
+openOrg('9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73');
+await new Promise(function(r2){setTimeout(r2,0)});
+R.during=pressedTab();
+""", extra=("var renderO3Header,o3Tab,api,O3_DATA=null;\n"
+            # the real openOrg writes half a dozen #o3* nodes the shim does not
+            # model; anything unknown answers with a throwaway node
+            + "var _$g=$; $=function(id){ return _$g(id)||{textContent:'',"
+              "innerHTML:'',style:{},classList:{add:function(){},remove:function(){}}}; };\n"
+            + _g4_const("O3_REGIONS") + _G4_GEN_INIT
+            + "\n".join(_js_decl(f) for f in ("_o3Take", "_o3TakeAll", "_o3Stale"))
+            + "\n" + _js_decl("openOrg")))
+    assert r["before"] == "ledger", "the probe never lit a tab, so what follows proves nothing"
+    assert r["during"] is None, (
+        "the previous tenant's %r tab is still lit above a loading panel" % r["during"])
+
+
+@_G4_SKIP
+def test_a_tab_clicked_while_the_header_loads_is_honoured() -> None:
+    """The tab bar is live while the header loads — that is why this window was
+    clickable into a crash at all. Region scoping makes the click SAFE; this
+    makes it count. openOrg ends on O3_TAB rather than the literal 'overview',
+    so a click during the wait is not quietly thrown away. With no click O3_TAB
+    is still 'overview', reset at the top of openOrg."""
+    body = _g4_bare("openOrg")
+    assert "o3Tab(O3_TAB)" in body, (
+        "openOrg forces Overview at the end, discarding a tab the operator "
+        "chose while the header was still arriving")
+    assert "o3Tab('overview')" not in body
+    assert body.index("O3_TAB='overview'") < body.index("o3Tab(O3_TAB)"), (
+        "O3_TAB is not reset before it is read back, so a new tenant would "
+        "open on the previous tenant's tab")
+
+
+# ── G4.3 · openOrg writes TWO nodes, and the shim can tell them apart ───────
+
+@_G4_SKIP
+def test_a_failing_tenant_does_not_paint_over_the_tab_you_switched_to() -> None:
+    """openOrg's fault branch writes #o3Panel — the node every other writer
+    holds a `panel` token for — and it was checking `head`. So a tab clicked
+    during a FAILING tenant load did not invalidate the "did not load" notice:
+    it painted over rows that had loaded fine, or was wiped by them a moment
+    later. The same shared-node confusion the region split fixed, one level
+    down, and the census guard's own rule ("openOrg may not check panel") is
+    what pinned the miss.
+
+    The crumb reset stays on `head`, because that is the node it writes."""
+    r = _run_o3("""
+var ROV=null,RLIST=null;
+api=function(u){ return new Promise(function(res){
+  if(u.indexOf('/overview')>=0) ROV=function(){ res({ok:false,status:500,
+      json:function(){return Promise.resolve({});}}); };
+  else RLIST=function(){ res({ok:true,status:200,
+      json:function(){return Promise.resolve([{email:'a@b.c',role:'admin'}]);}}); };
+}); };
+renderO3Header=function(){};
+var po=openOrg('9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73');
+await new Promise(function(r2){setTimeout(r2,0)});
+o3Tab('users');                     // the operator switches tab while it loads
+RLIST(); await new Promise(function(r2){setTimeout(r2,0)});
+R.beforeFault=nodeText('o3Panel');
+ROV(); await po;                    // and only then does the tenant load fail
+R.afterFault=nodeText('o3Panel');
+R.crumb=CRUMB[CRUMB.length-1];
+""")
+    assert r["beforeFault"] == "USERS:1", (
+        "the probe never got the tab loaded, so what follows proves nothing: %r"
+        % r["beforeFault"])
+    assert r["afterFault"] == "USERS:1", (
+        "a failing tenant load painted %r over the tab the operator switched "
+        "to" % r["afterFault"])
+    assert r["crumb"] == "org360", (
+        "the crumb reset is a HEAD write and must still happen — the tenant "
+        "did fail to load, and the header saying so is the only signal left: %r"
+        % r["crumb"])
+
+
+@_G4_SKIP
+def test_the_fault_notice_still_appears_when_nobody_took_the_panel() -> None:
+    """The other half, deliberately. A guard that only proves the notice can be
+    suppressed passes with the notice deleted — which would leave a failing
+    tenant silent on both nodes."""
+    r = _run_o3("""
+var ROV=null;
+api=function(u){ return new Promise(function(res){
+  ROV=function(){ res({ok:false,status:500,
+    json:function(){return Promise.resolve({});}}); }; }); };
+renderO3Header=function(){};
+var po=openOrg('9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73');
+await new Promise(function(r2){setTimeout(r2,0)});
+ROV(); await po;                    // no tab click: the panel is still openOrg's
+R.panel=nodeText('o3Panel');
+""")
+    assert "FAULT" in r["panel"], (
+        "a failing tenant load says nothing at all: %r" % r["panel"])
+
+
+@_G4_SKIP
+def test_the_probe_can_see_a_write_landing_on_the_wrong_node() -> None:
+    """THE SHIM'S OWN HONESTY CHECK. Its first version routed every non-o3Panel
+    id's innerHTML into ONE string, so four header writes cleared it while the
+    real #o3VerifyState write (textContent, not innerHTML) did not — and a
+    head-token write landing on the verify node, precisely what the region
+    split exists to prevent, was invisible.
+
+    Per-id nodes recording BOTH properties. This asserts they are actually
+    distinct: openOrg's loading notice belongs to #o3Panel and must not be
+    readable on #o3VerifyState, which openOrg only ever CLEARS."""
+    r = _run_o3("""
+api=function(){ return new Promise(function(){}); };   // never answers
+renderO3Header=function(){};
+_node('o3VerifyState').textContent='STALE VERDICT';   // the property openOrg actually clears
+openOrg('9f2c1a44-0b7e-4c31-9d55-6a1f0e2b8c73');
+await new Promise(function(r2){setTimeout(r2,0)});
+R.panel=nodeText('o3Panel');
+R.verifyHtml=NODES['o3VerifyState'].innerHTML;
+R.verifyText=NODES['o3VerifyState'].textContent;
+R.sub=NODES['o3Sub'].textContent;
+R.distinct=(NODES['o3Panel']!==NODES['o3VerifyState']);
+""")
+    assert r["distinct"] is True, "the shim hands the same node back for two ids"
+    assert "loading" in r["panel"], (
+        "openOrg's loading notice did not land on #o3Panel: %r" % r["panel"])
+    assert "loading" not in r["verifyHtml"] and "loading" not in r["verifyText"], (
+        "a #o3Panel write is readable on #o3VerifyState — the shim is still "
+        "collapsing two nodes into one: %r / %r" % (r["verifyHtml"], r["verifyText"]))
+    assert r["verifyText"] == "", (
+        "openOrg stopped clearing the previous tenant's verdict, so a stale "
+        "chain result sits under the new tenant's header: %r" % r["verifyText"])
+    assert r["sub"] == "", "openOrg stopped clearing the previous tenant's id"
+
+
+def test_the_probe_derives_its_regions_rather_than_restating_them() -> None:
+    """_run_o3 derived O3_REGIONS from source and then hardcoded
+    `{head:0,panel:0,verify:0}` beside it. Half-derived is how the two drift
+    apart with nothing failing — a fourth region would have been initialised
+    nowhere and every token for it would read undefined."""
+    # ⚠ NOT A GREP OF THIS FILE. The first version searched the source for the
+    # hardcoded literal and found it inside its own assertion — the same
+    # "a guard that greps this file greps its own text" trap the console keeps
+    # paying for, this time in Python. The initialiser STRING is the subject.
+    assert "O3_REGIONS.forEach" in _G4_GEN_INIT, (
+        "the initialiser no longer builds itself from the shipped list")
+    for name in ("head", "panel", "verify"):
+        assert name not in _G4_GEN_INIT, (
+            "the initialiser names %r itself, so it can disagree with "
+            "O3_REGIONS: %r" % (name, _G4_GEN_INIT))
+    # and the shipped list is what it says it is
+    regions = re.findall(r"'(\w+)'", _g4_const("O3_REGIONS"))
+    assert regions == ["head", "panel", "verify"], regions
+
+
+# ── G4.3 · the words are the deliverable ────────────────────────────────────
+
+def test_the_take_all_comment_names_every_caller() -> None:
+    """_o3TakeAll invalidates every region, and the note above it said "a new
+    tenant" — but openOrg is also how _orgActionDone and refreshCurrent repaint
+    the SAME tenant, after every suspend, enable, plan change, offboard and
+    Refresh. An in-flight chain verify dies there too.
+
+    The behaviour is right — a verify is a statement about the ledger BEFORE
+    the action that just landed, and letting it resolve afterwards would print
+    a verdict about a state the operator can no longer see. The sentence was
+    what was wrong, so this derives the callers from source and requires each
+    one to be named."""
+    js = re.sub(r"/\*.*?\*/", "", "\n".join(_script_blocks()), flags=re.S)
+    callers = set()
+    for m in re.finditer(r"(?:async\s+)?function\s+(\w+)\s*\(", js):
+        name = m.group(1)
+        if name == "openOrg":
+            continue
+        i = js.index("{", m.end() - 1)
+        depth, j = 0, i
+        while j < len(js):
+            if js[j] == "{":
+                depth += 1
+            elif js[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        # ⚠ STRING LITERALS OUT FIRST. Every fault card on this page carries
+        # "openOrg(O3_ID)" as its retry EXPRESSION — a string, not a call — so
+        # a raw search reports o3LoadList, o3LoadLedger and o3LoadBreaches as
+        # callers and demands the note name three functions that do not call
+        # it. The same "a grep finds the prose about the thing" family this
+        # file keeps paying for.
+        body = re.sub(r"'[^'\n]*'|\"[^\"\n]*\"", "''", js[i:j + 1])
+        if re.search(r"(?<![\w.])openOrg\s*\(", body):
+            callers.add(name)
+    assert callers >= {"_orgActionDone", "refreshCurrent"}, (
+        "the callers of openOrg changed: %s" % sorted(callers))
+    note = _js_func("openOrg")
+    note = note[:note.index("_o3TakeAll()")]
+    for c in sorted(callers):
+        assert c in note, (
+            "%s calls openOrg and therefore invalidates every region, and the "
+            "note above _o3TakeAll does not say so" % c)
+    assert "not only on a new tenant" in note.lower() or "same tenant" in note.lower(), (
+        "the note still reads as if only a tenant change invalidates a verify")
+
+
+def test_no_guard_docstring_contradicts_the_dropped_discard() -> None:
+    """This console has shipped six tooltips describing something no longer
+    true, and a guard's own explanation is the place people go to learn what
+    the code means. One of these still described the entry discard as sound,
+    fifty lines from the shipped note recording that it was not.
+
+    Docstrings only, parsed rather than grepped — a check that searched the
+    whole file would find its own wording and pass for the wrong reason, which
+    is the trap this file keeps paying for."""
+    import ast
+    live = re.sub(r"/\*.*?\*/|//[^\n]*", "", "\n".join(_script_blocks()), flags=re.S)
+    assert live.count("history.back") == 0, (
+        "the entry discard is live again; this guard is about the case where "
+        "it is not")
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    stale = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+            continue
+        doc = (ast.get_docstring(node) or "").lower()
+        if not doc:
+            continue
+        claims_it_works = ("proof rather than" in doc
+                           or "is conditional on _route_at" in doc
+                           or "so it is a proof" in doc)
+        if claims_it_works:
+            stale.append(node.name)
+    assert not stale, (
+        "these guard docstrings still describe the discard as sound, while the "
+        "shipped code records that it was not: %s" % stale)
