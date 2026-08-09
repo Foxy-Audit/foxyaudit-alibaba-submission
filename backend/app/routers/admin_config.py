@@ -125,14 +125,20 @@ def broadcast(
         for to in recipients:
             if email_mod.send_email(to=to, subject=subject, html=html, text=plain):
                 emailed += 1
+    # G5.1 · the SELECT runs before the record, as in suspend_organization —
+    # see the note there for what that does and does not move. Found by
+    # test_no_route_does_slow_work_after_recording_an_action, which flagged it
+    # via a BARE-NAME collision: the closure resolved `notify.broadcast` to
+    # THIS route, which sends email. The move is still a small improvement; the
+    # reason the guard gave for it was wrong.
+    notify.broadcast(db, "broadcast", ann.title, body=ann.body, level=level,
+                     pref="notify_broadcasts", exclude_id=staff.id,
+                     target_type="announcement", target_id=str(ann.id))
     record_admin_action(db, staff, "broadcast.create", target_type="announcement",
                         target_id=str(ann.id),
                         detail={"title": ann.title, "level": level,
                                 "email_staff": body.email_staff, "emailed": emailed},
                         ip=client_ip(request))
-    notify.broadcast(db, "broadcast", ann.title, body=ann.body, level=level,
-                     pref="notify_broadcasts", exclude_id=staff.id,
-                     target_type="announcement", target_id=str(ann.id))
     db.commit()
     return {"status": "created", "id": str(ann.id), "emailed": emailed}
 

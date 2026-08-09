@@ -306,6 +306,13 @@ def delete_row(
     mapper = inspect(spec["model"])
     snapshot = _serialize(obj, mapper.columns)
 
+    # G5.1 · LEFT AS IT WAS, deliberately. This reads like work after recording
+    # and is not: db.delete() only marks the object in the session, and the
+    # DELETE (with its cascades) executes at the commit flush — inside the chain
+    # lock's window wherever the statement sits, because the audit row and the
+    # mutation commit together by design. Moving it would be cosmetic. What
+    # would be real is a QUERY or a network call here, which is what
+    # test_no_route_does_slow_work_after_recording_an_action looks for.
     record_admin_action(
         db, staff, f"data.delete.{table}", target_type=table, target_id=row_id,
         detail={"snapshot": snapshot}, ip=client_ip(request),

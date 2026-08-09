@@ -147,10 +147,26 @@ def staff_login(payload: StaffLoginRequest, request: Request, db: Session = Depe
         _issue_mfa_code(db, staff)
         return {"mfa_required": True, "email": staff.email}
 
-    _establish_staff_session(request, staff, db)
+    # ⚠ RECORD, COMMIT, THEN ESTABLISH — the order staff_mfa already had and
+    # this route did not (G5.2).
+    #
+    # _establish_staff_session COMMITS: it mints the StaffSession row, stamps
+    # last_login_at, commits, and only then sets the cookie. Recording after it
+    # meant that when G5.1's chain-lock timeout fired, the session was already
+    # committed and the operator WAS signed in — with no staff.login row, under
+    # a 503 reading "Nothing was changed; try again." An unlogged staff sign-in
+    # is precisely the gap #79 exists to close.
+    #
+    # Moving the record just ABOVE the helper does not fix it either: the
+    # helper's new-device lookup carries `except: db.rollback()`, which would
+    # discard a staged audit row and then commit the session without it. So the
+    # audit row takes its own commit first, exactly as staff_mfa does — and a
+    # 503 now happens with nothing committed, no session and no cookie, which
+    # is what makes the message true rather than merely reworded.
     record_admin_action(db, staff, "staff.login", target_type="staff_user",
                         target_id=str(staff.id), detail={"mfa": False}, ip=client_ip(request))
     db.commit()
+    _establish_staff_session(request, staff, db)
     return {"id": str(staff.id), "email": staff.email, "platform_role": staff.platform_role}
 
 

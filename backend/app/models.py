@@ -550,8 +550,18 @@ class AdminAction(Base):
     """Append-only audit trail of every state-changing staff action.
 
     Written in the SAME transaction as the mutation it records, so a committed
-    suspend without a logged action (or vice-versa) cannot happen. No RLS
-    (platform-only); staff must never be able to DELETE from it.
+    suspend without a logged action cannot happen. The reverse is NOT
+    guaranteed and one site trades it deliberately — see app/admin_audit.py's
+    module docstring for which, and why over-reporting an attempt beats
+    silently missing a real sign-in. No RLS (platform-only); staff must never
+    be able to DELETE from it.
+
+    G5 · #79 — hash-chained. Rows written from migration 0066 onward carry seq /
+    prev_hash / chain_hash, so an edited field or a removed middle row breaks a
+    recompute at a nameable seq. Rows written BEFORE it carry NULL in all three
+    and are reported as predating the chain; giving them hashes would produce
+    something shaped like evidence that proves only that a migration ran.
+    app/admin_chain.py is the single implementation, writer and verifier.
     """
     __tablename__ = "admin_actions"
 
@@ -566,8 +576,17 @@ class AdminAction(Base):
     target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ⚠ SET EXPLICITLY BY record_admin_action, not left to the server default.
+    # server_default=func.now() fills at INSERT, which is after the writer has to
+    # hash the row — so a column the writer cannot see is a column an editor can
+    # change without breaking anything, and on an audit trail WHEN is most of the
+    # point. The default stays for any row written outside the helper.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now())
+    # NULL on every row that predates migration 0066 — see the class docstring.
+    seq: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chain_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class StaffNotification(Base):

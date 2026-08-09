@@ -2958,6 +2958,32 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
     <section class="page" id="page-audit">
       <h1 class="sr-only">Audit log</h1>
       <div class="pagehead"><span class="pg-wm" aria-hidden="true"></span><div style="display:flex;gap:8px;"><button class="btn" onclick="auditExport()"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Export CSV</button></div></div>
+      <!-- ─ G5 · #79 · THE CONSOLE'S OWN TRAIL SAYS WHAT IT CAN PROVE ────────
+           Foxy sells tamper-evidence and its own operations log had none. It
+           has a hash chain now — and the words here are deliberately SMALLER
+           than the ones on a tenant's ledger, because the mechanism is smaller.
+
+           org360 says "chain intact"; that chain can be published to a public
+           chain Foxy cannot rewrite. This one cannot yet, so it says "sequence
+           unbroken" and states the two limits in the line below — permanently,
+           not behind a click: a chain in Foxy's own database is not proof
+           against Foxy, and entries removed from the END leave nothing behind.
+
+           THE HEAD HASH IS SHOWN FOR THAT SECOND REASON, not as decoration. It
+           is the one value an operator can write down somewhere else, and that
+           is what turns a silent truncation into a mismatch.
+
+           Coverage on arrival, recompute on request. The page fetches counts
+           when it opens (three reads, one of them a counting pass) so the table
+           can never imply the whole trail is covered; the recompute costs real
+           work and waits to be asked.
+
+           R2's vocabulary governs the marks: unbroken is EXPECTED and
+           recedes (.chip.safe), a break is an EXCEPTION (.chip.bad), and both
+           "predates the chain" and "not checked" are ABSENCE, not statuses
+           (.chip.dim). -->
+      <div class="sub mono" id="auChain" role="status" aria-live="polite" style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:-4px 0 8px;min-height:20px;"></div>
+      <p class="sub" id="auChainLimits" style="margin:0 0 14px;max-width:72ch;font-size:11.5px;">Recomputed from the stored entries. Catches an entry changed or removed between the first and the last. Not proof against Foxy: this chain sits in Foxy&rsquo;s own database, and entries removed from the end leave nothing behind.</p>
       <div class="clay pad" style="margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <div style="flex:1;min-width:150px;"><label class="flabel" style="margin-top:0;" for="auAction">action (prefix)</label><input class="cin" id="auAction" placeholder="e.g. org." oninput="auditDebounced()"></div>
         <div style="flex:1;min-width:150px;"><label class="flabel" style="margin-top:0;" for="auActor">actor (email)</label><input class="cin" id="auActor" placeholder="staff@foxy.audit" oninput="auditDebounced()"></div>
@@ -2972,7 +2998,7 @@ html[data-density="compact"] .pad{padding:clamp(11px,1.1vw,15px)}
         <button class="btn sm" id="auClear" style="margin-bottom:4px;" onclick="auditClear()">clear</button>
       </div>
       <div class="sub mono" id="auNote" role="status" aria-live="polite" style="margin:-6px 0 14px;"></div>
-      <div class="clay pad twrap"><table class="tbl cardify"><thead><tr><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Org</th><th scope="col">IP</th><th scope="col">Detail</th></tr></thead><tbody id="auRows" aria-live="polite"><tr><td colspan="7" class="sub mono">loading…</td></tr></tbody></table><div id="auPager"></div></div>
+      <div class="clay pad twrap"><table class="tbl cardify"><thead><tr><th scope="col" style="text-align:right;">#</th><th scope="col">When</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Org</th><th scope="col">IP</th><th scope="col">Detail</th></tr></thead><tbody id="auRows" aria-live="polite"><tr><td colspan="8" class="sub mono">loading…</td></tr></tbody></table><div id="auPager"></div></div>
     </section>
 
     <!-- ──────────────── LEADS ──────────────── -->
@@ -4008,7 +4034,7 @@ function _arc(cx,cy,r,ri,a0,a1){
 
 let CUR_PAGE='overview';
 /* built lazily at call time so all loader fn declarations are already hoisted+defined */
-function _loaders(){return {overview:loadOverview,health:loadHealth,deadletter:loadDeadletter,anchors:loadAnchors,alerts:loadAlerts,orgs:loadOrgs,traffic:loadTraffic,staff:loadStaff,settings:loadSettings,data:goToData,inbox:loadInbox,revenue:loadRevenue,security:loadSecurity,audit:loadAudit,leads:loadLeads,campaigns:loadCampaigns};}
+function _loaders(){return {overview:loadOverview,health:loadHealth,deadletter:loadDeadletter,anchors:loadAnchors,alerts:loadAlerts,orgs:loadOrgs,traffic:loadTraffic,staff:loadStaff,settings:loadSettings,data:goToData,inbox:loadInbox,revenue:loadRevenue,security:loadSecurity,audit:openAudit,leads:loadLeads,campaigns:loadCampaigns};}
 /* P2 · the crumb's page name. Every id in _loaders(), plus org360 — which
    overrides it with the organisation's own name, because on that page the org
    IS the page. Anything unmapped falls back rather than printing "undefined". */
@@ -7458,7 +7484,155 @@ function renderSecRecent(){
   $('secRecent').innerHTML=rec.length?rec.map(x=>`<tr><td data-label="When" class="mono" style="font-size:10px;white-space:nowrap;">${fmtTime(x.at)}</td><td data-label="Email" class="mono" style="font-size:11px;">${esc(x.email)}</td><td data-label="IP" class="mono" style="font-size:10px;">${esc(x.ip||'—')}</td><td data-label="Result">${x.success?'<span class="chip safe">ok</span>':'<span class="chip bad">fail</span>'}</td></tr>`).join(''):'<tr><td colspan="4" class="sub mono">no attempts recorded</td></tr>';
 }
 let AU_OFF=0, _auT;
-function auditDebounced(){ clearTimeout(_auT); _auT=setTimeout(()=>loadAudit(),300); }
+/* G5.1 · the seq jump the chain's break verdict uses. NULL = no seq filter.
+   Cleared by anything that re-asks the question a different way, because a
+   stale one-entry filter under a fresh action/actor query is an empty table
+   with no visible reason. */
+let AU_SEQ=null;
+function auditDebounced(){ clearTimeout(_auT); _auT=setTimeout(function(){
+  /* drop the jump, and its note WITH it — but only its note. auditRange puts
+     the impossible-date-range message in the same element, and wiping that on
+     the next keystroke would take the explanation away while the empty table
+     it explains is still on screen. */
+  if(AU_SEQ){ AU_SEQ=null; $('auNote').textContent=''; }
+  loadAudit();
+},300); }
+
+/* ── G5 · #79 · the staff trail's own chain ──────────────────────────────
+   ITS OWN GENERATION COUNTER, and it is NOT one of O3_REGIONS. The three org360
+   tokens exist because five painters there write three shared nodes; this one
+   writes #auChain and nothing else writes #auChain, so borrowing an org360
+   token would make an audit-page check cancel a tenant's chain verify for no
+   reason. What it does share is the reason G4.2 added them at all: two clicks
+   of "check the sequence" are two requests, and the slower answer must not
+   land on top of the newer one. Leaving page-audit does not paint into a wrong
+   tenant's header the way org360 could — the node is on the page you left —
+   but a verdict that reappears when you come back is still a lie about when it
+   was measured, so the same rule applies. */
+let AU_CHAIN_GEN=0;
+/* ── G5.1 · ONE VERDICT, EVERY SURFACE ──────────────────────────────────────
+   The strip and the toast branched separately and disagreed. The toast tested
+   d.ok===true alone, so an empty chain — which the API answered ok=true for —
+   was announced as "sequence unbroken (0 entries)" while the strip beside it
+   correctly said there was nothing chained. Two parallel ladders is how that
+   happens, so there is one now and both read it. The copy guard checks every
+   surface that renders a verdict, not only the painter. */
+/* The three incidents a broken chain can report. `missing` is the one whose
+   entry no longer exists, which is why the jump below has to say so — landing
+   on an empty table is the CORRECT answer there and reads as a broken tool
+   unless the note explains it. */
+const _AU_BREAK={
+  missing:'is missing',
+  out_of_order:'does not follow the one before it',
+  modified:'was changed after it was written'
+};
+function _auChainVerdict(d){
+  /* `checked` is the server's own word for which answer it gave, so an
+     un-recomputed chain can never be painted as a clean one — d.ok is null on
+     arrival AND when the chain is too long to check, and both of those are
+     "not known", never "fine". */
+  if(!d.checked)  return {tier:'dim', words:'not checked'};
+  /* ⚠ AN EMPTY CHAIN IS NOT A VERIFIED ONE, and this has to come BEFORE the ok
+     test. "nothing to check" rather than "nothing chained yet": deleting every
+     chained row lands here too — the writer then restarts at seq 1 and the
+     recompute is clean — and this line cannot tell that from a fresh install,
+     so it must not assert a history it does not know. */
+  if(!d.chained)  return {tier:'dim', words:'nothing to check'};
+  if(d.ok===true) return {tier:'safe',words:'sequence unbroken'};
+  /* ⚠ THE REASON, NOT JUST THE POSITION. The backend distinguishes three
+     incidents and G5.1 collapsed them into "sequence breaks at entry N",
+     rendering d.detail nowhere. A deletion, a splice and an edit call for
+     different responses, and an operator cannot choose one from a position.
+     Mapped HERE rather than printing the server's sentence, so the words stay
+     in this file where the copy guard can read them. */
+  if(d.ok===false)return {tier:'bad',
+    words:'entry '+num(d.first_broken_seq)+' '+(_AU_BREAK[d.kind]||'breaks the sequence')};
+  return {tier:'dim', words:d.detail||'not checked'};
+}
+function _auChainPaint(d,checking){
+  const bits=[];
+  if(checking){
+    bits.push('<span class="sub mono">checking&hellip;</span>');
+  }else if(d===null){
+    bits.push('<span class="chip bad">the check did not run</span>',
+              '<button type="button" class="linklike" onclick="auditChainCheck()">try again &rarr;</button>');
+  }else{
+    const v=_auChainVerdict(d);
+    bits.push('<span class="chip '+v.tier+'">'+esc(v.words)+'</span>');
+    /* ...and the entry it names is REACHABLE. "breaks at entry 1,240" on a
+       trail paginated fifty at a time was a verdict an operator could read and
+       not act on; the API grew a seq filter and this jumps to it. The KIND
+       rides along, because on a missing entry the jump correctly finds nothing
+       and the note has to say that is the answer, not a failure. */
+    if(d.ok===false&&d.first_broken_seq)
+      bits.push('<button type="button" class="linklike" onclick="auditJumpToEntry('+String(Number(d.first_broken_seq))+',\''+esc(String(d.kind||''))+'\')">show entry '+num(d.first_broken_seq)+' &rarr;</button>');
+    /* Coverage, always — a count of chained entries and, when there are older
+       ones, how many the chain does not reach. That second number is the
+       no-fabrication rule made visible: those rows are real, they are simply
+       older than the mechanism, and hiding them would let this line imply a
+       coverage it does not have. */
+    if(d.chained)bits.push('<span>'+num(d.chained)+' entries chained'+(d.started_at?(' since '+esc(fmtDay(d.started_at))):'')+'</span>');
+    /* ...and only when the mark above has not already said it. A checked empty
+       chain reads "NOTHING TO CHECK" in the chip, so adding a second empty
+       phrase beside it says the same thing twice. On ARRIVAL the chip says
+       "not checked" instead, and the count is the only thing that would tell
+       an operator the trail is empty rather than unread. */
+    else if(!d.checked)bits.push('<span>no entries chained yet</span>');
+    if(d.unchained)bits.push('<span class="chip dim">'+num(d.unchained)+' earlier '+(d.unchained===1?'entry predates':'entries predate')+' the chain</span>');
+    if(d.head_hash)bits.push('<span title="The chain head. Record it elsewhere and a later truncation stops being invisible.">head '+esc(d.head_hash.slice(0,12))+'&hellip;</span>');
+    if(!d.checked)bits.push('<button type="button" class="linklike" onclick="auditChainCheck()">check the sequence &rarr;</button>');
+  }
+  $('auChain').innerHTML=bits.join('');
+}
+async function auditChainLoad(){ return _auChainFetch(false); }
+async function auditChainCheck(){ return _auChainFetch(true); }
+async function _auChainFetch(verify){
+  const gen=++AU_CHAIN_GEN;
+  if(verify)_auChainPaint(null,true);
+  let r; try{ r=await api('/admin/v1/audit/chain'+(verify?'?verify=1':'')); }catch(e){ r=null; }
+  if(gen!==AU_CHAIN_GEN)return;
+  if(!r||!r.ok){ _auChainPaint(null,false); return; }
+  const d=await r.json();
+  if(gen!==AU_CHAIN_GEN)return;      /* json() is a second await, and a second chance to be overtaken */
+  _auChainPaint(d,false);
+  /* ⚠ THE SAME VERDICT THE STRIP SHOWS, not a second ladder. This used to test
+     d.ok===true on its own and announced "sequence unbroken (0 entries)" over
+     an empty chain the strip was correctly calling absent. The count rides
+     along only when there is a sequence to have counted. */
+  if(verify){
+    const v=_auChainVerdict(d);
+    toast('Audit chain: '+v.words+(v.tier==='safe'?(' ('+num(d.chained)+' entries)'):''));
+  }
+}
+/* The break's verdict names an entry; this is how an operator gets to it. The
+   filter is server-side (GET /admin/v1/audit?seq=N), so it finds the row
+   wherever it sits in the trail rather than paging to it. */
+function auditJumpToEntry(n,kind){
+  AU_SEQ=Number(n)||null;
+  /* ⚠ THE OTHER FILTERS GO, or the note is a lie. It said "Showing entry N
+     only" while an action/actor/date filter was still standing, so the honest
+     result was an EMPTY table under a note promising one row — the same shape
+     as a pager reading "1–25 of 240" over a filtered table, which this console
+     has shipped twice. Clearing them is what makes the sentence true. */
+  /* ⚠ AND THE NOTE SAYS SO ONLY WHEN IT HAPPENED. The clause was appended
+     unconditionally, so on the common path — arriving from a chain check with
+     no filters set — it announced a clearing of nothing. That is the same
+     defect this fix removed, pointing the other way: a sentence describing a
+     state the page is not in. */
+  const had=['auAction','auActor','auSince','auUntil'].filter(function(id){return $(id).value;});
+  had.forEach(function(id){$(id).value='';});
+  $('auSince').max='';$('auUntil').min='';
+  const tail=had.length?' Other filters cleared; use clear to see the whole trail.'
+                       :' Use clear to see the whole trail.';
+  $('auNote').textContent=!AU_SEQ ? ''
+    /* A MISSING entry has no row to land on, and an empty table with no
+       explanation reads as the tool being broken rather than as the answer. */
+    : kind==='missing'
+      ? ('Entry '+num(AU_SEQ)+' is the one the chain says is MISSING, so an empty result here is the answer, not a failure.'+tail)
+      : ('Showing entry '+num(AU_SEQ)+' only — the one the chain check named.'+tail);
+  AU_OFF=0;
+  loadAudit();
+}
 /* Cross-bounds the two dates so the impossible range cannot be expressed, and
    says so if one is already on screen. `min`/`max` on the native control is the
    error-PREVENTION half; the note is the recovery half for the case where the
@@ -7469,6 +7643,7 @@ function auditRange(){
   const s=$('auSince'),u=$('auUntil');
   u.min=s.value||'';s.max=u.value||'';
   const bad=s.value&&u.value&&s.value>u.value;
+  AU_SEQ=null;
   $('auNote').textContent=bad?'“since” is after “until” — no range can match. Adjust either date.':'';
   if(!bad)loadAudit();
   return !bad;
@@ -7476,24 +7651,32 @@ function auditRange(){
 function auditClear(){
   ['auAction','auActor','auSince','auUntil'].forEach(function(id){$(id).value='';});
   $('auSince').max='';$('auUntil').min='';$('auNote').textContent='';
+  AU_SEQ=null;
   loadAudit();
 }
 function _auditParams(){
   const p=new URLSearchParams();
+  if(AU_SEQ)p.set('seq',String(AU_SEQ));
   const a=$('auAction').value.trim(); if(a)p.set('action',a);
   const ac=$('auActor').value.trim(); if(ac)p.set('actor',ac);
   const s=$('auSince').value; if(s)p.set('since',s);
   const u=$('auUntil').value; if(u)p.set('until',u+'T23:59:59');
   return p;
 }
+/* Coverage rides with the PAGE, not with the query. _loaders() maps audit to
+   this rather than straight to loadAudit, because loadAudit cannot tell an
+   arrival from a keystroke — auditDebounced calls it with no arguments too, and
+   hanging the counts off that would be three queries per character to print a
+   number that never changes while you type. */
+function openAudit(){ auditChainLoad(); return loadAudit(); }
 async function loadAudit(keepOff){
   if(!keepOff)AU_OFF=0;
   const p=_auditParams(); p.set('limit','50'); p.set('offset',String(AU_OFF));
   let r; try{ r=await api('/admin/v1/audit?'+p.toString()); }catch(e){ r=null; }
-  if(!r||!r.ok){ $('auRows').innerHTML=faultRow(7,'The audit trail did not load.',"loadAudit()"); return; }
+  if(!r||!r.ok){ $('auRows').innerHTML=faultRow(8,'The audit trail did not load.',"loadAudit()"); return; }
   const d=await r.json();
-  if(!d.items.length){ $('auRows').innerHTML='<tr><td colspan="7" class="sub mono">no matching actions</td></tr>'; $('auPager').innerHTML=''; return; }
-  $('auRows').innerHTML=d.items.map(a=>`<tr><td data-label="When" class="mono" style="font-size:10px;white-space:nowrap;">${fmtTime(a.at)}</td><td data-label="Actor" class="mono" style="font-size:11px;">${esc(a.actor||'—')}</td><td data-label="Action" class="mono" style="font-size:11px;">${esc(a.action)}</td><td data-label="Target" class="mono" style="font-size:10px;">${esc(a.target_type||'—')}${a.target_id?(' '+esc(a.target_id.slice(0,8))+'…'):''}</td><td data-label="Org" class="mono" style="font-size:10px;">${esc(a.org_name||'—')}</td><td data-label="IP" class="mono" style="font-size:10px;">${esc(a.ip||'—')}</td><td data-label="Detail" class="kvcell" style="font-size:10px;">${auditDetail(a.detail)}</td></tr>`).join('');
+  if(!d.items.length){ $('auRows').innerHTML='<tr><td colspan="8" class="sub mono">no matching actions</td></tr>'; $('auPager').innerHTML=''; return; }
+  $('auRows').innerHTML=d.items.map(a=>`<tr><td data-label="#" class="mono" style="text-align:right;font-size:10px;">${a.seq==null?'<span class="chip dim">pre</span>':num(a.seq)}</td><td data-label="When" class="mono" style="font-size:10px;white-space:nowrap;">${fmtTime(a.at)}</td><td data-label="Actor" class="mono" style="font-size:11px;">${esc(a.actor||'—')}</td><td data-label="Action" class="mono" style="font-size:11px;">${esc(a.action)}</td><td data-label="Target" class="mono" style="font-size:10px;">${esc(a.target_type||'—')}${a.target_id?(' '+esc(a.target_id.slice(0,8))+'…'):''}</td><td data-label="Org" class="mono" style="font-size:10px;">${esc(a.org_name||'—')}</td><td data-label="IP" class="mono" style="font-size:10px;">${esc(a.ip||'—')}</td><td data-label="Detail" class="kvcell" style="font-size:10px;">${auditDetail(a.detail)}</td></tr>`).join('');
   window.foxPager('auPager',{page:Math.floor(d.offset/d.limit)+1,pageSize:d.limit,
     total:d.total,label:'Audit log pages',
     onPage:function(pg){ AU_OFF=(pg-1)*50; loadAudit(true); }});

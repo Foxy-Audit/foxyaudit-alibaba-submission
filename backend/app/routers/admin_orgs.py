@@ -289,13 +289,21 @@ def suspend_organization(
     org = _load_active_org(db, org_id)
     org.suspended = True
     org.suspended_reason = (body.reason or "").strip()[:255] or None
-    record_admin_action(db, staff, "org.suspend", target_org_id=org.id,
-                        target_type="organization", target_id=str(org.id),
-                        detail={"reason": org.suspended_reason}, ip=client_ip(request))
+    # G5.1 · ⚠ WHAT THIS MOVED, PRECISELY — one SELECT, not the inserts.
+    # notify.broadcast reads every active staff row (an immediate query) and
+    # then STAGES one notification each with db.add, whose docstring is "Stage
+    # a single notification row (no commit)". The staged rows flush at the
+    # commit, inside the chain lock's window, wherever this call sits. So the
+    # move takes the SELECT out of the window and nothing else — milliseconds,
+    # not minutes. The same correction admin_data.delete_row carries for
+    # db.delete: only work that runs IMMEDIATELY moves when you reorder it.
     notify.broadcast(db, "system", f"Org suspended: {org.name}",
                      body=f"{staff.email} suspended {org.name}.", level="warning",
                      pref="notify_system", exclude_id=staff.id,
                      target_type="organization", target_id=str(org.id))
+    record_admin_action(db, staff, "org.suspend", target_org_id=org.id,
+                        target_type="organization", target_id=str(org.id),
+                        detail={"reason": org.suspended_reason}, ip=client_ip(request))
     db.commit()
     return {"status": "suspended", "org_id": str(org.id)}
 
@@ -900,12 +908,14 @@ def offboard_organization(
     for k in keys:
         k.status = "revoked"
         k.revoked_at = now
-    record_admin_action(db, staff, "org.offboard", target_org_id=org.id,
-                        target_type="organization", target_id=str(org.id),
-                        detail={"keys_revoked": len(keys)}, ip=client_ip(request))
+    # G5.1 · the SELECT runs before the record, as in suspend_organization —
+    # see the note there for what that does and does not move.
     notify.broadcast(db, "system", f"Org offboarded: {org.name}",
                      body=f"{staff.email} offboarded {org.name} ({len(keys)} keys revoked).",
                      level="warning", pref="notify_system", exclude_id=staff.id,
                      target_type="organization", target_id=str(org.id))
+    record_admin_action(db, staff, "org.offboard", target_org_id=org.id,
+                        target_type="organization", target_id=str(org.id),
+                        detail={"keys_revoked": len(keys)}, ip=client_ip(request))
     db.commit()
     return {"status": "offboarded", "org_id": str(org.id), "keys_revoked": len(keys)}

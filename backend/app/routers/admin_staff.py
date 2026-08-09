@@ -59,19 +59,39 @@ def list_staff(
     staff: StaffUser = Depends(require_platform_role("superadmin")),
     db: Session = Depends(get_db),
 ):
+    # ⚠ staff_users.last_login_at, NOT max(admin_actions) — G5.3.
+    #
+    # This derived "last login" from MAX(created_at) WHERE action='staff.login',
+    # which is a proxy for the thing rather than the thing. Since G5.2 the two
+    # can disagree: staff_login commits the audit row and then establishes the
+    # session separately, so a failure in between leaves a staff.login row for a
+    # sign-in that never completed, and this column reported it as one.
+    #
+    # last_login_at is stamped INSIDE _establish_staff_session, beside the
+    # session row it commits with, so it means exactly what the column is
+    # called. The console's own settings page already reads it and already calls
+    # it "Last sign-in"; the staff list was the surface disagreeing with both.
+    # It also drops a GROUP BY over admin_actions, a table that now grows a row
+    # per staff action and carries the chain.
+    #
+    # THE COST, STATED: anyone whose last sign-in predates the last_login_at
+    # column (Phase E) now reads "—" instead of an old audit-derived date. That
+    # is honest — this column does not know — and the audit page still holds
+    # every row. Reporting a sign-in that did not happen is the worse error on
+    # a page an operator uses to find dormant accounts.
+    #
+    # AND THE LABEL STAYS "Last login". Renaming it to "last sign-in attempt"
+    # was the other way to close the gap, and it is the wrong one now: with the
+    # source fixed this value is a completed sign-in, not an attempt, so
+    # "attempt" would be inaccurate in the ordinary case to describe a failure
+    # mode that no longer reaches this column. The settings page's "Last
+    # sign-in" is a synonym for the same field, not a second meaning.
     rows = db.execute(select(StaffUser).order_by(StaffUser.email)).scalars().all()
-    last_login = {
-        sid: ts for sid, ts in db.execute(
-            select(AdminAction.staff_user_id, func.max(AdminAction.created_at))
-            .where(AdminAction.action == "staff.login")
-            .group_by(AdminAction.staff_user_id)
-        ).all()
-    }
     return [
         StaffListItem(
             id=str(s.id), email=s.email, platform_role=s.platform_role, disabled=s.disabled,
             mfa_enabled=s.mfa_enabled, created_at=s.created_at.isoformat() if s.created_at else None,
-            last_login=last_login[s.id].isoformat() if last_login.get(s.id) else None)
+            last_login=s.last_login_at.isoformat() if s.last_login_at else None)
         for s in rows
     ]
 

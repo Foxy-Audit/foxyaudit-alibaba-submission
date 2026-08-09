@@ -3826,12 +3826,22 @@ def _audit_code(name: str) -> str:
     return re.sub(r"(?m)(?<!:)//.*$", "", _js_func(name))
 
 
-def test_the_audit_table_has_a_detail_column() -> None:
-    mk = _nocomment(_page("audit"))
-    head = re.search(r"<thead>.*?</thead>", mk, re.S)
+def _audit_columns() -> list:
+    """The audit table's column headings, in order.
+
+    ⚠ ATTRIBUTES AFTER scope. The first version matched `<th scope="col">`
+    exactly, so G5.1's right-aligned `<th scope="col" style="…">#</th>` was
+    invisible to it and the guard reported the old seven while the table
+    rendered eight.
+    """
+    head = re.search(r"<thead>.*?</thead>", _nocomment(_page("audit")), re.S)
     assert head, "the audit table has no header"
-    cols = re.findall(r'<th scope="col">([^<]*)</th>', head.group(0))
-    assert cols == ["When", "Actor", "Action", "Target", "Org", "IP", "Detail"], cols
+    return re.findall(r"<th scope=\"col\"[^>]*>([^<]*)</th>", head.group(0))
+
+
+def test_the_audit_table_has_a_detail_column() -> None:
+    assert _audit_columns() == ["#", "When", "Actor", "Action", "Target",
+                                "Org", "IP", "Detail"], _audit_columns()
 
 
 def test_load_audit_actually_renders_the_detail() -> None:
@@ -3848,15 +3858,34 @@ def test_load_audit_actually_renders_the_detail() -> None:
     )
 
 
-def test_every_audit_colspan_counts_the_new_column() -> None:
+def test_every_audit_colspan_counts_the_columns_the_table_actually_has() -> None:
     """Three of them — loading, empty and fault. A stale colspan leaves the
-    empty state a column short and visibly wrong."""
+    empty state a column short and visibly wrong.
+
+    ⚠ DERIVED FROM THE HEADER, not restated. This used to hardcode 7 and had to
+    be hand-edited when G5.1 added the seq column — the same edit the code
+    needed, which means it was checking that someone remembered twice rather
+    than that the two agree. It reads the header it is comparing against now,
+    so the next column cannot leave it stale.
+    """
+    n = len(_audit_columns())
+    assert n >= 7, "the audit table lost columns; %d left" % n
     body = _audit_code("loadAudit")
-    assert 'colspan="6"' not in body and "faultRow(6" not in body
-    assert 'colspan="7"' in body and "faultRow(7" in body
+    assert 'colspan="%d"' % n in body, (
+        "the empty-state row spans something other than the table's %d "
+        "columns" % n)
+    assert "faultRow(%d" % n in body, (
+        "the fault row spans something other than the table's %d columns" % n)
+    for wrong in (n - 1, n + 1):
+        assert 'colspan="%d"' % wrong not in body, (
+            "a stale colspan=%d survives beside the correct %d" % (wrong, n))
+        assert "faultRow(%d" % wrong not in body, (
+            "a stale faultRow(%d) survives beside the correct %d" % (wrong, n))
     mk = _nocomment(_page("audit"))
     loading = re.search(r'<tbody id="auRows"[^>]*>\s*<tr><td colspan="(\d+)"', mk)
-    assert loading and loading.group(1) == "7", "the loading row spans the wrong width"
+    assert loading and int(loading.group(1)) == n, (
+        "the loading row spans %s, the table has %d columns"
+        % (loading and loading.group(1), n))
 
 
 def test_the_detail_renderer_escapes_both_halves() -> None:
@@ -9247,3 +9276,693 @@ def test_no_guard_docstring_contradicts_the_dropped_discard() -> None:
     assert not stale, (
         "these guard docstrings still describe the discard as sound, while the "
         "shipped code records that it was not: %s" % stale)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G5 · #79 · THE STAFF AUDIT TRAIL HAS A CHAIN, AND SAYS WHAT IT PROVES
+#
+# The feature is a hash chain over admin_actions. The RISK is the sentence: a
+# chain over a table in Foxy's own database is not proof against Foxy, and this
+# console has shipped six statements that were true when written and false
+# later. So the copy is guarded as hard as the behaviour, and one guard asserts
+# a LIMITATION rather than a capability — if anchoring ever closes it, that
+# guard is what has to be rewritten alongside the words.
+#
+# Every name here carries the G5 prefix: this file rebinds module-level shims
+# silently, and an unprefixed _SHIM clobbered seven passing tests once already.
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: The customer ledger's vocabulary. It is EARNED there — that chain can be
+#: published to an EVM chain Foxy cannot rewrite — and unearned here. A word
+#: from this list on the audit page is the overclaim this phase exists to avoid.
+_G5_BORROWED = ("tamper-evident", "tamper evident", "tamperproof", "tamper-proof",
+                "chain intact", "cannot be altered", "cannot be changed",
+                "immutable", "independently verifiable", "proves nothing was",
+                "guaranteed")
+
+_G5_AUDIT_FNS = ("_auChainVerdict", "_auChainPaint", "auditChainLoad",
+                 "auditChainCheck", "_auChainFetch", "openAudit",
+                 "auditJumpToEntry", "_auditParams", "auditDebounced")
+
+
+def _g5_paint_src() -> str:
+    """EVERY SURFACE THAT RENDERS A VERDICT, not just the painter.
+
+    G5's version read _auChainPaint alone, and the toast beside it was free to
+    say anything — which it did: it tested d.ok===true on its own and announced
+    "sequence unbroken (0 entries)" over an empty chain. The words live in
+    _auChainVerdict now and both surfaces read it, so all three are checked and
+    a fourth surface has to opt IN to the vocabulary rather than out of it.
+
+    Prose stripped, because the comments here argue about the very words being
+    asserted — the trap _nocomment and _g4_bare were both written for."""
+    # ⚠ AND THE TABLE THE WORDS LIVE IN. G5.2 moved the three break
+    # reasons into the _AU_BREAK const, outside every function this used to
+    # read, so the copy guard stopped seeing the copy while still reporting
+    # on it. auditJumpToEntry is here for the same reason: it writes prose
+    # an operator reads.
+    return "\n".join([_g4_const("_AU_BREAK")]
+                     + [_g4_bare(f) for f in
+                        ("_auChainVerdict", "_auChainPaint", "_auChainFetch",
+                         "auditJumpToEntry")])
+
+
+def test_the_audit_page_never_borrows_the_customer_chains_claim() -> None:
+    """THE HARD RULE OF THIS PHASE, and it outranks the feature.
+
+    Asserted as STRINGS, because the claim IS a string. Checked in both places
+    a claim can live: the markup that ships with the page and the painter that
+    writes into it.
+    """
+    surfaces = {"page-audit markup": _nocomment(_page("audit")).lower(),
+                "the chain painter": _g5_paint_src().lower()}
+    for where, text in surfaces.items():
+        for word in _G5_BORROWED:
+            assert word not in text, (
+                "%s says %r — that is the tenant ledger's claim, and this chain "
+                "has not earned it: it is not anchored anywhere Foxy does not "
+                "control" % (where, word))
+
+
+def test_the_verdict_the_audit_page_does_claim_is_the_smaller_one() -> None:
+    src = _g5_paint_src()
+    assert "sequence unbroken" in src, (
+        "the audit chain's clean verdict lost its wording; whatever replaced it "
+        "has to claim no more than an unbroken sequence of stored entries")
+    assert "first_broken_seq" in src, (
+        "a broken chain no longer names the entry it breaks at — 'something is "
+        "wrong' is not actionable on a 10,000-row trail")
+    # ⚠ AND THE REASON. G5.1 collapsed three incidents into one position, and a
+    # deletion, a splice and an edit call for different responses.
+    for reason in ("is missing", "does not follow the one before it",
+                   "was changed after it was written"):
+        assert reason in src, (
+            "the console can no longer say %r, so an operator reads a position "
+            "with no incident attached to it" % reason)
+    # ⚠ AND THE TABLE IS READ, not merely present. Swapping the verdict for
+    # d.detail left all three reasons sitting in _AU_BREAK with nothing using
+    # them, and this guard passed — "guards a definition nothing calls", the
+    # first of the six ways guards in this file have lied.
+    assert "_AU_BREAK[" in _g4_bare("_auChainVerdict"), (
+        "the break reasons are defined and unused: the verdict no longer reads "
+        "_AU_BREAK, so whatever it prints is not the copy this guard checks")
+
+
+def test_the_limits_ship_in_the_markup_and_are_not_behind_a_click() -> None:
+    """A caveat that only appears after you press something is a caveat you can
+    miss. Both limits are in the page's own HTML, visible before any request:
+    the chain is in Foxy's database, and a truncated tail leaves no trace."""
+    markup = _nocomment(_page("audit"))
+    assert 'id="auChainLimits"' in markup, "the limits line is gone from page-audit"
+    line = markup[markup.index('id="auChainLimits"'):]
+    line = line[:line.index("</p>")].lower()
+    assert "not proof against foxy" in line, (
+        "the line no longer says the chain is not proof against Foxy, which is "
+        "the whole reason the wording is smaller than org360's")
+    assert "removed from the end" in line, (
+        "the truncation limit is gone — deleting the LAST entries is the one "
+        "kind of tampering this mechanism cannot see, and it is silent unless "
+        "the page says so")
+    # and it is markup, not something JS assembles and could stop assembling
+    live = re.sub(r"/\*.*?\*/|//[^\n]*", "", "\n".join(_script_blocks()), flags=re.S)
+    assert "auChainLimits" not in live, (
+        "the limits line moved into JavaScript, where a branch can skip it")
+
+
+# ── driven: the painter cannot be made to paint a verdict it does not have ──
+
+_G5_SHIM = (
+    "var G5NODES={};\n"
+    "function _g5node(id){ var n=G5NODES[id]; if(n)return n;\n"
+    "  var _h=''; n=G5NODES[id]={id:id,value:'',\n"
+    "    get innerHTML(){return _h;}, set innerHTML(v){_h=String(v);},\n"
+    "    get textContent(){return _h;}, set textContent(v){_h=String(v);}};\n"
+    "  return n; }\n"
+    # ⚠ THE AUDIT PAGE'S OWN IDS COME FROM HERE, not from the shared G4
+    # shim. _auditParams reads .value off the four filter inputs, and a
+    # G4 element has attrs and no .value, so falling through to it threw
+    # where it should have asserted.
+    "var _AU_IDS={auChain:1,auNote:1,auAction:1,auActor:1,auSince:1,"
+    "auUntil:1,auRows:1,auPager:1};\n"
+    "var _$g5=$; $=function(id){ return _AU_IDS[id]?_g5node(id)\n"
+    "                                             :(_$g5(id)||_g5node(id)); };\n"
+    "function g5text(id){ var n=G5NODES[id]; return n?n.innerHTML:''; }\n"
+    "function num(n){ return String(n==null?0:n); }\n"
+    "function esc(x){ return String(x); }\n"
+    "function fmtDay(iso){ return iso?('DAY:'+String(iso).slice(0,10)):'-'; }\n"
+    "var G5TOASTS=[];\n"
+    "function toast(m){ G5TOASTS.push(m); }\n"
+    "var api;\n")
+
+
+def _run_g5(body: str) -> dict:
+    # ⚠ THE COUNTER COMES FROM THE SHIPPED SOURCE, not restated here.
+    # Declaring `let AU_CHAIN_GEN=0` in the shim would keep every probe below
+    # running after the real declaration was deleted — the counter would be
+    # the probe's own, and the staleness guard would pass against code that
+    # has no counter at all. F2's shape, one level down.
+    return _run_g4(body, extra=(
+        _g4_const("AU_CHAIN_GEN", "AU_SEQ", "_AU_BREAK") + "\n" + _G5_SHIM + "\n"
+        + "\n".join(_js_decl(f) for f in _G5_AUDIT_FNS)
+        + "\nvar AU_OFF=0,_auT=null,LOADS=0;"
+          "\nfunction loadAudit(){ LOADS++; return Promise.resolve('LIST'); }"
+          "\nfunction setTimeout(f){ f(); return 0; }"
+          "\nfunction clearTimeout(){}\n"))
+
+
+def _g5_chips(html: str) -> list:
+    return re.findall(r'class="chip ([a-z]+)"', html)
+
+
+@_G4_SKIP
+def test_an_unchecked_chain_is_never_painted_as_a_clean_one() -> None:
+    """The page opens with coverage only — three cheap counts, no recompute —
+    so on arrival the chain is UNVERIFIED. Product principle: unverified stays
+    unverified. A clean mark here would be the confident wrong answer."""
+    r = _run_g5("""
+_auChainPaint({checked:false,ok:null,chained:1240,unchained:18,
+  head_hash:'3f9a4c11d2e0aa77',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'not checked'},false);
+R.html=g5text('auChain');
+// ⚠ AND THE CASE ONLY `checked` CAN DECIDE. The first version passed with the
+// !d.checked branch deleted, because coverage also carries detail:'not checked'
+// and the final else printed the same words by accident - a coincidence, not a
+// guarded branch. An unchecked payload that carries ok:true separates them.
+_auChainPaint({checked:false,ok:true,chained:1240,unchained:0,
+  head_hash:'3f9a4c11d2e0aa77',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'not checked'},false);
+R.okButUnchecked=g5text('auChain');
+""")
+    html = r["html"]
+    assert "unbroken" not in html, (
+        "an un-recomputed chain was painted as unbroken: %r" % html)
+    assert "not checked" in html, html
+    assert "chip dim" in html, (
+        "'not checked' must be ABSENCE (.chip.dim), not a status: %r" % html)
+    assert "check the sequence" in html, (
+        "the affordance that runs the recompute is missing, so the honest "
+        "'not checked' is a dead end")
+    assert "unbroken" not in r["okButUnchecked"], (
+        "an ok:true that arrived WITHOUT a recompute was painted as a verdict: "
+        "%r - `checked` is the server's own word for which answer it gave, and "
+        "it has to win over ok" % r["okButUnchecked"])
+    assert "not checked" in r["okButUnchecked"], r["okButUnchecked"]
+
+
+@_G4_SKIP
+def test_a_chain_too_long_to_check_is_not_painted_as_clean_either() -> None:
+    """ok=null has two causes — not asked, and too long to answer — and neither
+    is 'fine'. The branch that handles the second is the one a reader assumes
+    falls through to the happy path."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:null,chained:90000,unchained:0,
+  detail:'chain too long to check in one request'},false);
+R.html=g5text('auChain');
+""")
+    assert "unbroken" not in r["html"], r["html"]
+    assert "too long" in r["html"], r["html"]
+    assert _g5_chips(r["html"])[0] == "dim", (
+        "an unanswerable check must read as absence, not as a status: %r"
+        % r["html"])
+
+
+@_G4_SKIP
+def test_a_clean_result_recedes_and_a_break_is_loud() -> None:
+    """R2's ladder, driven rather than grepped. EXPECTED recedes (.safe),
+    EXCEPTION is loud (.bad). A console where the good news shouts has no room
+    left to shout about bad news."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:1240,unchained:0,
+  head_hash:'3f9a4c11d2e0aa77',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'sequence unbroken'},false);
+R.good=g5text('auChain');
+_auChainPaint({checked:true,ok:false,kind:'modified',first_broken_seq:412,
+  chained:1240,unchained:0,detail:'entry 412 was changed after it was written'},false);
+R.bad=g5text('auChain');
+""")
+    assert _g5_chips(r["good"])[0] == "safe", r["good"]
+    assert "sequence unbroken" in r["good"]
+    assert _g5_chips(r["bad"])[0] == "bad", r["bad"]
+    assert "entry 412 was changed after it was written" in r["bad"], (
+        "the break does not carry its reason: %r" % r["bad"])
+    assert "safe" not in _g5_chips(r["bad"]), (
+        "a broken chain still carried an expected-tier mark: %r" % r["bad"])
+
+
+@_G4_SKIP
+def test_an_empty_chain_is_not_painted_as_a_verified_one() -> None:
+    """FOUND IN THE RENDER, not in review. The API reports ok=true for zero
+    chained entries — defensible as "no break was found" — and the painter fell
+    straight through to the clean branch, so a trail with nothing chained said
+    "sequence unbroken". That is a verdict about nothing, on the one page whose
+    whole job this phase is to state honestly."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:0,unchained:0,
+  detail:'no entries have been chained yet'},false);
+R.empty=g5text('auChain');
+_auChainPaint({checked:true,ok:true,chained:0,unchained:26,
+  detail:'no entries have been chained yet'},false);
+R.onlyOld=g5text('auChain');
+""")
+    assert "unbroken" not in r["empty"], (
+        "an empty chain was painted as verified: %r" % r["empty"])
+    assert _g5_chips(r["empty"])[0] == "dim", (
+        "nothing chained yet is ABSENCE, not a status: %r" % r["empty"])
+    assert "unbroken" not in r["onlyOld"], (
+        "a trail of nothing but pre-chain rows was painted as verified: %r"
+        % r["onlyOld"])
+    assert "26 earlier entries predate the chain" in r["onlyOld"], (
+        "the older rows vanished when nothing was chained: %r" % r["onlyOld"])
+    assert "nothing to check" in r["empty"], (
+        "the empty verdict no longer says what it is: %r" % r["empty"])
+    assert "chained yet" not in r["empty"], (
+        "the empty state asserts a history it cannot know — deleting every "
+        "chained row lands here too, and 'nothing chained yet' is false then: "
+        "%r" % r["empty"])
+
+
+@_G4_SKIP
+def test_an_empty_trail_on_arrival_still_says_it_is_empty() -> None:
+    """The other half of that dedup. On arrival the mark reads 'not checked',
+    which is about the VERDICT — so the count is the only thing left that can
+    tell an operator the trail has nothing in it rather than nothing read."""
+    r = _run_g5("""
+_auChainPaint({checked:false,ok:null,chained:0,unchained:0,
+  detail:'not checked'},false);
+R.html=g5text('auChain');
+""")
+    assert "no entries chained yet" in r["html"], (
+        "an empty trail on arrival says only 'not checked', which reads as an "
+        "unread chain rather than an empty one: %r" % r["html"])
+    assert "not checked" in r["html"], r["html"]
+
+
+@_G4_SKIP
+def test_entries_that_predate_the_chain_are_absence_and_are_counted_aloud() -> None:
+    """The no-fabrication rule made visible. Those rows are real audit rows that
+    are simply older than the mechanism — never hidden, never marked suspicious,
+    and never folded into a count that would imply coverage they do not have."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:12,unchained:18,
+  head_hash:'aa11bb22cc33dd44',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'sequence unbroken'},false);
+R.many=g5text('auChain');
+_auChainPaint({checked:true,ok:true,chained:12,unchained:1,
+  head_hash:'aa11bb22cc33dd44',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'sequence unbroken'},false);
+R.one=g5text('auChain');
+_auChainPaint({checked:true,ok:true,chained:12,unchained:0,
+  head_hash:'aa11bb22cc33dd44',started_at:'2026-08-10T09:00:00+00:00',
+  detail:'sequence unbroken'},false);
+R.none=g5text('auChain');
+""")
+    assert "18 earlier entries predate the chain" in r["many"], r["many"]
+    assert "1 earlier entry predates the chain" in r["one"], (
+        "the count reads as a plural for a single entry: %r" % r["one"])
+    assert "predate" not in r["none"] and "predates" not in r["none"], (
+        "a trail with nothing older still announced older entries: %r" % r["none"])
+    marks = _g5_chips(r["many"])
+    assert "dim" in marks, (
+        "'predates the chain' must be ABSENCE (.chip.dim) — it is not a status "
+        "and those rows are not suspect: %r" % r["many"])
+    assert "warn" not in marks and "bad" not in marks, (
+        "older rows were marked as a problem: %r" % r["many"])
+
+
+@_G4_SKIP
+def test_the_head_hash_is_shown_because_the_truncation_limit_is_real() -> None:
+    """The head is the one value an operator can record elsewhere, and that is
+    the only thing that turns a silent tail truncation into a mismatch. It is
+    shown short — the full 64 chars would be a wall — and it is shown at all
+    BECAUSE the limitation exists, which is why this guard sits next to the one
+    that asserts the limitation."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:9,unchained:0,
+  head_hash:'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  started_at:'2026-08-10T09:00:00+00:00',detail:'sequence unbroken'},false);
+R.html=g5text('auChain');
+""")
+    assert "0123456789ab" in r["html"], "the chain head is not shown: %r" % r["html"]
+    assert "0123456789abcdef0123" not in r["html"], (
+        "the whole 64-character head is printed inline: %r" % r["html"])
+
+
+@_G4_SKIP
+def test_a_stale_chain_answer_does_not_land_on_a_newer_one() -> None:
+    """G4.2's lesson, applied to a node G4.2 never touched. Two presses are two
+    requests and the slower one must lose — a verdict that reappears later is a
+    lie about when it was measured. Driven through BOTH awaits: the fetch and
+    the .json(), because the body can finish arriving after the second press."""
+    r = _run_g5("""
+var relFetch1=null,relBody1=null,n=0;
+api=function(u){ n++; var k=n;
+  return new Promise(function(res){
+    if(k===1){
+      relFetch1=function(){ res({ok:true,status:200,json:function(){
+        return new Promise(function(j){ relBody1=function(){ j({checked:true,
+          ok:false,first_broken_seq:7,chained:9,unchained:0,
+          detail:'entry 6 is missing'}); }; }); }}); };
+    }else{
+      res({ok:true,status:200,json:function(){ return Promise.resolve({
+        checked:true,ok:true,chained:9,unchained:0,head_hash:'beef',
+        started_at:'2026-08-10T09:00:00+00:00',detail:'sequence unbroken'}); }});
+    }
+  }); };
+var p1=auditChainCheck();
+relFetch1();                                    // press 1 has its RESPONSE...
+for(var t=0;t<8;t++) await Promise.resolve();   // ...and is now inside r.json()
+R.reachedBody=(relBody1!==null);
+var p2=auditChainCheck(); await p2;             // press 2 lands the newer verdict
+R.afterNew=g5text('auChain');
+relBody1(); await p1;                           // press 1's BODY finally arrives
+R.afterStale=g5text('auChain');
+R.toasts=G5TOASTS.length;
+""")
+    assert r["reachedBody"] is True, (
+        "the probe never got the first press into the gap between its two "
+        "awaits, so what follows proves nothing about the check after r.json()")
+    assert "sequence unbroken" in r["afterNew"], r["afterNew"]
+    assert "breaks at entry 7" not in r["afterStale"], (
+        "a stale answer overwrote the newer one: %r" % r["afterStale"])
+    assert r["afterStale"] == r["afterNew"], (
+        "the stale response repainted the strip: %r" % r["afterStale"])
+    assert r["toasts"] == 1, (
+        "the stale press also toasted its verdict: %d toasts" % r["toasts"])
+
+
+@_G4_SKIP
+def test_a_failed_check_says_so_and_offers_the_retry() -> None:
+    """Principle 4: a visible failure beats a confident wrong answer. A check
+    that could not run must never leave the previous verdict standing."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:9,unchained:0,head_hash:'beef',
+  started_at:'2026-08-10T09:00:00+00:00',detail:'sequence unbroken'},false);
+api=function(){ return Promise.reject(new Error('offline')); };
+await auditChainCheck();
+R.html=g5text('auChain');
+""")
+    assert "unbroken" not in r["html"], (
+        "a failed check left the previous clean verdict on screen: %r" % r["html"])
+    assert "did not run" in r["html"], r["html"]
+    assert "try again" in r["html"], "no way back from a failed check"
+
+
+# ── the recompute is opt-in, and coverage is not ───────────────────────────
+
+def test_the_page_asks_for_coverage_on_arrival_and_recomputes_only_on_request() -> None:
+    """A full recompute on every visit is a cost nobody asked for; a table that
+    silently implies full coverage is a claim nobody made. So arrival fetches
+    the counts and the recompute waits to be pressed.
+
+    ⚠ DERIVED FROM THE LOADER MAP. loadAudit cannot tell an arrival from a
+    keystroke — auditDebounced calls it with no arguments too — so hanging the
+    counts off loadAudit would fire three queries per character typed. The map
+    is what makes openAudit the arrival, and this reads the map rather than
+    trusting the comment.
+    """
+    loaders = _js_func("_loaders")
+    m = re.search(r"\baudit\s*:\s*(\w+)", loaders)
+    assert m, "the audit page fell out of the loader map"
+    assert m.group(1) == "openAudit", (
+        "the audit page loads %s on arrival — coverage is fetched by openAudit, "
+        "so nothing states it any more" % m.group(1))
+
+    opener = _g4_bare("openAudit")
+    assert "auditChainLoad(" in opener and "loadAudit(" in opener, opener
+    assert "auditChainLoad" not in _g4_bare("loadAudit"), (
+        "loadAudit fetches coverage, so every keystroke of the action/actor "
+        "filter re-counts the whole trail")
+
+    assert "false" in _g4_bare("auditChainLoad"), "arrival stopped asking for coverage only"
+    assert "true" in _g4_bare("auditChainCheck"), "the button stopped asking for the recompute"
+    assert "verify=1" in _g4_bare("_auChainFetch"), (
+        "the recompute is no longer requested explicitly — the default is "
+        "coverage only, so a missing flag means the button silently does "
+        "nothing but re-read the counts")
+
+
+@_G4_SKIP
+def test_arriving_at_the_audit_page_does_not_recompute_the_chain() -> None:
+    """Driven, because the flag above is only a string. Arrival must request
+    coverage; only the button may ask for the recompute."""
+    r = _run_g5("""
+var URLS=[];
+api=function(u){ URLS.push(u); return Promise.resolve({ok:true,status:200,
+  json:function(){ return Promise.resolve({checked:false,ok:null,chained:3,
+    unchained:0,head_hash:'beef',started_at:'2026-08-10T09:00:00+00:00',
+    detail:'not checked'}); }}); };
+await openAudit();
+R.onArrival=URLS.slice();
+await auditChainCheck();
+R.afterPress=URLS.slice();
+""")
+    assert r["onArrival"], "opening the audit page requested no coverage at all"
+    assert all("verify" not in u for u in r["onArrival"]), (
+        "opening the audit page ran a full recompute: %s" % r["onArrival"])
+    assert any("verify=1" in u for u in r["afterPress"]), (
+        "pressing the check did not ask for the recompute: %s" % r["afterPress"])
+
+
+@_G4_SKIP
+def test_the_toast_says_exactly_what_the_strip_says() -> None:
+    """⚠ THE OVERCLAIM WAS IN THE TOAST, NOT THE PAINTER.
+
+    The strip and the toast branched separately. The toast tested d.ok===true
+    on its own, so an empty chain — which the API answered ok=true for — was
+    announced as "sequence unbroken (0 entries)" beside a strip correctly
+    saying there was nothing chained. Driven for the three verdicts that differ
+    between the two ladders, because "they call the same helper" is a claim
+    about structure and this is a claim about output.
+    """
+    r = _run_g5("""
+function reply(d){ api=function(){ return Promise.resolve({ok:true,status:200,
+  json:function(){ return Promise.resolve(d); }}); }; }
+R.out=[];
+var CASES=[
+  {checked:true,ok:true,chained:0,unchained:0,detail:'nothing to check'},
+  {checked:true,ok:true,chained:9,unchained:0,head_hash:'beef',
+   started_at:'2026-08-10T09:00:00+00:00',detail:'sequence unbroken'},
+  {checked:true,ok:false,kind:'missing',first_broken_seq:7,chained:9,
+   unchained:0,detail:'entry 7 is missing'},
+  {checked:true,ok:null,chained:90000,unchained:0,
+   detail:'chain too long to check in one request'}
+];
+for(var i=0;i<CASES.length;i++){
+  G5TOASTS.length=0;
+  reply(CASES[i]);
+  await auditChainCheck();
+  R.out.push({strip:g5text('auChain'), toast:G5TOASTS[0]||''});
+}
+""")
+    empty, good, broken, long_ = r["out"]
+    assert "unbroken" not in empty["toast"], (
+        "the toast announced an empty chain as verified: %r" % empty["toast"])
+    assert "nothing to check" in empty["toast"], empty["toast"]
+    assert "0 entries" not in empty["toast"], (
+        "the toast counted a sequence that does not exist: %r" % empty["toast"])
+    assert "sequence unbroken" in good["toast"] and "9 entries" in good["toast"]
+    assert "entry 7 is missing" in broken["toast"], broken["toast"]
+    assert "unbroken" not in long_["toast"], long_["toast"]
+    for case in r["out"]:
+        words = case["toast"].split(": ", 1)[-1].split(" (")[0]
+        assert words and words in case["strip"], (
+            "the toast said %r and the strip did not: %r"
+            % (words, case["strip"]))
+
+
+@_G4_SKIP
+def test_a_break_offers_a_way_to_the_entry_it_names() -> None:
+    """A verdict an operator cannot act on. "sequence breaks at entry 1,240" on
+    a trail paginated fifty at a time named a row with no column, no filter and
+    no way to reach it — the API field carried a comment claiming a consumer
+    that did not exist. This drives the jump and the params it produces."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:false,first_broken_seq:412,chained:1240,
+  unchained:0,detail:'entry 411 is missing'},false);
+R.strip=g5text('auChain');
+R.before=_auditParams().toString();
+auditJumpToEntry(412);
+R.after=_auditParams().toString();
+R.note=g5text('auNote')||'';
+R.loads=LOADS;
+auditDebounced();
+R.afterTyping=_auditParams().toString();
+""")
+    assert "show entry 412" in r["strip"], (
+        "the break names an entry and offers no way to it: %r" % r["strip"])
+    assert "seq=" not in r["before"], "a seq filter was already active"
+    assert "seq=412" in r["after"], (
+        "the jump did not reach the query: %r" % r["after"])
+    assert r["loads"] >= 1, "the jump did not reload the list"
+    assert "412" in r["note"], (
+        "the list silently shrank to one row with nothing saying why: %r"
+        % r["note"])
+    assert "seq=" not in r["afterTyping"], (
+        "the one-entry filter survived a new search, so the operator gets an "
+        "empty table with no visible reason: %r" % r["afterTyping"])
+
+
+@_G4_SKIP
+def test_each_break_kind_reaches_the_screen_with_its_reason() -> None:
+    """⚠ THREE INCIDENTS, NOT ONE POSITION.
+
+    A deletion, a splice and an edit call for different responses. G5 showed
+    which; G5.1 collapsed all three into "sequence breaks at entry N" and
+    rendered d.detail nowhere, so the operator got a number and no event.
+
+    Driven for all three, and the number in the words is the number the jump
+    uses — the pair that drifted apart in G5.1, where first_broken_seq named
+    the surviving row and the sentence named the missing one.
+    """
+    r = _run_g5("""
+R.out=[];
+[['missing',412],['out_of_order',77],['modified',9]].forEach(function(c){
+  AU_SEQ=null;
+  _auChainPaint({checked:true,ok:false,kind:c[0],first_broken_seq:c[1],
+    chained:1240,unchained:0,detail:'server prose'},false);
+  R.out.push({kind:c[0],seq:c[1],html:g5text('auChain')});
+});
+""")
+    reasons = {"missing": "is missing",
+               "out_of_order": "does not follow the one before it",
+               "modified": "was changed after it was written"}
+    for case in r["out"]:
+        html, seq = case["html"], case["seq"]
+        assert reasons[case["kind"]] in html, (
+            "the %s incident reached the screen as a bare position: %r"
+            % (case["kind"], html))
+        assert ("entry " + "{:,}".format(seq)) in html, (
+            "the verdict does not name entry %d: %r" % (seq, html))
+        assert "show entry %s" % "{:,}".format(seq) in html, (
+            "the jump names a different entry than the words do: %r" % html)
+        # ⚠ AND THE KIND RIDES ALONG. Without it auditJumpToEntry cannot
+        # tell a MISSING entry (where an empty result is the answer) from one
+        # that must land on a row, and every jump gets the same note.
+        assert "auditJumpToEntry(%d,'%s')" % (seq, case["kind"]) in html, (
+            "the jump does not carry the incident kind: %r" % html)
+        assert "server prose" not in html, (
+            "the console prints the server's sentence instead of its own "
+            "words, so the copy guard can no longer read the copy: %r" % html)
+
+
+@_G4_SKIP
+def test_a_missing_entry_says_an_empty_result_is_the_answer() -> None:
+    """The one kind whose jump correctly finds nothing. Without the note, an
+    empty table reads as the tool being broken rather than as confirmation."""
+    r = _run_g5("""
+auditJumpToEntry(412,'missing');
+R.missing=g5text('auNote');
+auditJumpToEntry(412,'modified');
+R.modified=g5text('auNote');
+""")
+    assert "MISSING" in r["missing"] or "missing" in r["missing"], r["missing"]
+    assert "not a failure" in r["missing"], (
+        "an empty result for a deleted entry is unexplained: %r" % r["missing"])
+    assert "not a failure" not in r["modified"], (
+        "every jump now claims an empty result is expected, including the "
+        "kinds that must land on a row: %r" % r["modified"])
+
+
+@_G4_SKIP
+def test_the_jump_clears_the_filters_its_note_claims_to_have_cleared() -> None:
+    """⚠ THE NOTE WAS A LIE WITH A FILTER STANDING.
+
+    "Showing entry N only" over an action/actor/date filter produces an EMPTY
+    table under a note promising one row — the same shape as a pager reading
+    "1–25 of 240" over a filtered table, which this console has shipped twice.
+    """
+    r = _run_g5("""
+$('auAction').value='org.';
+$('auActor').value='ops@foxy.audit';
+$('auSince').value='2026-01-01';
+$('auUntil').value='2026-02-01';
+R.before=_auditParams().toString();
+auditJumpToEntry(412,'modified');
+R.after=_auditParams().toString();
+R.note=g5text('auNote');
+R.inputs=['auAction','auActor','auSince','auUntil'].map(function(i){return $(i).value;});
+R.bounds=[$('auSince').max,$('auUntil').min];
+// ...and the COMMON path: arriving from a chain check with nothing set.
+AU_SEQ=null;
+auditJumpToEntry(9,'modified');
+R.noteWhenNothingWasSet=g5text('auNote');
+R.paramsWhenNothingWasSet=_auditParams().toString();
+""")
+    assert "action=" in r["before"] and "actor=" in r["before"], r["before"]
+    assert r["inputs"] == ["", "", "", ""], (
+        "the jump left filters standing while its note says 'only': %s"
+        % r["inputs"])
+    # the cross-bounds auditRange sets go too, as auditClear already does —
+    # a min/max left over from a range that is no longer expressed still
+    # constrains what the operator can type next.
+    assert r["bounds"] == ["", ""], (
+        "the date cross-bounds survived the jump: %s" % r["bounds"])
+    for gone in ("action=", "actor=", "since=", "until="):
+        assert gone not in r["after"], (
+            "%s survived the jump, so the query cannot return the entry the "
+            "note promises: %r" % (gone, r["after"]))
+    assert "seq=412" in r["after"], r["after"]
+    assert "cleared" in r["note"], (
+        "the filters were cleared and the note does not say so, which is the "
+        "same surprise from the other side: %r" % r["note"])
+
+    # ⚠ AND NOT WHEN THERE WAS NOTHING TO CLEAR. The clause was appended
+    # unconditionally, so on the ordinary path - a chain check with no filters
+    # set - the note announced a clearing of nothing. Same defect as the one
+    # this jump fixed, pointing the other way: a sentence about a state the
+    # page is not in.
+    assert "cleared" not in r["noteWhenNothingWasSet"], (
+        "the note claims filters were cleared when none were set: %r"
+        % r["noteWhenNothingWasSet"])
+    assert "Showing entry 9 only" in r["noteWhenNothingWasSet"], (
+        "the note lost the part that is true: %r" % r["noteWhenNothingWasSet"])
+    # lower(), because the clause starts the sentence when nothing was cleared
+    assert "use clear to see the whole trail" in r["noteWhenNothingWasSet"].lower(), (
+        "the way back went with it: %r" % r["noteWhenNothingWasSet"])
+    assert "seq=9" in r["paramsWhenNothingWasSet"], r["paramsWhenNothingWasSet"]
+
+
+@_G4_SKIP
+def test_a_clean_verdict_offers_no_jump() -> None:
+    """The other half: the affordance is the break's, not the strip's."""
+    r = _run_g5("""
+_auChainPaint({checked:true,ok:true,chained:9,unchained:0,head_hash:'beef',
+  started_at:'2026-08-10T09:00:00+00:00',detail:'sequence unbroken'},false);
+R.html=g5text('auChain');
+""")
+    assert "show entry" not in r["html"], (
+        "an unbroken chain offered to jump to a broken entry: %r" % r["html"])
+
+
+def test_the_audit_list_can_actually_filter_by_seq() -> None:
+    """The console half is useless without the server half, and this is the
+    pair that #139's defect class is about: a field whose comment claims a
+    consumer. Read from the router rather than trusted."""
+    router = (HTML.parent.parent / "backend/app/routers/admin_audit_view.py")
+    src = router.read_text(encoding="utf-8")
+    assert "seq: int | None = Query" in src, (
+        "GET /admin/v1/audit takes no seq parameter, so the console's jump "
+        "filters nothing")
+    assert "AdminAction.seq == seq" in src, (
+        "the seq parameter is accepted and not applied")
+
+
+def test_the_audit_chain_has_its_own_generation_and_does_not_borrow_org360s() -> None:
+    """It writes #auChain, and nothing on org360 writes #auChain. Borrowing one
+    of the three O3 tokens would make an audit-page check cancel a tenant's
+    chain verify for no reason — the exact collision G4.2 split them to remove,
+    rebuilt one page over.
+    """
+    fetch = _g4_bare("_auChainFetch")
+    assert "AU_CHAIN_GEN" in fetch, (
+        "the audit-page painter takes no token; two presses race and the slower "
+        "answer wins")
+    for region in re.findall(r"'(\w+)'", _g4_const("O3_REGIONS")):
+        assert "_o3Take('%s')" % region not in fetch, (
+            "the audit page took org360's %r token" % region)
+        assert "_o3Stale('%s'" % region not in fetch, (
+            "the audit page reads org360's %r token" % region)
+    live = re.sub(r"/\*.*?\*/|//[^\n]*", "", "\n".join(_script_blocks()), flags=re.S)
+    assert len(re.findall(r"\+\+AU_CHAIN_GEN", live)) == 1, (
+        "the audit generation is bumped in more than one place, so one caller "
+        "can invalidate another's answer without writing the node")

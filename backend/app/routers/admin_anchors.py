@@ -169,13 +169,33 @@ def reanchor(
     if head_seq == 0:
         raise HTTPException(status_code=409, detail="organization has no audit logs to anchor")
 
-    # anchor_org owns its provider transaction and commits internally. Stage the
-    # admin row first so that commit includes both the action and anchor receipt.
+    # ⚠ COMMITTED BEFORE THE ANCHOR RUNS, AND THAT IS THE POINT (G5.1).
+    #
+    # This used to stage the admin row and let anchor_org's internal commit
+    # carry both. Since G5 the audit row takes the platform-wide chain lock,
+    # which is TRANSACTION-scoped — so it was held from here through
+    # anchor.py's wait_for_transaction_receipt(timeout=180). Every other staff
+    # action and every staff SIGN-IN (auth_staff records on login) would queue
+    # behind one re-anchor for up to three minutes, holding pool connections the
+    # customer API shares. Measured: a second writer's wait is 1:1 with how long
+    # this transaction stays open, and it is the same with the lock removed —
+    # the block belongs to the gap-free sequence, not to the lock.
+    #
+    # What this costs is the coupling the old comment claimed: the action and
+    # the receipt are two commits now, not one. What it buys, besides the lock,
+    # is that this row survives the 409 and 502 paths below — both of which
+    # called db.rollback() and discarded it, so an operator's re-anchor left no
+    # trace at all whenever it turned out there was nothing to anchor.
+    #
+    # An audit trail should record the ATTEMPT: "staff X asked to re-anchor org
+    # Y at head N" is true whether or not the provider agreed, and anchor_org
+    # persists its own receipt for the other half, failures included.
     record_admin_action(
         db, staff, "anchor.reanchor", target_org_id=oid,
         target_type="organization", target_id=str(oid),
         detail={"force": True, "head_seq": head_seq}, ip=client_ip(request),
     )
+    db.commit()
     try:
         anchor = anchor_engine.anchor_org(db, oid, force=True)
     except Exception as exc:  # noqa: BLE001 - provider failure must not leak details
