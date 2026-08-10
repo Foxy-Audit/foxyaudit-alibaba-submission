@@ -229,7 +229,12 @@ def test_the_two_charts_that_were_given_the_treatment_actually_ask_for_it() -> N
 _PANELS = ("bg", "surf", "surf2")
 
 
-@pytest.mark.parametrize("token", ["fox-series", "mute-series"])
+# G6 ∙ #132 — the four F1 left behind. --c-2/-4/-5/-6 still aliased
+# --dec1/--dec3/--warn-bg/--dec2, which are a decorative FILL and a status
+# fill; measured in light against --bg they were 2.57 / 2.16 / 1.74 / 2.25.
+@pytest.mark.parametrize("token", ["fox-series", "mute-series",
+                                   "blue-series", "pink-series",
+                                   "violet-series", "warn-series"])
 def test_the_chart_mark_steps_clear_three_to_one_on_every_panel(themes, token):
     """--fox was 2.81:1 against --bg and --muted2 2.61:1, and both were data
     marks — TONE.fox / TONE.brand / --c-1, and TONE.mute. A mark carries no ink,
@@ -377,3 +382,171 @@ def test_the_two_bands_that_touch_are_the_ones_being_measured() -> None:
     file rather than leaving it measuring a pair nobody draws."""
     call = SRC[SRC.index("window.foxChart('threatTimeline',{type:'stacked'"):][:600]
     assert "tone:'bad'" in call and "tone:'warn'" in call, call[:300]
+
+
+def _block_of(sheet: str, sel: str) -> str:
+    """The declaration body of one selector block."""
+    i = sheet.index(sel)
+    return sheet[i:sheet.index("}", i)]
+
+
+# ── G6 · #132 · the split F1 started, finished ─────────────────────────────
+
+def test_every_series_slot_reads_a_series_token(css):
+    """⚠ THE ALIAS IS THE SUBJECT. --c-2/-4/-5/-6 pointed straight at tokens
+    with another job — --dec1/--dec3/--dec2 are decorative fills read by
+    .ltag/.pill, and --warn-bg is a status fill carrying --warn-tx as text — so
+    a chart could not be re-stepped for paper without repainting them.
+    Asserted on the DECLARATION, so a later phase cannot quietly re-point one.
+    """
+    # ⚠ css is a FIXTURE yielding the stylesheet text, not a callable.
+    # Calling it produced pytest's "Fixture called directly" error, which is a
+    # broken guard rather than a finding.
+    block = _block_of(css, ":root")
+    # \u26a0 ALL SIX, WITH THE EXCEPTION NAMED. This enumerated five and skipped
+    # --c-3 in silence, which is worse than covering five and saying so: a
+    # reader cannot tell an exception from an oversight. --c-3 is --safe-bg,
+    # a STATUS fill carrying --safe-tx, and it passes at 3.88:1 against light
+    # --bg on its own — so it is left where it is, deliberately, for the same
+    # reason --c-5's source was: deepening a fill to rescue a mark breaks the
+    # text sitting on it. If it ever fails, it needs a --safe-series, not a
+    # nudge.
+    for slot, want in (("--c-1", "--fox-series"), ("--c-2", "--blue-series"),
+                       ("--c-3", "--safe-bg"),
+                       ("--c-4", "--pink-series"), ("--c-5", "--warn-series"),
+                       ("--c-6", "--violet-series")):
+        m = re.search(re.escape(slot) + r"\s*:\s*var\((--[a-z0-9-]+)\)", block)
+        assert m, "%s is no longer an alias at all" % slot
+        assert m.group(1) == want, (
+            "%s points at %s, not %s — a chart mark reading a fill again"
+            % (slot, m.group(1), want))
+
+
+def test_all_six_series_clear_three_to_one_on_every_panel_in_both_themes(themes):
+    """The whole point, measured end to end rather than token by token: what a
+    reader sees is --c-N, whatever it is aliased to this week."""
+    bad = []
+    for theme, tokens in themes.items():
+        for n in range(1, 7):
+            for panel in _PANELS:
+                got = ratio(tokens["c-%d" % n], tokens[panel])
+                if got < 3.0:
+                    bad.append("%s --c-%d on --%s = %.2f" % (theme, n, panel, got))
+    assert not bad, "series marks below 3:1 against their panel: %s" % bad
+
+
+def test_the_status_and_decorative_sources_were_left_where_they_were(themes, css):
+    """The split had to be local. --dec1/2/3 are read by .ltag/.pill fills whose
+    near-black ink was chosen for them, and --warn-bg carries --warn-tx on
+    .ltag.warn, .pill.warn and .lockchip. Deepening either to rescue a chart
+    would have broken the text sitting on it."""
+    assert themes["light"]["dec1"] == "#5b8cff", themes["light"]["dec1"]
+    assert themes["light"]["dec3"] == "#ff6aa8", themes["light"]["dec3"]
+    assert themes["light"]["dec2"] == "#9b8cff", themes["light"]["dec2"]
+    assert themes["light"]["warn-bg"] == "#F59E0B", themes["light"]["warn-bg"]
+    # \u26a0 AND THE TAGS FOLLOW THE MARKS, which is the opposite of what G6
+    # shipped. The verdict donut is the KEY for the ledger list, so a slice and
+    # the row it explains have to be one colour; G6 left the tags on --dec* and
+    # they stopped matching in light only, silently. The marks are the side with
+    # a contrast floor, so the tags moved.
+    block = css
+    for sel in (".ltag.blocked", ".pill.blocked"):
+        assert "%s{background:var(--c-2)" % sel in block, sel
+    for sel in (".ltag.redacted", ".pill.redacted"):
+        assert "%s{background:var(--c-4)" % sel in block, sel
+
+
+@pytest.mark.parametrize("token,source", [("blue-series", "dec1"),
+                                          ("pink-series", "dec3"),
+                                          ("violet-series", "dec2"),
+                                          ("warn-series", "warn-bg")])
+def test_dark_aliases_through_so_the_dark_theme_is_byte_identical(themes, token, source):
+    """F1's rule, kept: a split must not repaint the theme that was already
+    right. Dark values alias exactly what they replaced; only light re-steps."""
+    assert themes["dark"][token] == themes["dark"][source], (
+        "dark --%s stopped aliasing --%s, so the dark theme moved when only "
+        "the light one was broken" % (token, source))
+    assert themes["light"][token] != themes["light"][source], (
+        "light --%s aliases --%s again, which is the failure being fixed"
+        % (token, source))
+
+
+# ── G6.1 · A TOKEN THAT DOES NOT REACH A MARK IS NOT A FIX ─────────────────
+
+def _g61_tone_map(css: str) -> dict:
+    """The shipped TONE map — what actually decides a mark's colour."""
+    body = re.search(r"var TONE=\{(.*?)\};", css if "var TONE=" in css
+                     else HTML.read_text(encoding="utf-8"), re.S).group(1)
+    return dict(re.findall(r"(\w+):'([^']+)'", body))
+
+
+def test_every_tone_a_shipped_call_names_resolves_to_a_passing_mark(themes):
+    """⚠ THE CENSUS, NOT THE DECLARATION.
+
+    G6 declared --warn-series and --violet-series, aliased them into --c-5 and
+    --c-6, and guarded both — and neither ever painted anything, because every
+    series on this surface names a TONE and TONE.warn still pointed at
+    --warn-bg. The amber that justified finding the fourth token kept drawing
+    at 1.74:1.
+
+    So this walks the tones SHIPPED CALLS ACTUALLY NAME and measures what each
+    resolves to. A token nobody routes cannot pass here, because it is not
+    reached.
+    """
+    src = HTML.read_text(encoding="utf-8")
+    tone_map = _g61_tone_map(src)
+    named = sorted(set(re.findall(r"tone:'(\w+)'", src)))
+    assert named, "no shipped call names a tone — this guard is measuring nothing"
+    bad = []
+    for theme, tokens in themes.items():
+        for t in named:
+            v = tone_map.get(t)
+            assert v, "a shipped call names tone %r with no TONE entry" % t
+            key = re.fullmatch(r"var\((--[a-z0-9-]+)\)", v).group(1)[2:]
+            for panel in _PANELS:
+                r = ratio(tokens[key], tokens[panel])
+                if r < 3.0:
+                    bad.append("%s tone:%s -> --%s on --%s = %.2f"
+                               % (theme, t, key, panel, r))
+    assert not bad, "drawn marks below 3:1 against their panel: %s" % bad
+
+
+def test_the_warn_tone_routes_to_the_series_step_not_the_status_fill(themes):
+    """The blocker, pinned by name. --warn-bg carries --warn-tx as text on
+    .ltag.warn and .lockchip, so it cannot be deepened; the chart needed its
+    own step and then nothing pointed at it."""
+    tone_map = _g61_tone_map(HTML.read_text(encoding="utf-8"))
+    assert tone_map["warn"] == "var(--warn-series)", (
+        "TONE.warn is %r — the amber the split exists for is not being drawn"
+        % tone_map["warn"])
+    assert tone_map.get("violet") == "var(--c-6)", (
+        "there is no violet tone, so slot 6 is unreachable by name: %r"
+        % tone_map.get("violet"))
+    # dark must not have moved
+    assert themes["dark"]["warn-series"] == themes["dark"]["warn-bg"], (
+        "dark --warn-series stopped aliasing --warn-bg, so re-routing the tone "
+        "repainted the theme that was already right")
+
+
+def test_the_tag_ink_follows_its_fill_into_the_light_theme(themes, css):
+    """The half that is easy to forget when a fill deepens.
+
+    Near-black was chosen for a PALE tag; on the deepened light fills it
+    measures 3.45:1 and 2.78:1, below AA on the ledger rows an operator reads.
+    White clears 5.39:1 and 6.15:1 — the same move this theme already makes for
+    every deep status fill. Asserted as a MEASUREMENT, not as the presence of a
+    rule: a `color:#fff` that never wins the cascade would satisfy a grep.
+    """
+    assert 'html[data-theme="light"] .ltag.blocked' in css, (
+        "the light-theme tag ink override is gone, so near-black sits on a "
+        "mid-dark fill")
+    for slot, ink in (("c-2", "#ffffff"), ("c-4", "#ffffff")):
+        got = ratio(ink, themes["light"][slot])
+        assert got >= 4.5, (
+            "light tag ink on --%s is %.2f:1" % (slot, got))
+    # and dark keeps the near-black it was chosen for
+    for slot, ink in (("c-2", "#04122e"), ("c-4", "#3a0620")):
+        got = ratio(ink, themes["dark"][slot])
+        assert got >= 4.5, (
+            "dark tag ink on --%s is %.2f:1 — the dark theme moved when only "
+            "light needed to" % (slot, got))

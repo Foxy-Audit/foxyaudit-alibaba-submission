@@ -574,11 +574,22 @@ def test_chart_series_is_split_from_chip_ink() -> None:
 
 
 def test_chart_palette_keeps_its_cvd_order() -> None:
-    """P1 changed only the fallback hexes; the order is still load-bearing."""
+    """P1 changed only the fallback hexes; the order is still load-bearing.
+
+    G6 · #132 · slot 1 is --fox-series, not --fox. The ORDER did not move; the
+    name did, because a chart mark and a brand fill want different things on
+    paper — --fox measured 2.81:1 against light --bg while the brand fill it
+    also names was fine, since what is judged there is the ink sitting on it.
+    """
     i = SRC.index("function _chartPalette()")
     body = SRC[i : SRC.index("}", i)]
     order = re.findall("_cssvar[(]'(--[a-z-]+)'", body)
-    assert order == ["--fox", "--blue", "--ok", "--violet", "--teal", "--warn-series"], order
+    assert order == ["--fox-series", "--blue", "--ok", "--violet", "--teal",
+                     "--warn-series"], order
+    assert "--fox" not in order, (
+        "the chart palette reads the brand fill again — the split exists so a "
+        "chart can be re-stepped for paper without repainting every primary "
+        "button on the console")
 
 
 def test_beam_respects_reduced_motion() -> None:
@@ -9966,3 +9977,264 @@ def test_the_audit_chain_has_its_own_generation_and_does_not_borrow_org360s() ->
     assert len(re.findall(r"\+\+AU_CHAIN_GEN", live)) == 1, (
         "the audit generation is bumped in more than one place, so one caller "
         "can invalidate another's answer without writing the node")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G6 · the light theme's three unfinished colours (#69 · #132 · #78)
+#
+# EVERY CONTRAST ASSERTION HERE RUNS IN BOTH THEMES. _token() defaults to dark,
+# and a guard that measures one theme is the exact defect this phase fixes —
+# one set of figures standing in for two papers is how all three shipped.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_G6_THEMES = ("dark", "light")
+
+
+def _g6_rgba(name: str, theme: str) -> tuple:
+    """A token declared as rgba(), per theme. _token() resolves hex only."""
+    root, light = _scope(":root{"), _scope('html[data-theme="light"]{')
+    for scope in ([light, root] if theme == "light" else [root]):
+        m = re.search(re.escape(name) + r"\s*:\s*rgba\(([^)]+)\)", scope)
+        if m:
+            parts = [float(x) for x in m.group(1).split(",")]
+            return tuple(parts)
+    raise AssertionError("%s is not declared as rgba() in %s" % (name, theme))
+
+
+def _g6_over(fg: tuple, bg_hex: str) -> str:
+    """Composite an rgba over an opaque hex — what the eye actually receives."""
+    b = [int(bg_hex[i:i + 2], 16) for i in (1, 3, 5)]
+    a = fg[3] if len(fg) > 3 else 1.0
+    return "#%02x%02x%02x" % tuple(
+        round(fg[i] * a + b[i] * (1 - a)) for i in range(3))
+
+
+# ── #69 · the beam exists on paper, and is still decoration ────────────────
+
+def test_the_beam_is_tokenised_and_not_hard_coded_white() -> None:
+    """It was rgba(255,255,255,.95) in the rule itself, so the light theme had
+    no way to say anything different — and did not: 1.13:1 against light
+    --surf, the signature liveliness of this console simply absent on paper."""
+    rule = _scope(".kpi .beam{")
+    assert "var(--beam-lo)" in rule and "var(--beam-hi)" in rule, (
+        "the beam's stops are back in the rule, where a theme cannot reach "
+        "them: %s" % rule)
+    assert "255,255,255" not in rule, (
+        "a hard-coded white survives in the beam rule: %s" % rule)
+    # ⚠ PER THEME, not "declared somewhere". _g6_rgba resolves light as
+    # [light, root], so deleting the light block's stops falls back to the dark
+    # white and this guard reported them present — the exact silent inheritance
+    # the phase exists to remove. Ask each block directly.
+    for stop in ("--beam-lo", "--beam-hi"):
+        for block, scope in ((":root{", _scope(":root{")),
+                             ("light", _scope('html[data-theme="light"]{'))):
+            assert re.search(re.escape(stop) + r"\s*:", scope), (
+                "%s does not declare %s, so that theme silently inherits the "
+                "other one's beam" % (block, stop))
+        assert _g6_rgba(stop, "dark") != _g6_rgba(stop, "light"), (
+            "%s is the same value in both themes — a white highlight and a "
+            "warm shade are different physical ideas and cannot be one number"
+            % stop)
+
+
+def test_the_beam_is_visible_in_both_themes_and_is_not_a_status() -> None:
+    """⚠ TWO-SIDED, AND BOTH SIDES MATTER.
+
+    Visible, or the light theme is back where it started. Under 3:1, or a
+    decorative sweep starts reading as a mark that means something — worse than
+    the absence this fixed, because an operator would be right to look for a
+    cause. Measured composited over the card the 1.6px ring is seen against,
+    not against the raw token: a fill is judged against its background.
+    """
+    floor, ceiling = 1.30, 3.0
+    seen = {}
+    for theme in _G6_THEMES:
+        card = _token("--surf", theme)
+        peak = _g6_over(_g6_rgba("--beam-hi", theme), card)
+        seen[theme] = round(_ratio(peak, card), 2)
+        assert seen[theme] >= floor, (
+            "the beam is invisible in %s: %.2f:1 against the card it rides on "
+            "(floor %.2f). A white highlight has nowhere to go on paper — that "
+            "is why light uses a warm shade instead." % (theme, seen[theme], floor))
+        assert seen[theme] < ceiling or theme == "dark", (
+            "the light beam reached %.2f:1, at or past the 3:1 a status mark "
+            "owes. It is decoration and must not be readable as a signal."
+            % seen[theme])
+    assert seen["light"] > 1.0, seen
+
+
+def test_the_beam_still_orbits_and_still_stops_for_reduced_motion() -> None:
+    """#64 pins the orbit. G6 changed two colours and nothing else about it."""
+    rule = _scope(".kpi .beam{")
+    assert "animation:orbit 5.5s linear infinite" in rule.replace("\n", " "), (
+        "the orbit changed period, timing or iteration: %s" % rule)
+    css = _css()
+    for nth, delay in ((2, "-1.4s"), (3, "-2.8s"), (4, "-4.1s"), (5, "-2.1s")):
+        want = ".kpis .kpi:nth-child(%d) .beam{animation-delay:%s}" % (nth, delay)
+        assert want in css, "the per-card phase offset is gone: %s" % want
+    i = css.rindex("@media(prefers-reduced-motion:reduce)", 0, css.index(".k-azure"))
+    block = css[i: css.index("}", css.index("{", i) + 1) + 1]
+    assert ".kpi .beam" in block and "display:none" in block, (
+        "a reduced-motion user gets an orbiting beam: %s" % block)
+
+
+# ── #132 · a chart mark is not a brand fill, in either theme ───────────────
+
+#: slot 1..6 of _chartPalette(), which is CVD-order-validated.
+_G6_ADMIN_SERIES = ("--fox-series", "--blue", "--ok", "--violet", "--teal",
+                    "--warn-series")
+
+
+def test_every_admin_chart_mark_clears_three_to_one_in_both_themes() -> None:
+    """⚠ AGAINST --bg AS WELL AS --surf. A chart is not always on a panel, and
+    --fox measured 3.04 on --surf while failing at 2.81 on --bg — a mark that
+    passes on one surface and fails on the other is how this shipped."""
+    bad = []
+    for theme in _G6_THEMES:
+        panels = {p: _token(p, theme) for p in ("--bg", "--surf")}
+        for tok in _G6_ADMIN_SERIES:
+            hexv = _token(tok, theme)
+            for pname, pv in panels.items():
+                r = _ratio(hexv, pv)
+                if r < 3.0:
+                    bad.append("%s %s %s on %s = %.2f" % (theme, tok, hexv, pname, r))
+    assert not bad, (
+        "chart marks below the 3:1 they owe the panel behind them: %s" % bad)
+
+
+def test_the_admin_chart_reads_its_own_token_not_the_brand_fill() -> None:
+    """The split's whole point. --fox is the brand fill under every primary
+    button; judged there by the ink ON it, it is fine. As a 1.5px line on paper
+    it was 2.81:1. Moving --fox would have repainted sixty consumers to fix six.
+    """
+    body = SRC[SRC.index("function _chartPalette()"):]
+    body = body[:body.index("}")]
+    assert "_cssvar('--fox-series'" in body, body
+    assert "_cssvar('--fox'" not in body, (
+        "the chart palette reads the brand fill again: %s" % body)
+    for theme in _G6_THEMES:
+        _token("--fox-series", theme)      # raises if a theme does not set it
+    assert _token("--fox-series", "dark") == _token("--fox", "dark"), (
+        "dark stopped aliasing --fox, so the dark theme no longer renders "
+        "byte-identically to what shipped before the split")
+    assert _token("--fox-series", "light") != _token("--fox", "light"), (
+        "light aliases the brand fill again, which is the failure this split "
+        "exists to remove")
+
+
+def test_both_theme_blocks_state_which_theme_their_numbers_are() -> None:
+    """⚠ THE COMMENT WAS THE TRAP, NOT JUST THE CODE.
+
+    The dark chart-hue note read "Measured on --surf: blue 5.49 · violet 6.28"
+    and named no theme — and --surf is a different colour in each. One set of
+    figures standing in for two papers is exactly how three tokens came to be
+    tuned for neither. Both blocks now say which paper they mean.
+    """
+    css = _style_block()          # WITH comments — the comment IS the subject
+    for block, want in ((":root{", "dark-theme numbers"),
+                        ('html[data-theme="light"]{', "for the light theme")):
+        i = css.index(block)
+        scope = css[i:css.index("\n}", i)]
+        assert "chart hues" in scope, "%s lost its chart-hue note" % block
+        # ⚠ THE NOTE ITSELF, not the block. Searching the whole scope found
+        # "light theme" in the --fox-hi comment thirty lines up ("in the shipped
+        # light theme") and passed with the chart-hue note stripped bare — a
+        # guard reading the prose about the thing instead of the thing.
+        j = scope.index("chart hues")
+        note = scope[j:scope.index("*/", j)]
+        assert want in note.lower(), (
+            "%s's chart-hue note states contrast figures without naming the "
+            "theme they were measured in: %r" % (block, note[:160]))
+
+
+# ── #78 · the one externally verifiable datum ──────────────────────────────
+
+def _g6_receipt() -> str:
+    return _g4_bare("_anchorReceipt")
+
+
+def test_the_explorer_map_is_data_so_a_new_chain_is_not_a_code_change() -> None:
+    body = _g6_receipt()
+    assert "TX_EXPLORER[" in body, (
+        "the receipt cell tests chains by name instead of looking them up, so "
+        "adding one is a code change: %s" % body)
+    for chain in ("sepolia", "stub", "polygon", "mainnet"):
+        assert "'%s'" % chain not in body and '"%s"' % chain not in body, (
+            "the renderer names %r, so the mapping is not the only place a "
+            "chain is known" % chain)
+    table = _g4_const("TX_EXPLORER")
+    assert "sepolia" in table, "the only configured chain is not mapped"
+    assert "stub" not in table, (
+        "`stub` has an explorer entry. It is a deterministic fake with no "
+        "external chain and never will have one — a link there points at "
+        "nothing on the single datum that is supposed to be checkable")
+
+
+def test_the_link_leaves_the_console_safely_and_says_so() -> None:
+    body = _g6_receipt()
+    assert 'rel="noopener noreferrer"' in body, (
+        "the console's only outbound link has no rel=noopener")
+    assert 'target="_blank"' in body, body
+    assert "aria-label=" in body, (
+        "a bare hash that turns blue tells a screen-reader user neither where "
+        "it goes nor that it leaves the console")
+    assert "opens in a new tab" in body, body
+    assert "aria-hidden=\"true\"" in body, (
+        "the external-link icon is not hidden from the accessible name, which "
+        "already carries the destination")
+
+
+
+@_G4_SKIP
+def test_only_a_known_chain_with_a_hash_becomes_a_link() -> None:
+    """⚠ THE HONEST CASES ARE ASSERTED AS ABSENCES, which is the only way to
+    guard them. A stub anchor, an unmapped chain and a missing hash must each
+    render as TEXT — a link to nowhere on the one datum a stranger can check is
+    worse than no link at all."""
+    r = _run_g4("""
+R.out={};
+[['sepolia','0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890','linked'],
+ ['stub','0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890','stub'],
+ ['polygon','0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890','unmapped'],
+ ['SEPOLIA','0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890','uppercase'],
+ ['sepolia','','nohash']].forEach(function(c){
+  R.out[c[2]]=_anchorReceipt({chain:c[0],tx_hash:c[1],status:'confirmed'});
+});
+R.out.noanchor=_anchorReceipt(null);
+['constructor','__proto__','toString'].forEach(function(k,i){
+  R.out[['ctor','proto','tostring'][i]]=_anchorReceipt(
+    {chain:k,tx_hash:'0xabc123def4567890abc123def4567890abc123def4567890abc123def4567890'});
+});
+R.out.blankhash=_anchorReceipt({chain:'sepolia',tx_hash:'   '});
+""", extra=(_g4_const("TX_EXPLORER") + "\nfunction esc(x){return String(x)"
+            ".replace(/[&<>\"]/g,function(c){return {'&':'&amp;','<':'&lt;',"
+            "'>':'&gt;','\"':'&quot;'}[c];});}\n"
+            + _js_decl("_anchorReceipt")))
+    o = r["out"]
+    assert "<a " in o["linked"] and "sepolia.etherscan.io/tx/0xabc123" in o["linked"], o["linked"]
+    for case in ("stub", "unmapped", "nohash", "noanchor"):
+        assert "<a " not in o[case], (
+            "%s produced a LINK: %r — it points at nothing" % (case, o[case]))
+    assert "0xabc123" in o["stub"], "the stub row lost its hash entirely: %r" % o["stub"]
+    assert "polygon" in o["unmapped"] or "0xabc123" in o["unmapped"], o["unmapped"]
+    assert "<a " in o["uppercase"], (
+        "a chain string that differs only in case fell through to text: %r"
+        % o["uppercase"])
+    # ⚠ THE PROTOTYPE CASES. A bare TX_EXPLORER[chain] reaches
+    # Object.prototype: 'constructor' and '__proto__' return something truthy,
+    # clear the !ex guard and emit href="undefined0x…" with an accessible
+    # name reading "on Object" — the link to nowhere the note above forbids,
+    # produced by the lookup itself.
+    for k in ("proto", "ctor", "tostring"):
+        assert "<a " not in o[k], (
+            "a prototype key produced a LINK: %r" % o[k])
+        assert "undefined" not in o[k], (
+            "a prototype key leaked `undefined` into the cell: %r" % o[k])
+    # ⚠ AND A HASH OF NOTHING BUT WHITESPACE. chain was trimmed and
+    # tx_hash was not, so "   " was truthy and rendered a zero-width link —
+    # a target an operator can neither see nor miss.
+    assert "<a " not in o["blankhash"], (
+        "a whitespace-only hash rendered a zero-width link: %r" % o["blankhash"])
+    assert o["noanchor"].strip() in ("\u2014", "&#8212;", "-"), o["noanchor"]
+
+

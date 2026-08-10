@@ -152,6 +152,25 @@
   --dec2: #9b8cff;
   --dec3: #ff6aa8;
 
+  /* G6 · #69 · the two stops of the orbiting rim light. Dark aliases exactly
+     what .kpi .beam hard-coded, so this theme renders byte-identically; the
+     light block replaces them with a warm shade. See .kpi .beam for why a
+     white highlight is the wrong primitive on paper. */
+  --beam-lo: rgba(255,255,255,.30);
+  --beam-hi: rgba(255,255,255,.95);
+
+  /* G6 · #132 · A CHART MARK IS NOT A BRAND FILL — the split the dashboard
+     already made (F1 · #113) and this console had not.
+     _chartPalette() reads --fox for series slot 1, and --fox is ALSO the brand
+     fill under every primary button and accent on the page. On paper the two
+     want different things: measured in light, --fox #f05700 is 2.81:1 against
+     --bg — a chart line below the 3:1 a mark owes the panel behind it — while
+     the brand fill itself is fine, because what is judged there is the ink
+     sitting ON it (--on-pri clears 5.60:1). Moving --fox to rescue six chart
+     lines would have repainted every button on the console.
+     Dark aliases --fox, so dark is byte-identical. */
+  --fox-series: var(--fox);
+
   /* ── type ── */
   --disp: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --body: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -229,8 +248,13 @@
   --neutral:      #beae9a;
   --neutral-soft: rgba(255,255,255,.07);
   /* chart hues — _chartPalette() reads these BY NAME and its order is
-     CVD-validated (fox, blue, ok, violet, teal, warnc). Only the values moved.
-     Measured on --surf: blue 5.49 · violet 6.28 · teal 9.61. */
+     CVD-validated (fox-series, blue, ok, violet, teal, warn-series).
+     ⚠ THESE ARE DARK-THEME NUMBERS. The line used to read "Measured on --surf"
+     with no theme named, and --surf is a different colour in each — which is
+     exactly how one set of figures came to stand for two themes. The light
+     block states its own, beside its own values.
+     Dark, on --bg / --surf: blue 5.87/5.49 · violet 6.71/6.28 · teal
+     10.26/9.61 · warn-series 12.00/11.24 · fox-series 7.14/6.68. */
   --blue:   var(--dec1);
   --blue2:  #8fb0ff;
   --violet: var(--dec2);
@@ -303,9 +327,33 @@ html[data-theme="light"]{
   --ok-soft:rgba(18,132,60,.10); --danger-soft:rgba(220,38,38,.08);
   --warn-soft:rgba(245,158,11,.12); --info-soft:rgba(28,70,168,.10);
   --neutral:#5c5044; --neutral-soft:rgba(124,74,26,.10);
-  /* chart hues re-measured for paper — the decorative --dec* values are fills,
-     too pale to carry a 1.5px series line here: blue 4.74 · violet 5.70 ·
-     teal 5.11 on --surf. */
+  /* G6 · #69 · the beam on paper: a warm travelling SHADE, not a highlight.
+     Same conic geometry, same 5.5s orbit; only the two stops change. Brand
+     warmth rather than neutral grey, because a neutral one reads as dirt on
+     paper — the --bloom comment thirty lines up says exactly that about the
+     same flip.
+     MEASURED, composited over the card the 1.6px ring shows against: peak
+     1.96:1, low stop 1.23:1. The comparison that set it is this file's own
+     --skel-hi, the other travelling decorative sweep, deliberately pitched at
+     1.54:1 on paper. This sits above it because a 1.6px RIM needs more
+     contrast than a full-panel shimmer to be equally noticeable — salience
+     scales with area as well as contrast — and it stays well under the 3:1 a
+     status mark owes, which is the ceiling that keeps it decoration. */
+  --beam-lo: rgba(124,74,26,.14);
+  --beam-hi: rgba(124,74,26,.42);
+  /* G6 · #132 · series slot 1, split off the brand fill. #c04500 is the value
+     the dashboard already chose for the identical split (F1 · #113) — same
+     brand, same problem, one answer rather than two nearly-equal oranges.
+     4.17:1 against --bg / 4.51 against --surf, where --fox measured 2.81. */
+  --fox-series:#c04500;
+  /* chart hues re-measured FOR THE LIGHT THEME — the decorative --dec* values
+     are fills, too pale to carry a 1.5px series line here.
+     ⚠ THE NUMBERS BELOW ARE LIGHT-THEME NUMBERS, and the ones beside the dark
+     declarations are dark-theme numbers. The dark comment used to say only
+     "Measured on --surf", which is how a theme-blind figure ships: a reader
+     three months later cannot tell which paper it was measured against.
+     Light, on --bg / --surf: blue 4.37/4.74 · violet 5.26/5.70 ·
+     teal 3.50/3.79 · warn-series 3.10/3.36 · infoc 6.84/7.42. */
   --blue:#2f63d8; --blue2:#1c46a8; --violet:#6b42c8;
   /* re-stepped from #0b7267: that value read as grey to the validator (chroma
      .086 against a .1 floor). #07897a clears it at 3.79:1 on --surf, and --teal
@@ -498,6 +546,26 @@ html[data-theme="dark"] .theme-toggle .ic-moon{display:none}
 .linklike{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.4px;color:var(--fox2);cursor:pointer;text-decoration:none;white-space:nowrap;flex-shrink:0;
   background:none;border:0;padding:6px 8px;margin:-6px -8px;border-radius:var(--r-xs)}
 .linklike:hover{text-decoration:underline}
+
+/* ── G6 · #78 · THE CONSOLE'S ONLY OUTBOUND LINK ────────────────────────────
+   An anchor's tx_hash is the one datum on this entire console that anyone can
+   check against something Foxy does not control — the product's whole claim,
+   in one string — and it rendered as plain text.
+
+   It inherits .mono from the cell so the hash stays a hash, and takes --fox2
+   (the token this theme chose to CARRY TEXT, measured, rather than --fox which
+   is a fill). The trailing icon is a drawn SVG in the console's own 2px stroke,
+   not a glyph, and it is aria-hidden because the accessible name on the anchor
+   already says where the link goes and that it leaves the console.
+
+   ⚠ CSP CHECKED, NOT ASSUMED: the admin policy is
+   `frame-ancestors 'none'; object-src 'none'; base-uri 'self'` — no
+   default-src, no navigate-to, no form-action. A navigation is not a resource
+   load, and base-uri constrains <base>, not <a href>. Nothing here is blocked. */
+.txlink{color:var(--fox2);text-decoration:none;border-bottom:1px solid transparent;
+  display:inline-flex;align-items:center;gap:4px}
+.txlink:hover,.txlink:focus-visible{border-bottom-color:currentColor}
+.txlink svg{width:11px;height:11px;flex-shrink:0;opacity:.85}
 .b-orgs .twrap{flex:1}
 @media(max-width:1100px){.bento{grid-template-columns:repeat(2,minmax(0,1fr))}.b-alerts,.b-orgs{grid-column:span 2}}
 @media(max-width:680px){.bento{grid-template-columns:1fr}.b-alerts,.b-orgs{grid-column:span 1}}
@@ -694,11 +762,36 @@ html[data-theme="light"] .pg-wm{opacity:.06}
 }
 /* the travelling rim light: a conic gradient orbits BEHIND the face, which
    covers all but the 1.6px padding, so the only thing visible is a light
-   running the perimeter. Phase-offset per card so a row never pulses in unison. */
+   running the perimeter. Phase-offset per card so a row never pulses in unison.
+
+   ── G6 · #69 · IT EXISTS ON PAPER NOW, AND IT IS A DIFFERENT PHYSICAL IDEA ──
+   The band was hard-coded rgba(255,255,255,.95). On a dark card that is a
+   SPECULAR HIGHLIGHT — a light glancing off a dark surface — and it reads
+   because white has somewhere to travel to. On a near-white card the same trick
+   has nowhere to go: measured 1.13:1 against light --surf, so the signature
+   liveliness of this console simply did not exist in the light theme.
+
+   Brightening was never the answer, because brightening is not what a
+   travelling light does to paper. It casts a moving SHADE. This surface already
+   says so: the light block flips --lt/--dk with the comment "the light source
+   flips: a near-white highlight and a warm grey shadow", and every soft-UI
+   shadow here is built on that flip. The beam was the one thing left out of the
+   rule the rest of the skin follows.
+
+   So the two stops become tokens. Dark aliases the exact values it shipped, so
+   the dark theme renders byte-identically; light gets a warm brown sweep —
+   brand warmth rather than neutral grey, so the light crossing the card still
+   belongs to this product rather than looking like a printing smudge.
+
+   ⚠ IT IS DECORATION AND MUST STAY UNREADABLE AS A STATUS. Guarded from both
+   sides: perceptible against the card, and comfortably under the 3:1 a status
+   mark owes. Something an operator could mistake for a signal would be worse
+   than the absence this fixes. #64 pins the orbit: the 5.5s period, the linear
+   timing and the per-card phase offsets below are untouched. */
 .kpi .beam{position:absolute;left:50%;top:50%;width:190%;aspect-ratio:1;z-index:0;
   transform:translate(-50%,-50%);
-  background:conic-gradient(from 0deg,transparent 0 62%,rgba(255,255,255,.30) 72%,
-    rgba(255,255,255,.95) 78%,rgba(255,255,255,.30) 84%,transparent 92% 100%);
+  background:conic-gradient(from 0deg,transparent 0 62%,var(--beam-lo) 72%,
+    var(--beam-hi) 78%,var(--beam-lo) 84%,transparent 92% 100%);
   animation:orbit 5.5s linear infinite}
 @keyframes orbit{to{transform:translate(-50%,-50%) rotate(360deg)}}
 .kpis .kpi:nth-child(2) .beam{animation-delay:-1.4s}
@@ -3895,7 +3988,7 @@ function _segSep(extent,panel){
 /* categorical order (dataviz skill): orange, blue, green, violet, teal, amber — the CVD-optimal
    ordering (worst adjacent normal-vision ΔE ≥ 24; the first four slots are maximally separated for
    the common ≤4-series case). Multi-series charts (plan-mix donut, revenue-by-plan) cycle through it. */
-function _chartPalette(){return [_cssvar('--fox','#ff7a2e'),_cssvar('--blue','#5b8cff'),_cssvar('--ok','#3ddc84'),_cssvar('--violet','#9b8cff'),_cssvar('--teal','#3dd6c4'),_cssvar('--warn-series','#ffc83d')];}
+function _chartPalette(){return [_cssvar('--fox-series','#ff7a2e'),_cssvar('--blue','#5b8cff'),_cssvar('--ok','#3ddc84'),_cssvar('--violet','#9b8cff'),_cssvar('--teal','#3dd6c4'),_cssvar('--warn-series','#ffc83d')];}
 var _DASH=['0','5 4','2 3','8 3 2 3','1 4'];
 function _fmtNum(n){return (typeof n==='number')?n.toLocaleString(undefined,{maximumFractionDigits:2}):String(n);}
 function _niceMax(v){ if(!(v>0))return 1; var p=Math.pow(10,Math.floor(Math.log10(v))); var f=v/p; var m=f<=1?1:f<=2?2:f<=5?5:10; return m*p; }
@@ -4439,10 +4532,57 @@ async function loadAnchors(){
   ANCHORS_ALL=d.organizations||[];pgReset('anchors');renderAnchors();
 }
 let ANCHORS_ALL=[];
+/* ── G6 · #78 · chain -> transaction explorer ───────────────────────────────
+   DATA, NOT CODE. A new chain is one line in this object; nothing below tests
+   for a chain by name. `chain` is a free String(32) written by anchor.py from
+   settings.anchor_evm_chain, so the set is open by construction and the table
+   has to degrade rather than guess.
+
+   ⚠ WHAT IS DELIBERATELY ABSENT IS THE DESIGN. `stub` is a real, supported
+   provider — a deterministic fake with no external chain and no explorer, ever
+   — and it is not here. Neither is any chain nobody has configured. Both fall
+   through to plain text, because a link to nowhere on the ONE datum that is
+   supposed to be independently checkable is worse than no link at all. */
+const TX_EXPLORER={
+  sepolia:  {name:'Etherscan', tx:'https://sepolia.etherscan.io/tx/'},
+  mainnet:  {name:'Etherscan', tx:'https://etherscan.io/tx/'},
+  ethereum: {name:'Etherscan', tx:'https://etherscan.io/tx/'}
+};
+/* The Receipt cell. Returns a LINK only when there is a real hash AND a chain
+   the table knows; everything else is the same text it always was. */
+function _anchorReceipt(a){
+  if(!a) return esc('—');
+  /* ⚠ TRIMMED, LIKE THE CHAIN. G6 trimmed one and not the other, so a hash of
+     nothing but whitespace was truthy, cleared the guard below and rendered a
+     zero-width link — a target an operator can neither see nor miss. */
+  const hash=String(a.tx_hash||'').trim();
+  const chain=String(a.chain||'').trim().toLowerCase();
+  /* ⚠ OWN PROPERTY ONLY. A bare TX_EXPLORER[chain] reaches Object.prototype:
+     chain='constructor' or '__proto__' returns something truthy, sails past
+     the check below, and emits href="undefined0x…" with an accessible name
+     reading "on Object" — precisely the link to nowhere the note above
+     forbids. Reachability is low (the backend writes "sepolia" or "stub" into
+     a String(32)) and that is not the reason to fix it: the comment states a
+     property, and a stated property the code does not have is this project's
+     most-shipped defect class. */
+  const ex=Object.prototype.hasOwnProperty.call(TX_EXPLORER,chain)?TX_EXPLORER[chain]:null;
+  if(!hash||!ex) return esc(hash||a.chain||'receipt');
+  /* the accessible name says the destination AND that it leaves the console —
+     a bare hash that turns blue tells a screen-reader user neither. */
+  const label='View transaction '+hash.slice(0,10)+'… on '+ex.name+
+              ' (opens in a new tab)';
+  return '<a class="txlink" href="'+esc(ex.tx+hash)+'" target="_blank" '+
+         'rel="noopener noreferrer" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+
+         esc(hash)+
+         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '+
+         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'+
+         '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'+
+         '<path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>';
+}
 function renderAnchors(){
   const rows=window.foxPageSlice(ANCHORS_ALL,pgState('anchors',25),'anchorPager',renderAnchors,'Anchor pages');
   if(!ANCHORS_ALL.length){$('anchorRows').innerHTML='<tr><td colspan="6" class="sub mono">no organizations yet</td></tr>';return}
-  $('anchorRows').innerHTML=rows.map(x=>{const a=x.latest,status=a?a.status:'never',receipt=a?(a.tx_hash||a.chain||'receipt'):'—',act=can('operator')&&x.current_head_seq>0?`<button type="button" class="btn sm pri" onclick="reanchor('${jsq(x.org_id)}','${jsq(x.org_name)}')">re-anchor</button>`:'<span class="sub mono">'+(can('operator')?'no logs':'operator required')+'</span>';return `<tr><td data-label="Organization"><b>${esc(x.org_name)}</b><div class="sub mono" style="font-size:9px;">${esc(x.org_id)}</div></td><td data-label="Head seq" class="mono">${num(x.current_head_seq)}</td><td data-label="Last confirmed" class="mono" style="font-size:10px;">${fmtTime(x.last_confirmed_at)}</td><td data-label="Latest">${opsChip(status)}${x.stale?'<span class="chip warn" style="margin-left:5px;">stale</span>':''}</td><td data-label="Receipt" class="mono" style="font-size:10px;max-width:190px;overflow:hidden;text-overflow:ellipsis;">${esc(receipt)}</td><td>${act}</td></tr>`}).join('');
+  $('anchorRows').innerHTML=rows.map(x=>{const a=x.latest,status=a?a.status:'never',receipt=_anchorReceipt(a),act=can('operator')&&x.current_head_seq>0?`<button type="button" class="btn sm pri" onclick="reanchor('${jsq(x.org_id)}','${jsq(x.org_name)}')">re-anchor</button>`:'<span class="sub mono">'+(can('operator')?'no logs':'operator required')+'</span>';return `<tr><td data-label="Organization"><b>${esc(x.org_name)}</b><div class="sub mono" style="font-size:9px;">${esc(x.org_id)}</div></td><td data-label="Head seq" class="mono">${num(x.current_head_seq)}</td><td data-label="Last confirmed" class="mono" style="font-size:10px;">${fmtTime(x.last_confirmed_at)}</td><td data-label="Latest">${opsChip(status)}${x.stale?'<span class="chip warn" style="margin-left:5px;">stale</span>':''}</td><td data-label="Receipt" class="mono" style="font-size:10px;max-width:190px;overflow:hidden;text-overflow:ellipsis;">${receipt}</td><td>${act}</td></tr>`}).join('');
 }
 /* The only action in this console that writes to a system Foxy does not
    control, and it was firing on one click from an 11px pill — 25 of them to a

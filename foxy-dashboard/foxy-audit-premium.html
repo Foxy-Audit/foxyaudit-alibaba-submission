@@ -153,12 +153,32 @@ button{border:0;}
      3.97 / 3.72 / 3.60 on --bg / --surf / --surf2. It is still the quietest
      mark on the chart, which is all "Low" has to be. */
   --mute-series: #7a736b;
+  /* G6 · #132 · THE SPLIT F1 STARTED, FINISHED. F1 took --fox and --muted2 out
+     of the chart and left four slots still aliased to tokens that have another
+     job: --dec1/--dec3/--dec2 are decorative FILLS, and --warn-bg is a status
+     fill that carries --warn-tx as text. Measured in light against --bg they
+     were 2.57 / 2.16 / 1.74 / 2.25 — four of six series marks below the 3:1 a
+     mark owes its panel, in the shipped light theme.
+     None of the four sources may move: --dec* are read by .ltag/.pill fills
+     whose near-black ink is chosen for them, and --warn-bg carries --warn-tx on
+     .ltag.warn, .pill.warn and .lockchip. So the marks get their own names, and
+     the fills keep theirs. Dark aliases exactly what each replaced, so the dark
+     theme renders byte-identically. */
+  --blue-series:   var(--dec1);
+  --pink-series:   var(--dec3);
+  --violet-series: var(--dec2);
+  --warn-series:   var(--warn-bg);
   --c-1: var(--fox-series);
-  --c-2: var(--dec1);
+  --c-2: var(--blue-series);
   --c-3: var(--safe-bg);
-  --c-4: var(--dec3);
-  --c-5: var(--warn-bg);
-  --c-6: var(--dec2);
+  --c-4: var(--pink-series);
+  --c-5: var(--warn-series);
+  /* ⚠ NO SHIPPED CALL NAMES `violet` TODAY, and saying so is the point. This
+     is slot 6 of a fixed-order categorical palette: it is reachable by name
+     through TONE.violet and by position through SER[5], and it is kept correct
+     so the sixth series someone adds is not born broken. Its guard drives the
+     engine rather than claiming a mark that does not exist yet. */
+  --c-6: var(--violet-series);
   /* paper token used by the shown-once secret input */
   --paper: #fff;
   color-scheme: dark;
@@ -191,6 +211,22 @@ html[data-theme="light"]{
      against --surf — the two failing fills, deepened only where they are a
      mark. --muted2 keeps its disabled-only value; --fox keeps the brand. */
   --fox-series:#c04500; --mute-series:#7a7167;
+  /* G6 · #132 · the four remaining series steps, re-stepped for paper and
+     validated with dataviz/scripts/validate_palette.js rather than by eye.
+     Measured against --bg / --surf: blue 4.37/4.74 · pink 4.99/5.41 ·
+     amber 3.10/3.36 · violet 5.26/5.70 — every one was under 3:1 before.
+     Blue, violet and amber are the values the ADMIN console already ships for
+     the same three hues on the same paper; reusing them keeps one answer per
+     hue across both surfaces instead of two nearly-equal ones.
+     ⚠ THE PINK IS MAGENTA-WARD ON PURPOSE, and the validator is why. Deepening
+     #ff6aa8 far enough to clear 3:1 collapses the lightness that had been
+     separating it from --c-3's green for a deuteranope: a straight deep rose
+     (#c2185b) measured ΔE 2.8 against it, a hard CVD fail. Pushing toward
+     magenta keeps blue in the channel a deuteranope still reads, and #a82f86
+     comes back at ΔE 11.0 — comfortably past the 8 floor — while staying
+     recognisably the pink slot rather than a second violet. */
+  --blue-series:#2f63d8; --pink-series:#a82f86;
+  --violet-series:#6b42c8; --warn-series:#b8730d;
   --paper:#FFFFFF;
   --lv-low:#0550ff; --lv-med:#845f00; --lv-high:#ce0000; --lv-ultra:#772cff;
   /* the light source flips: a near-white highlight and a warm grey shadow */
@@ -570,6 +606,23 @@ html[data-theme="light"] .crumb-logo{filter:brightness(0);opacity:.42;}
 .pill.warn{background:var(--warn-bg);color:var(--warn-tx);}
 .pill.blocked{background:var(--c-2);color:#04122e;}
 .pill.redacted{background:var(--c-4);color:#3a0620;}
+/* ⚠ G6.1 · THE DONUT IS THIS LIST'S KEY, so the tag and the slice have to be
+   one colour. G6 split the chart marks and left these fills on --dec*, which
+   made the verdict donut's Blocked/Redacted slices (#2f63d8 / #a82f86) stop
+   matching the rows they explain (#5b8cff / #ff6aa8) — in light only, and
+   silently. The tags follow the marks rather than the reverse, because the
+   marks are the side with a contrast floor: --dec1/--dec3 measure 2.57 and
+   2.16 against light --bg and cannot be a series step.
+   The ink has to move with the fill. Near-black was chosen for a PALE tag and
+   measures 3.45:1 and 2.78:1 on the deepened ones — below AA on a fill that is
+   now a mid-dark. White clears 5.39:1 and 6.15:1, which is what this theme
+   already does with every deep status fill (--safe-bg carries --safe-tx #fff).
+   Dark is untouched: --c-2/--c-4 alias --dec1/--dec3 there, so the near-black
+   keeps its 5.87:1 and 6.42:1. */
+html[data-theme="light"] .ltag.blocked,
+html[data-theme="light"] .pill.blocked,
+html[data-theme="light"] .ltag.redacted,
+html[data-theme="light"] .pill.redacted{color:#fff;}
 .pill i{width:5px;height:5px;border-radius:50%;background:currentColor;}
 
 /* ════════ P6b §1 · remembered verification state (ledger detail row) ════════
@@ -3256,7 +3309,18 @@ async function loadLoginHistory(scope){
 
   /* ───────── inline-SVG chart helper (token-driven, CSP-safe) ───────── */
   var GID=0;
-  var TONE={ok:'var(--safe-bg)',bad:'var(--breach-bg)',warn:'var(--warn-bg)',fox:'var(--fox-series)',brand:'var(--fox-series)',blue:'var(--c-2)',pink:'var(--c-4)',mute:'var(--mute-series)'};
+  /* ⚠ G6.1 · THE TONE MAP IS WHAT ACTUALLY DRAWS, and G6 did not reach it.
+     Every series on this surface names a tone, so SER[] is entered only at
+     index 0 — which meant --warn-series and --violet-series were declared,
+     aliased into --c-5/--c-6, guarded, and never painted. `warn` still routed
+     to --warn-bg, so the threat timeline's Medium band, the grading donut's
+     Pending and the verdict donut's Evaluator unknown kept drawing at 1.74:1
+     on paper. A token that does not reach a mark is not a fix.
+     Measured across every tone a shipped call names: warn was the only one
+     failing. The rest clear 3:1 in both themes, which is why only this line
+     moves. `violet` is new — see the note on --c-6 for what does and does not
+     use it yet. */
+  var TONE={ok:'var(--safe-bg)',bad:'var(--breach-bg)',warn:'var(--warn-series)',fox:'var(--fox-series)',brand:'var(--fox-series)',blue:'var(--c-2)',pink:'var(--c-4)',violet:'var(--c-6)',mute:'var(--mute-series)'};
   var SER=['var(--c-1)','var(--c-2)','var(--c-3)','var(--c-4)','var(--c-5)','var(--c-6)'];
   function toneColor(t,i){ if(t){ if(TONE[t])return TONE[t]; if(/^(#|rgb|hsl|var\()/.test(t))return t; } return SER[(i||0)%SER.length]; }
   function S(tag,a,inner){ var s='<'+tag; for(var k in a){ var v=a[k]; if(v!=null&&v!=='')s+=' '+k+'="'+String(v).replace(/"/g,'&quot;')+'"'; } if(inner===undefined)return s+'/>'; return s+'>'+inner+'</'+tag+'>'; }
