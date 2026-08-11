@@ -11,8 +11,42 @@ After the wrapped function returns, the SDK:
   3. Enqueues the metadata for background HTTP delivery to the backend (only
      when an API key is configured).
 
-The wrapped function's own return value is always passed through unchanged, and
-the SDK's own bookkeeping can never raise into the host application.
+The wrapped function's own return value is passed through unchanged, and the
+SDK's own bookkeeping can never raise into the host application.
+
+RESPONSE SCANNING (OWASP LLM05) — WHAT IT PROMISES, AND WHAT IT DOES NOT
+-----------------------------------------------------------------------
+``response_scan`` ("off" | "observe" | "block", default **observe**) inspects
+what the model RETURNED. It is a separate control from ``mode``, which governs
+the prompt: see ``config.DEFAULT_RESPONSE_SCAN`` for why.
+
+* **It never rewrites a response.** There is no response-side "redact", under
+  any mode, and ``mode="redact"`` scans the response exactly as ``observe``
+  does. Prompt redaction changes what the MODEL sees; response redaction would
+  change what the CALLER'S OWN CODE receives — their parser, their database,
+  their UI — and a customer who upgrades and starts finding ``[REDACTED:ssn]``
+  inside JSON they ``json.loads()`` has had their application broken by us. It
+  would also be a lie for the common case: a provider response object is not a
+  string, and ``policy.redact_value`` returns non-string leaves untouched, so
+  "redacted" would silently mean "did nothing".
+* **On a NON-streamed response, prevention is real.** The scan runs on the
+  complete value before the wrapper returns it, so under
+  ``response_scan="block"`` the caller never receives it.
+* **On a STREAMED response, prevention is PARTIAL, and that is architectural.**
+  A generator hands each chunk to the caller as it arrives; a chunk cannot be
+  un-yielded. Under ``response_scan="block"`` each chunk is scanned BEFORE it is
+  yielded, with a carry-over window across the boundary
+  (``response_policy.StreamScanner``), and the stream is terminated at the first
+  flagged chunk — so the rest never arrives, but everything already yielded has
+  already been delivered. Two further bounds: a pattern whose halves land more
+  than ``CARRY_CHARS`` apart is missed, and the scan adds per-chunk latency.
+  Under ``observe`` a stream is scanned once, exactly, after it ends — recording
+  without prevention.
+
+Buffering a stream to make blocking total was rejected: it would silently turn a
+streaming API into a non-streaming one, which is a behaviour change nobody asked
+for. Preflight blocking is a real reduction in risk, not a guarantee, and the
+same is true here.
 """
 
 from __future__ import annotations
@@ -24,7 +58,7 @@ import logging
 import re
 import uuid
 
-from . import dispatch, hashing, org_policy, pii, sidecar, udp
+from . import dispatch, hashing, org_policy, pii, response_policy, sidecar, udp
 from . import policy as policy_engine
 from .adapters import response_metadata
 from .config import FoxyConfig
@@ -47,6 +81,22 @@ class FoxyPolicyBlocked(RuntimeError):
     function runs (mode="block"). The wrapped LLM call is never made; a
     ``blocked`` audit event is emitted first. Content-blind: the message carries
     only a policy tag and a short reason label, never the offending text."""
+
+
+class FoxyResponseBlocked(RuntimeError):
+    """Raised when the response scan blocks a model response AFTER the wrapped
+    function has already run (``response_scan="block"``). The response is never
+    returned to the caller; a ``blocked`` audit event is emitted first, carrying
+    a REAL response commitment — unlike a prompt block, where the response hash
+    is the commitment of "" because no response ever existed.
+
+    Deliberately NOT a subclass of :class:`FoxyPolicyBlocked`. Code that catches
+    FoxyPolicyBlocked today is entitled to assume the wrapped function never
+    ran; here it did, tokens were spent, and the prompt did reach the provider.
+    Silently widening that except-clause would make an upgrade change what a
+    handler means. Both are RuntimeError.
+
+    Content-blind: policy tag and a short reason label only."""
 
 
 def _extract_prompt(args: tuple, kwargs: dict):
@@ -97,6 +147,7 @@ class FoxyClient:
         client_id: str | None = None,
         audit_required: bool | None = None,
         mode: str | None = None,
+        response_scan: str | None = None,
     ) -> None:
         self.cfg = FoxyConfig.resolve(
             api_key=api_key,
@@ -111,6 +162,7 @@ class FoxyClient:
             client_id=client_id,
             audit_required=audit_required,
             mode=mode,
+            response_scan=response_scan,
         )
         if self.cfg.enabled and not self.cfg.client_id:
             spool = EventSpool(self.cfg.spool_path or None)
@@ -210,6 +262,103 @@ class FoxyClient:
                 self.cfg.udp_host, self.cfg.udp_port,
             )
 
+    # ── response scan (OWASP LLM05) ───────────────────────────────────────────
+    def _scan_response(self, value, policy: str):
+        """Scan a COMPLETE response; return a triggered decision, else ``None``.
+
+        Never raises. A scanner fault must not take the caller's response with
+        it — the whole point of the SDK is that its bookkeeping is invisible to
+        the host application, and a regex that blew up on some exotic response
+        shape swallowing that response would be the worst failure this file
+        could have."""
+        if self.cfg.response_scan == "off":
+            return None
+        try:
+            decision = response_policy.evaluate_response(value, policy)
+        except Exception as exc:                 # noqa: BLE001 — see docstring
+            log.debug("foxy-audit: response scan failed (%s)", type(exc).__name__)
+            return None
+        return decision if decision.triggered else None
+
+    def _stream_scanner(self, policy: str):
+        """A per-chunk scanner, or ``None`` when nothing would act on it.
+
+        Only ``block`` scans per chunk. Under ``observe`` the accumulated stream
+        is scanned once after it ends, which is exact — there is no boundary
+        window to miss anything — and there is nothing to prevent anyway."""
+        if self.cfg.response_scan != "block":
+            return None
+        return response_policy.StreamScanner(policy)
+
+    def _feed_scanner(self, scanner, chunk):
+        """One chunk through the scanner. Never raises, for the same reason
+        :meth:`_scan_response` never raises: the caller's stream must not die of
+        a fault in our bookkeeping. A scanner that fails degrades this call to
+        no prevention, which is exactly what ``response_scan="off"`` already is."""
+        try:
+            return scanner.feed(chunk)
+        except Exception as exc:                 # noqa: BLE001 — see docstring
+            log.debug("foxy-audit: response chunk scan failed (%s)", type(exc).__name__)
+            return None
+
+    def _labels(self, plan: dict | None, rdec=None, blocked: bool = False) -> dict:
+        """The decision/rules/signals/blocked_reason kwargs for log_interaction.
+
+        An EMPTY dict when neither side flagged, so a clean call under observe
+        emits the byte-for-byte identical payload it emitted before response
+        scanning existed. That property is what makes "observe" a safe default.
+
+        When both sides flagged, the rule ids MERGE — they are namespaced
+        (``response_*``), so an auditor can see which side each came from — and
+        the PROMPT keeps precedence for ``decision`` and ``blocked_reason``: it
+        described a decision taken before the model ran, and rows already
+        written must keep the labels they have.
+
+        ``signals`` is passed through untouched and NEVER carries response-scan
+        labels. It lands in the wire field ``pii_signals``, which the backend
+        treats as a deterministic breach trigger (policy_engine.evaluate:
+        ``if pii_signals: policy_breach=True``). Putting an ``unsafe_markup``
+        there would turn every markup-emitting response into a graded breach on
+        every existing customer's dashboard. The response findings ride in
+        ``policy_rules`` instead, which is content-blind, already allowed by the
+        ingest validator, and inert unless the event is an enforcement event.
+        """
+        decision = plan["decision"] if plan else None
+        rules = list(plan["rules"]) if plan else []
+        signals = plan["signals"] if plan else None
+        reason = plan["reason"] if plan else None
+        if rdec is not None:
+            rules = rules + list(rdec.rules)
+            if reason is None:
+                reason = rdec.reason
+            decision = "blocked_response" if blocked else (decision or "response_flagged")
+        if decision is None:
+            return {}
+        return {"decision": decision, "policy_rules": rules,
+                "signals": signals, "blocked_reason": reason}
+
+    def _emit_response_block(self, hash_prompt, response, policy: str,
+                             agent: str | None, plan: dict | None, rdec,
+                             metadata: dict | None) -> None:
+        """Record the blocked response, then ping the desktop fox.
+
+        event_type is ``blocked`` — the same terminal, locally-decided type the
+        prompt guard uses, so the backend's existing enforcement path grades it
+        deterministically instead of calling the judge, and no wire field had to
+        be invented. What distinguishes the two in the ledger is real: the rule
+        ids are ``response_*``-namespaced, ``decision`` is ``blocked_response``,
+        and ``response_hash`` is a genuine commitment rather than H("")."""
+        self.log_interaction(hash_prompt, response, policy, agent,
+                             metadata=metadata, event_type="blocked",
+                             **self._labels(plan, rdec, blocked=True))
+        if self.cfg.desktop_ping:
+            udp.send_ping(
+                {"event": "policy_breach", "policy": policy,
+                 "reason": rdec.reason, "rules": list(rdec.rules)[:8],
+                 "decision": "blocked_response"},
+                self.cfg.udp_host, self.cfg.udp_port,
+            )
+
     def audit(self, policy: str = "default", agent: str | None = None,
               mode: str | None = None):
         """Return a decorator that audits the wrapped LLM-calling function.
@@ -222,7 +371,14 @@ class FoxyClient:
         "observe" (default — unchanged: run the fn, then hash), "block"
         (evaluate the prompt FIRST and raise ``FoxyPolicyBlocked`` without ever
         calling the fn on a violation) or "redact" (scrub the prompt locally,
-        then call the fn with the redacted prompt)."""
+        then call the fn with the redacted prompt).
+
+        `mode` governs the PROMPT only. What happens to the RESPONSE is the
+        client's ``response_scan`` setting, which has no per-decorator override
+        on purpose: a response block raises into whatever called the wrapped
+        function, so it should be a deployment decision, not something scattered
+        across decorators. See this module's docstring for what it promises on a
+        streamed call — which is less than it promises on a normal one."""
         if not _POLICY_RE.match(policy):
             log.warning("foxy-audit: invalid policy tag %r; falling back to 'default'", policy)
             policy = "default"
@@ -261,14 +417,17 @@ class FoxyClient:
                             log.debug("foxy-audit could not capture async host exception",
                                       exc_info=True)
                         raise
+                    hash_prompt = plan["hash_prompt"] if plan else _extract_prompt(args, kwargs)
+                    meta = _metadata(kwargs, response)
+                    rdec = await asyncio.to_thread(self._scan_response, response, policy)
+                    if rdec is not None and self.cfg.response_scan == "block":
+                        await asyncio.to_thread(self._emit_response_block, hash_prompt,
+                                                response, policy, agent, plan, rdec, meta)
+                        raise FoxyResponseBlocked(_response_block_message(policy, rdec))
                     await self._record_async(
-                        plan["hash_prompt"] if plan else _extract_prompt(args, kwargs),
-                        response, policy, agent, metadata=_metadata(kwargs, response),
+                        hash_prompt, response, policy, agent, metadata=meta,
                         event_type=(plan and plan["event_type"]) or "interaction",
-                        decision=plan["decision"] if plan else None,
-                        policy_rules=plan["rules"] if plan else None,
-                        signals=plan["signals"] if plan else None,
-                        blocked_reason=plan["reason"] if plan else None)
+                        **self._labels(plan, rdec))
                     return response
                 return awrapper
 
@@ -283,9 +442,19 @@ class FoxyClient:
                         raise FoxyPolicyBlocked(_block_message(policy, plan))
                     call_args = plan["args"] if plan else args
                     call_kwargs = plan["kwargs"] if plan else kwargs
+                    hash_prompt = plan["hash_prompt"] if plan else _extract_prompt(args, kwargs)
+                    scanner = self._stream_scanner(policy)
                     chunks = []
+                    stopped = None
                     try:
                         async for chunk in fn(*call_args, **call_kwargs):
+                            if scanner is not None:
+                                stopped = self._feed_scanner(scanner, chunk)
+                                if stopped is not None:
+                                    # Scanned BEFORE the yield, so this chunk and
+                                    # every chunk after it never reach the caller.
+                                    # Everything already yielded already has.
+                                    break
                             chunks.append(chunk)
                             yield chunk
                     except BaseException as exc:
@@ -297,14 +466,22 @@ class FoxyClient:
                             log.debug("foxy-audit could not capture async stream exception",
                                       exc_info=True)
                         raise
+                    if stopped is not None:
+                        # ``chunks`` is what was DELIVERED — the flagged chunk is
+                        # excluded because it never left the host, so the
+                        # commitment states egress honestly.
+                        await asyncio.to_thread(self._emit_response_block, hash_prompt,
+                                                chunks, policy, agent, plan, stopped,
+                                                _metadata(kwargs))
+                        raise FoxyResponseBlocked(_response_block_message(policy, stopped))
+                    # A completed stream is re-scanned WHOLE, in both modes. The
+                    # per-chunk pass exists to prevent; this one exists to record,
+                    # and it is exact — it has no carry window to miss across.
+                    rdec = await asyncio.to_thread(self._scan_response, chunks, policy)
                     await self._record_async(
-                        plan["hash_prompt"] if plan else _extract_prompt(args, kwargs),
-                        chunks, policy, agent, metadata=_metadata(kwargs),
+                        hash_prompt, chunks, policy, agent, metadata=_metadata(kwargs),
                         event_type=(plan and plan["event_type"]) or "stream",
-                        decision=plan["decision"] if plan else None,
-                        policy_rules=plan["rules"] if plan else None,
-                        signals=plan["signals"] if plan else None,
-                        blocked_reason=plan["reason"] if plan else None)
+                        **self._labels(plan, rdec))
                 return agen_wrapper
 
             @functools.wraps(fn)
@@ -324,33 +501,47 @@ class FoxyClient:
                                                 policy, agent, _metadata(kwargs))
                     raise
                 hash_prompt = plan["hash_prompt"] if plan else _extract_prompt(args, kwargs)
-                decision = plan["decision"] if plan else None
-                rules = plan["rules"] if plan else None
-                signals = plan["signals"] if plan else None
-                reason = plan["reason"] if plan else None
                 event_override = (plan and plan["event_type"]) or None
                 if inspect.isgenerator(response):
+                    # The FOURTH shape, and the one no decoration-time check can
+                    # see: a plain def that RETURNS a generator. It is detected
+                    # here, at call time, and gets the same streaming treatment
+                    # as the async generator above.
                     def generator():
+                        scanner = self._stream_scanner(policy)
                         chunks = []
+                        stopped = None
                         try:
                             for chunk in response:
+                                if scanner is not None:
+                                    stopped = self._feed_scanner(scanner, chunk)
+                                    if stopped is not None:
+                                        break
                                 chunks.append(chunk)
                                 yield chunk
                         except BaseException as exc:
                             self._record_host_exception(_extract_prompt(args, kwargs), exc,
                                                         policy, agent, _metadata(kwargs))
                             raise
+                        if stopped is not None:
+                            self._emit_response_block(hash_prompt, chunks, policy, agent,
+                                                      plan, stopped, _metadata(kwargs))
+                            raise FoxyResponseBlocked(_response_block_message(policy, stopped))
+                        rdec = self._scan_response(chunks, policy)
                         self.log_interaction(hash_prompt, chunks, policy, agent,
                                              metadata=_metadata(kwargs),
                                              event_type=event_override or "stream",
-                                             decision=decision, policy_rules=rules,
-                                             signals=signals, blocked_reason=reason)
+                                             **self._labels(plan, rdec))
                     return generator()
-                self.log_interaction(hash_prompt, response, policy, agent,
-                                     metadata=_metadata(kwargs, response),
+                meta = _metadata(kwargs, response)
+                rdec = self._scan_response(response, policy)
+                if rdec is not None and self.cfg.response_scan == "block":
+                    self._emit_response_block(hash_prompt, response, policy, agent,
+                                              plan, rdec, meta)
+                    raise FoxyResponseBlocked(_response_block_message(policy, rdec))
+                self.log_interaction(hash_prompt, response, policy, agent, metadata=meta,
                                      event_type=event_override or "interaction",
-                                     decision=decision, policy_rules=rules,
-                                     signals=signals, blocked_reason=reason)
+                                     **self._labels(plan, rdec))
                 return response
             return wrapper
 
@@ -367,6 +558,12 @@ class FoxyClient:
         the fired ``signals`` (used verbatim as ``pii_signals``), the matched
         ``policy_rules`` and the dominant ``blocked_reason``. When ``decision`` is
         None the emitted payload is byte-for-byte identical to the observe path.
+
+        The response scan adds two more ``decision`` values —
+        ``response_flagged`` (recorded, allowed through) and ``blocked_response``
+        (prevented) — and appends ``response_*``-namespaced ids to
+        ``policy_rules``. It never touches ``signals``: see
+        :meth:`_labels` for why that field is load-bearing on the backend.
         """
         try:
             prompt_s = hashing.canonical_json(prompt)
@@ -473,6 +670,20 @@ def _block_message(policy: str, plan: dict) -> str:
                  "Change it in Settings, or set FOXY_ORG_POLICY=off to ignore "
                  "workspace policy in this deployment.")
     return base
+
+
+def _response_block_message(policy: str, decision) -> str:
+    """Content-blind exception message for a blocked RESPONSE.
+
+    It says plainly what a prompt block does not have to: the model DID run.
+    A developer who reads "blocked" and assumes no call was made will go
+    looking for a bill that does not match, so the sentence states the cost and
+    the control that produced it (``response_scan``, not ``mode``) — the same
+    wrong-place problem :func:`_block_message` exists to prevent."""
+    return (f"Foxy Audit blocked a model response under policy '{policy}' "
+            f"(reason: {decision.reason}). The wrapped function DID run and the "
+            f"provider was called; the response was withheld from the caller by "
+            f"response_scan=block.")
 
 
 def _metadata(kwargs: dict, response=None) -> dict:

@@ -21,14 +21,18 @@ telemetry errors out of your application. Set ``audit_required=True`` when
 the application must fail closed if evidence delivery cannot be confirmed.
 """
 
-from .client import FoxyClient, FoxyPolicyBlocked
+from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 
-# 1.3.0 — the guard message names sdk_enforcement, the field org_policy.py
-# actually reads. It said enforcement_mode for two releases, which is the
-# judge-response setting on a different page.
-__version__ = "1.3.0"
-__all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "audit", "__version__"]
+# 1.4.0 — response scanning (OWASP LLM05). MINOR, not patch: there is new public
+# API (FoxyResponseBlocked, the response_scan setting, FOXY_RESPONSE_SCAN) and a
+# new exception type an application can now see. The DEFAULT is detect-only, so
+# nothing an existing caller receives changes and nothing new raises unless the
+# deployment opts in — but "you can now configure a new exception into your call
+# path" is a feature, and a patch release must not carry one.
+__version__ = "1.4.0"
+__all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
+           "audit", "__version__"]
 
 # Module-level convenience: a lazily-created client configured from the
 # environment (FOXY_API_KEY / FOXY_BACKEND_URL), so `from foxy_audit import audit`

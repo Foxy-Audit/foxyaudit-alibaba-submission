@@ -229,6 +229,10 @@ def make_sentinels() -> dict:
         "blocked_prompt": f"FOXYEEE{tok}BLOCKEDPROMPT",
         "redact_prompt": f"FOXYEEE{tok}REDACTPROMPT",
         "redact_response": f"FOXYEEE{tok}REDACTRESPONSE",
+        # The response scan is the only code path that inspects RESPONSE text
+        # under a blocking mode. Its sentinel is swept like every other.
+        "rscan_prompt": f"FOXYEEE{tok}RSCANPROMPT",
+        "rscan_response": f"FOXYEEE{tok}RSCANRESPONSE",
     }
 
 
@@ -244,6 +248,7 @@ def build_spec(sent: dict, spool_path: str) -> dict:
             "clean": f"e2e-clean-{tok}",
             "blocked": f"e2e-blocked-{tok}",
             "redact": f"e2e-redact-{tok}",
+            "rscan": f"e2e-rscan-{tok}",
         },
         "prompts": {
             "clean": f"Summarise this quarter's compliance findings. {sent['clean_prompt']}",
@@ -257,10 +262,18 @@ def build_spec(sent: dict, spool_path: str) -> dict:
                        f"{sent['redact_prompt']}"),
             "redact_ssn": ssn,
             "redact_email": email,
+            # A clean prompt: the preflight guard must have nothing to say, so
+            # that whatever happens next is the RESPONSE scan's doing and not
+            # the prompt guard's.
+            "rscan": f"Render the onboarding banner. {sent['rscan_prompt']}",
         },
         "responses": {
             "clean": f"Quarterly summary produced. {sent['clean_response']}",
             "redact": f"Intake acknowledged. {sent['redact_response']}",
+            # Trips response_markup.script_tag — OWASP LLM05, markup that will
+            # be rendered. The sentinel rides inside the flagged response, which
+            # is the point: it is the text the scan actually reads.
+            "rscan": (f"<script>alert('e2e')</script> {sent['rscan_response']}"),
         },
     }
 
@@ -280,6 +293,9 @@ def sweep_needles(spec: dict, sent: dict) -> list[tuple[str, str]]:
         ("redact prompt (full)", p["redact"]),
         ("redact prompt sentinel", sent["redact_prompt"]),
         ("redact response sentinel", sent["redact_response"]),
+        ("response-scan prompt sentinel", sent["rscan_prompt"]),
+        ("response-scan response (full)", s["rscan"]),
+        ("response-scan response sentinel", sent["rscan_response"]),
         ("PHI: SSN", p["redact_ssn"]),
         ("PHI: email address", p["redact_email"]),
     ]
@@ -449,7 +465,7 @@ def main() -> int:
         if not drv.get("ok"):
             ck.check("SDK driver completed", False,
                      (drv.get("error") or proc.stderr or proc.stdout or "")[-1500:])
-            raise Fatal("the SDK could not complete its three calls")
+            raise Fatal("the SDK could not complete its four calls")
         ck.check("SDK driver completed (own process, exited 0)", proc.returncode == 0,
                  f"{sdk_wall:.1f}s -- foxy-audit {drv['sdk']['version']} "
                  f"from {drv['sdk']['module_path']}")
@@ -468,11 +484,21 @@ def main() -> int:
                  st["redact"]["model_received"])
         ck.check("CLEAN: the model received the prompt unchanged",
                  st["clean_stub_received_prompt_unchanged"])
+        ck.check("RESPONSE SCAN: the model WAS called (unlike a prompt block)",
+                 st["rscan"]["stub_invocations"] == 1,
+                 f"stub invocations = {st['rscan']['stub_invocations']}")
+        ck.check("RESPONSE SCAN: FoxyResponseBlocked raised",
+                 st["rscan"]["raised_FoxyResponseBlocked"], st["rscan"]["message"])
+        ck.check("RESPONSE SCAN: the caller received NOTHING",
+                 not st["rscan"]["caller_received_a_response"])
+        ck.check("RESPONSE SCAN: the exception message is content-blind",
+                 not st["rscan"]["message_carries_response_text"],
+                 st["rscan"]["message"])
         ck.check("SDK spool fully drained -- nothing left undelivered",
                  drv["spool_undelivered"] == 0,
                  json.dumps(drv["spool_pending_rows"])[:400])
         receipts = {str(r["event_id"]): r for r in drv["receipts"]}
-        ck.check("the backend receipted all three events over HTTP", len(receipts) == 3,
+        ck.check("the backend receipted all four events over HTTP", len(receipts) == 4,
                  ", ".join(f"seq={r['seq']}" for r in drv["receipts"]))
 
         # ── 4 · wait for the worker ──────────────────────────────────────────
@@ -491,12 +517,12 @@ def main() -> int:
         grading_s = time.time() - t_poll
         mine = {k: rows_by_id.get(k) for k in want}
         if not all(v and v["grading_status"] in ("graded", "failed") for v in mine.values()):
-            ck.check("all three rows reached a terminal grading state", False,
+            ck.check("all four rows reached a terminal grading state", False,
                      "actual: " + json.dumps({k: (v or {}).get("grading_status",
                                                                "<absent from /v1/logs>")
                                               for k, v in mine.items()}))
             raise Fatal(f"grading did not finish within {args.grading_timeout}s")
-        ck.check("all three rows reached a terminal grading state", True,
+        ck.check("all four rows reached a terminal grading state", True,
                  f"{grading_s:.1f}s wall-clock after the SDK's last call")
         lat = psql("SELECT seq||'|'||round(extract(epoch from "
                    "(graded_at - created_at))::numeric, 3) FROM audit_logs "
@@ -511,8 +537,8 @@ def main() -> int:
         step("5 . assert the customer API (the gate)")
         by_agent = {r["agent"]: r for r in rows_by_id.values() if r.get("agent")}
         ag = spec["agents"]
-        have_all = all(ag[k] in by_agent for k in ("clean", "blocked", "redact"))
-        for kind in ("clean", "blocked", "redact"):
+        have_all = all(ag[k] in by_agent for k in ("clean", "blocked", "redact", "rscan"))
+        for kind in ("clean", "blocked", "redact", "rscan"):
             ck.check(f"event present on /v1/logs: {kind}", ag[kind] in by_agent)
         if have_all:
             blk = by_agent[ag["blocked"]]
@@ -526,9 +552,26 @@ def main() -> int:
                      f"pii_signals={red.get('pii_signals')}")
             ck.check("CLEAN row is typed 'interaction'",
                      by_agent[ag["clean"]]["event_type"] == "interaction")
-            seqs = [by_agent[ag[k]]["client_seq"] for k in ("clean", "blocked", "redact")]
-            ck.check("SDK call ORDER survived the wire (client_seq 1,2,3)",
-                     seqs == [1, 2, 3], f"client_seq={seqs}")
+            rsc = by_agent[ag["rscan"]]
+            rsc_md = rsc.get("event_metadata") or {}
+            # A blocked RESPONSE reuses the terminal `blocked` type so the
+            # backend's enforcement path grades it without a judge, and stays
+            # distinguishable from a blocked PROMPT by its decision label and by
+            # rule ids that name the side they came from.
+            ck.check("RESPONSE SCAN row is typed 'blocked' with a response decision",
+                     rsc["event_type"] == "blocked"
+                     and rsc_md.get("decision") == "blocked_response"
+                     and any(str(r).startswith("response_")
+                             for r in (rsc_md.get("policy_rules") or [])),
+                     json.dumps(rsc_md)[:400])
+            # All four calls share one spool, so they share one client_id and one
+            # client_seq counter — including the response-scan call, which uses a
+            # SECOND FoxyClient. If a second client ever restarted the sequence,
+            # this is where it would show.
+            seqs = [by_agent[ag[k]]["client_seq"]
+                    for k in ("clean", "blocked", "redact", "rscan")]
+            ck.check("SDK call ORDER survived the wire (client_seq 1,2,3,4)",
+                     seqs == [1, 2, 3, 4], f"client_seq={seqs}")
 
         vr = requests.get(f"{BASE_URL}/v1/verify", headers=headers, timeout=60).json()
         ck.check("/v1/verify recomputes the chain intact",
@@ -642,7 +685,7 @@ def main() -> int:
             ck.check("BYOK judge key stored (encrypted at rest)",
                      pr.status_code == 200 and pr.json().get(f"{provider}_key_set") is True,
                      f"{pr.status_code} {pr.text[:300]}")
-            # The three events above are already 'graded', so ONLY this fourth one
+            # The events above are already 'graded', so ONLY this fresh batch
             # routes to a live provider: exactly one billed call.
             live_sent = make_sentinels()
             live_spec = build_spec(live_sent, os.path.join(run_dir, "spool-live.sqlite3"))
@@ -667,15 +710,20 @@ def main() -> int:
                 time.sleep(1.0)
             graded = [r for r in live_rows if r["grading_status"] == "graded"]
             summary["live_verdicts"] = [r.get("gemini_verdict") for r in graded]
-            # EXACTLY ONE of these three reaches a provider. worker.py:205 sends
+            # EXACTLY ONE of these four reaches a provider. worker.py:205 sends
             # the blocked and redacted rows to policy_engine.evaluate_enforcement
             # and never asks a judge; only the plain `interaction` row is routed.
             # Asserting that split is what makes "exactly one billed call" a
             # measurement instead of an intention.
+            #
+            # THREE host-enforcement rows now, not two: a response blocked by the
+            # SDK's response scan is typed `blocked` like a blocked prompt, so it
+            # takes the same deterministic path and bills nothing. That it does
+            # not quietly become a fourth judge call is the point of counting.
             live_i = [r for r in graded if r["event_type"] == "interaction"]
             live_e = [r for r in graded if r["event_type"] in ("blocked", "redacted")]
             ck.check("exactly ONE event reached the provider (the interaction row)",
-                     len(live_i) == 1 and len(live_e) == 2
+                     len(live_i) == 1 and len(live_e) == 3
                      and all((r.get("gemini_verdict") or {}).get("judge_provider") is None
                              for r in live_e),
                      f"{len(live_i)} interaction / {len(live_e)} host-enforcement")

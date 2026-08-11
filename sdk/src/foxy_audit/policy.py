@@ -65,13 +65,28 @@ _POLICY_CHECKS = {
 _DEFAULT_CHECKS = ("injection", "secrets")
 
 # Priority order for the single "dominant" blocked_reason label.
+#
+# The ``response_*`` families come from response_policy.py (OWASP LLM05). They
+# live in THIS table because one interaction can carry rules from both sides and
+# `reason` has to pick a single label out of the merged list. Rule ids are
+# ``<family>.<name>`` on both sides, so the response families are ordinary
+# entries here rather than a special case — which is why response_policy names
+# them ``response_markup.*`` and not ``response.markup.*``.
 _REASON_LABEL = {
     "secret": "secret_key",
+    "response_secret": "secret_key",
     "injection": "prompt_injection",
+    "response_markup": "unsafe_markup",
+    "response_sql": "unsafe_sql",
+    "response_url": "unsafe_url",
     "phi": "phi",
+    "response_phi": "phi",
     "pii": "pii",
+    "response_pii": "pii",
 }
-_REASON_PRIORITY = ("secret", "injection", "phi", "pii")
+_REASON_PRIORITY = ("secret", "response_secret", "injection",
+                    "response_markup", "response_sql", "response_url",
+                    "phi", "response_phi", "pii", "response_pii")
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,20 @@ DEFAULT_TIMEOUT = 5.0
 DEFAULT_MODE = "observe"
 _VALID_MODES = ("observe", "block", "redact")
 
+# Response scanning (OWASP LLM05). A SEPARATE control from `mode`, deliberately:
+# `mode` governs the prompt, and folding the response scan into it would mean
+# every service already running mode="block" started raising on RESPONSES the
+# moment it upgraded — a new exception in someone else's application, delivered
+# by a version bump they read as a feature they did not ask for.
+#
+# So the default is "observe": always detect, always record the labels, never
+# prevent and never rewrite. Nothing the caller receives changes; the evidence
+# record just gains honest LLM05 signal. Prevention is "block", and it is opt-in
+# because a false positive on the response side raises into the caller's own
+# code. "off" disables the scan entirely.
+DEFAULT_RESPONSE_SCAN = "observe"
+_VALID_RESPONSE_SCAN = ("off", "observe", "block")
+
 # Org policy (P4 §B). ON by default: a workspace that tightens to block should
 # reach every deployment without waiting for a redeploy. FOXY_ORG_POLICY=off
 # stops the fetch entirely — for air-gapped installs, or teams who want code to
@@ -57,6 +71,9 @@ class FoxyConfig:
     # what `mode` alone does, since it always resolves to a concrete string —
     # would silently hand the org override rights it must not have.
     mode_is_explicit: bool = False
+    # "off" | "observe" | "block" — see DEFAULT_RESPONSE_SCAN above. Orthogonal
+    # to `mode`: observe the prompt and block the response is a valid pairing.
+    response_scan: str = DEFAULT_RESPONSE_SCAN
     org_policy_enabled: bool = True
     org_policy_ttl: float = DEFAULT_ORG_POLICY_TTL
 
@@ -75,6 +92,7 @@ class FoxyConfig:
         client_id: str | None = None,
         audit_required: bool | None = None,
         mode: str | None = None,
+        response_scan: str | None = None,
         org_policy: bool | None = None,
         org_policy_ttl: float | None = None,
     ) -> "FoxyConfig":
@@ -89,6 +107,13 @@ class FoxyConfig:
         explicit = mode is not None or env_mode is not None
         if resolved_mode not in _VALID_MODES:
             resolved_mode = DEFAULT_MODE
+        raw_scan = (response_scan if response_scan is not None
+                    else os.getenv("FOXY_RESPONSE_SCAN", DEFAULT_RESPONSE_SCAN))
+        resolved_scan = str(raw_scan).strip().lower()
+        if resolved_scan not in _VALID_RESPONSE_SCAN:
+            # An unreadable value must not silently become "block" — falling back
+            # to the default keeps a typo from raising in someone's production.
+            resolved_scan = DEFAULT_RESPONSE_SCAN
         env_org = os.getenv("FOXY_ORG_POLICY")
         org_on = (org_policy if org_policy is not None
                   else (env_org.strip().lower() not in _FALSEY if env_org is not None else True))
@@ -119,6 +144,7 @@ class FoxyConfig:
                             else os.getenv("FOXY_AUDIT_REQUIRED", "false").lower() in {"1", "true", "yes"}),
             mode=resolved_mode,
             mode_is_explicit=explicit,
+            response_scan=resolved_scan,
             org_policy_enabled=bool(org_on),
             org_policy_ttl=ttl,
         )

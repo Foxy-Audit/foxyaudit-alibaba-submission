@@ -48,7 +48,7 @@ def _receipts(spool_path: str) -> tuple[list[dict], int, list[dict]]:
 def run(spec: dict, result: dict) -> None:
     import foxy_audit
     from foxy_audit import FoxyClient
-    from foxy_audit.client import FoxyPolicyBlocked
+    from foxy_audit.client import FoxyPolicyBlocked, FoxyResponseBlocked
 
     result["sdk"] = {
         "version": getattr(foxy_audit, "__version__", None),
@@ -73,7 +73,20 @@ def run(spec: dict, result: dict) -> None:
     agents = spec["agents"]
     prompts = spec["prompts"]
     responses = spec["responses"]
-    seen: dict[str, list] = {"clean": [], "blocked": [], "redact": []}
+    # The response scan is a per-client setting, not a per-decorator one, so the
+    # blocking case needs its own client. Same key, same endpoint, same spool —
+    # its events land in the same chain as the other three.
+    rscan_client = FoxyClient(
+        api_key=api_key,
+        endpoint=spec["endpoint"],
+        desktop_ping=False,
+        audit_required=True,
+        spool_path=spec["spool_path"],
+        timeout=float(spec.get("timeout", 30.0)),
+        response_scan="block",
+    )
+
+    seen: dict[str, list] = {"clean": [], "blocked": [], "redact": [], "rscan": []}
 
     # ── the three calls. The "LLM" is a local stub: the seam under test is
     # SDK → HTTP → backend, not any model provider. Each stub records exactly
@@ -93,6 +106,14 @@ def run(spec: dict, result: dict) -> None:
     def call_redact(prompt):
         seen["redact"].append(prompt)
         return responses["redact"]
+
+    # OWASP LLM05. The prompt is clean, so anything that happens is the RESPONSE
+    # scan's doing. The stub returns markup that will be rendered; the caller
+    # must never receive it, and none of it may reach the wire.
+    @rscan_client.audit(policy="default", agent=agents["rscan"], mode="observe")
+    def call_rscan(prompt):
+        seen["rscan"].append(prompt)
+        return responses["rscan"]
 
     t0 = time.time()
     call_clean(prompt=prompts["clean"])
@@ -123,6 +144,27 @@ def run(spec: dict, result: dict) -> None:
         "still_contains_ssn": bool(received and prompts["redact_ssn"] in received),
         "still_contains_email": bool(received and prompts["redact_email"] in received),
         "still_contains_sentinel": bool(received and spec["sentinels"]["redact_prompt"] in received),
+    }
+
+    t0 = time.time()
+    rscan_raised, rscan_returned = None, None
+    try:
+        rscan_returned = call_rscan(prompt=prompts["rscan"])
+    except FoxyResponseBlocked as exc:
+        rscan_raised = str(exc)
+    result["steps"]["rscan"] = {
+        "elapsed_s": round(time.time() - t0, 3),
+        "raised_FoxyResponseBlocked": rscan_raised is not None,
+        "message": rscan_raised,
+        "stub_invocations": len(seen["rscan"]),
+        # The caller must have received NOTHING. Recording the flag rather than
+        # the value: the value is the flagged response.
+        "caller_received_a_response": rscan_returned is not None,
+        # The exception message is content-blind by contract; assert it here
+        # rather than trusting it, and record only the derived facts.
+        "message_carries_response_text": bool(
+            rscan_raised and (spec["sentinels"]["rscan_response"] in rscan_raised
+                              or "<script>" in rscan_raised)),
     }
 
     result["steps"]["clean_stub_received_prompt_unchanged"] = bool(

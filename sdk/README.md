@@ -52,6 +52,46 @@ def ask_model(prompt: str) -> str:
 `agent` is optional — rows logged without it hash exactly as before, so existing chains keep
 verifying.
 
+### Scanning the response (OWASP LLM05 — Improper Output Handling)
+
+`mode` governs the **prompt**. `response_scan` governs what came **back**: markup that will be
+rendered, a SQL statement the caller might execute, an SSRF-shaped URL, a secret the model
+echoed, and — under `hipaa`/`gdpr` — personal data the model returned that the prompt never
+contained.
+
+| `response_scan` | What happens |
+|---|---|
+| `"observe"` *(default)* | Detect and record the rule ids. Nothing is prevented, nothing is rewritten. |
+| `"block"` | The caller never receives a flagged response; `FoxyResponseBlocked` is raised instead. |
+| `"off"` | No scan at all. |
+
+```python
+foxy = FoxyClient(api_key=..., response_scan="block")   # or FOXY_RESPONSE_SCAN=block
+```
+
+**It never rewrites a response.** There is no response-side "redact" under any mode, and
+`mode="redact"` scans the response exactly as `observe` does. Prompt redaction changes what the
+*model* sees; response redaction would change what *your* parser, database and UI receive — and
+for a provider response object, which is not a string, it would silently do nothing at all.
+
+**On a streamed response, blocking is partial. This is architectural, not a bug.** A generator
+hands each chunk to you as it arrives and a chunk cannot be un-yielded. Under
+`response_scan="block"` each chunk is scanned *before* it is yielded, with a 256-character
+carry-over window so a match split across a boundary is still caught, and the stream is
+terminated at the first flagged chunk — so the rest never arrives, but **everything already
+yielded has already been delivered**. Two bounds follow: a pattern whose halves land further
+apart than that window is not prevented, and the scan adds per-chunk latency. A completed
+stream is re-scanned whole in both modes, so the evidence record is exact even where prevention
+was not. Buffering the whole stream would make blocking total and would silently turn a
+streaming API into a non-streaming one, so the SDK does not do it.
+
+**Upgrading from 1.3.x changes nothing you receive.** The default detects and records; it never
+raises and never rewrites. A response that trips nothing emits the identical payload it emitted
+before. Turning on prevention is a deliberate `response_scan="block"`.
+
+These are regexes, not a parser — a model *explaining* SQL will trip `response_sql.destructive`.
+That is exactly why prevention is opt-in.
+
 ## Configuration
 
 | Setting        | Kwarg          | Env var             | Default                  |
@@ -64,6 +104,8 @@ verifying.
 | Durable spool | `spool_path` | `FOXY_SPOOL_PATH` | `~/.foxy-audit/spool.sqlite3` |
 | Stable client id | `client_id` | `FOXY_CLIENT_ID` | persisted in the local spool when omitted |
 | Required capture | `audit_required` | `FOXY_AUDIT_REQUIRED` | `False` |
+| Prompt guard mode | `mode` | `FOXY_MODE` | `observe` (`block` / `redact` enforce before the call) |
+| Response scan | `response_scan` | `FOXY_RESPONSE_SCAN` | `observe` (`block` prevents, `off` disables) |
 
 ### Salted commitments (optional)
 
@@ -88,8 +130,8 @@ raises when durable delivery cannot be confirmed.
 
 - **Default path is asynchronous** — the HTTP upload runs on a background daemon thread after a local durable enqueue.
 - **Retries do not discard events** — failed uploads remain in the SQLite/WAL spool.
-- **Content-blind by design** — commitments, token counts, policy tags, and bounded identifiers leave the host; raw text is not sent by the SDK.
-- Works with **sync, async, and generator** functions; host return values are passed through unchanged.
+- **Content-blind by design** — commitments, token counts, policy tags, and bounded identifiers leave the host; raw text is not sent by the SDK. The response scan is no exception: it emits rule ids such as `response_markup.script_tag`, never the matched text, never an offset, never a length.
+- Works with **sync, async, sync-generator and async-generator** functions. Host return values are passed through unchanged — the one exception is `response_scan="block"`, which raises `FoxyResponseBlocked` instead of returning a flagged response, and which is off unless you turn it on.
 
 ## What gets sent
 
