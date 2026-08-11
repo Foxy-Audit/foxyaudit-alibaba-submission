@@ -53,7 +53,11 @@ TONE_TOKEN = {"ok": "safe-bg", "bad": "breach-bg", "warn": "warn-series",
 
 _SLICE = re.compile(r"\{label:'([^']+)',value:[^,]+,tone:'(\w+)'\}")
 _ARC = re.compile(r'<path\b[^>]*class="cx-arc"[^>]*>')
-_ARCLABEL = re.compile(r'class="cx-arclabel"[^>]*>([^<]*)</text>')
+# G8.1 . the label rides a <textPath> now, so its text is one level
+# deeper. The old expression matched the <text> element's own (now empty)
+# content, and would have reported 'no labels drawn' for a chart full of
+# them -- a guard that goes quietly green on a construction change.
+_ARCLABEL = re.compile(r'<textPath\b[^>]*>([^<]*)</textPath>')
 
 
 def _parts(chart_id: str) -> list[tuple[str, str]]:
@@ -249,6 +253,94 @@ def _donut(data, height=150):
     return _render({"type": "donut", "height": height, "data": data, "legend": True})
 
 
+# == G8.1 · the plate, measured in Cartesian space =========================
+# The cases that broke the straight plate. "Evaluator unknown" is the longest
+# label the product has, and 28.7% is ordinary data — a tenant whose judge could
+# not reach a verdict on a bad afternoon. G8 only ever exercised it at 5.8%,
+# where it is never drawn at all, so the defect had no fixture.
+_PLATE_CASES = {
+    "the longest label at a large share": [
+        {"label": "Clean", "value": 57, "tone": "ok"},
+        {"label": "Redacted", "value": 14.5, "tone": "pink"},
+        {"label": "Evaluator unknown", "value": 28.7, "tone": "violet"}],
+    "three even slices": [
+        {"label": "Clean", "value": 1, "tone": "ok"},
+        {"label": "Breach", "value": 1, "tone": "bad"},
+        {"label": "Pending", "value": 1, "tone": "warn"}],
+    "healthy tenant": [
+        {"label": "Clean", "value": 87, "tone": "ok"},
+        {"label": "Pending", "value": 13, "tone": "warn"}],
+    "all seven": _FULL,
+}
+
+_PLATE = re.compile(
+    r'<path d="M([-\d.]+),([-\d.]+)'
+    r'A([\d.]+),[\d.]+ 0 \d 1 ([-\d.]+),([-\d.]+)'
+    r'L([-\d.]+),([-\d.]+)'
+    r'A([\d.]+),[\d.]+ 0 \d 0 ([-\d.]+),([-\d.]+)Z" style="fill:')
+
+
+def _plates(svg: str, size: int = 150) -> list[dict]:
+    """Every label plate, as GEOMETRY: its two radii and the four corner points,
+    read out of the emitted path rather than recomputed from the fit test.
+
+    ⚠ THAT DISTINCTION IS THE WHOLE POINT. G8's overlap guard converted plate
+    widths back into angular half-widths at the mid radius, which is the fit
+    test's own inequality restated — green by construction whatever the geometry
+    did. Nothing here touches the fit test; it measures where the ink lands."""
+    cx = cy = size / 2.0
+    out = []
+    for m in _PLATE.finditer(svg):
+        v = [float(g) for g in m.groups()]
+        r_out, r_in = v[2], v[7]
+        pts = [(v[0], v[1]), (v[3], v[4]), (v[5], v[6]), (v[8], v[9])]
+        mid, half = _angular_span([math.atan2(y - cy, x - cx) for x, y in pts])
+        out.append({"r_in": r_in, "r_out": r_out, "pts": pts,
+                    "radii": [math.hypot(x - cx, y - cy) for x, y in pts],
+                    "mid": mid, "half": half})
+    return out
+
+
+def _angular_span(angs: list[float]) -> tuple[float, float]:
+    """The smallest arc containing all of these angles, as (centre, half-width).
+
+    ⚠ min()/max() OVER atan2 IS WRONG AND LOOKS RIGHT. atan2 wraps at +/-pi, so
+    a plate straddling that boundary reads as spanning 257 degrees instead of
+    35, and the overlap test below then reports a collision that is not there.
+    Found by this guard failing on correct geometry - the measurement was the
+    defect, not the code. The largest GAP between sorted angles is the part of
+    the circle the plate does not cover; everything else is the span."""
+    a = sorted(x % (2 * math.pi) for x in angs)
+    gaps = [(a[(i + 1) % len(a)] - a[i]) % (2 * math.pi) for i in range(len(a))]
+    widest = max(range(len(gaps)), key=lambda i: gaps[i])
+    span = 2 * math.pi - gaps[widest]
+    start = a[(widest + 1) % len(a)]
+    return (start + span / 2) % (2 * math.pi), span / 2
+
+
+def _fn_body(src: str, decl: str) -> str:
+    """The balanced-brace body of the function declared at `decl`.
+
+    Anything looser lets a neighbouring function satisfy an assertion about this
+    one - see the note in test_a_theme_toggle_redraws_the_charts."""
+    i = src.index(decl)
+    open_at = src.index("{", i)
+    depth = 0
+    for j in range(open_at, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[open_at:j + 1]
+    raise AssertionError("unbalanced braces after %r" % decl)
+
+
+def _arcs_overlap(p1: dict, p2: dict) -> bool:
+    d = abs(p1["mid"] - p2["mid"]) % (2 * math.pi)
+    return min(d, 2 * math.pi - d) < p1["half"] + p2["half"] - 1e-9
+
+
 def test_a_slice_that_can_hold_its_name_carries_it() -> None:
     """The remedy for every subset a reorder cannot reach. On the shape that
     matters most - a healthy tenant, two slices, adjacent twice - BOTH arcs say
@@ -276,7 +368,7 @@ def test_the_label_plate_is_the_panel_not_the_fill(css) -> None:
     label sits on a plate in the PANEL colour, where --ink is 14.5:1 / 15.8:1
     with no per-fill arithmetic at all."""
     svg = _donut([_FULL[0], _FULL[4]])
-    plate = re.search(r'<g transform="rotate[^"]*"><rect\b[^>]*style="fill:([^"]+)"', svg)
+    plate = re.search(r'<g class="cx-arcplate"><path\b[^>]*style="fill:([^"]+)"', svg)
     assert plate, "the arc label lost its plate"
     assert plate.group(1) == "rgb(242, 240, 238)", (
         "the plate paints %r, not the resolved panel" % plate.group(1))
@@ -289,7 +381,7 @@ def test_the_label_can_never_outgrow_its_plate() -> None:
     the width the fit test used is PINNED onto the text with textLength. Without
     it a wider fallback face would overflow the plate it was sized against."""
     svg = _donut([_FULL[0], _FULL[4]])
-    for tag in re.findall(r'<text\b[^>]*class="cx-arclabel"[^>]*>', svg):
+    for tag in re.findall(r'<textPath\b[^>]*>', svg):
         assert 'textLength="' in tag and 'lengthAdjust="spacing"' in tag, tag
 
 
@@ -297,27 +389,13 @@ def test_two_labels_never_overlap() -> None:
     """Labels are centred in their own arc, so two adjacent ones could collide
     if both are near the fit threshold. Checked as angular half-widths at the
     band's mid radius rather than reasoned about."""
-    for data in ([_FULL[0], _FULL[4]],
-                 [{"label": "Clean", "value": 1, "tone": "ok"},
-                  {"label": "Breach", "value": 1, "tone": "bad"},
-                  {"label": "Pending", "value": 1, "tone": "warn"}],
-                 _FULL):
-        svg = _donut(data)
-        spans = []
-        for g in re.finditer(
-                r'<g transform="rotate\(([-\d.]+) ([\d.]+) ([\d.]+)\)">'
-                r'<rect\b[^>]*width="([\d.]+)"', svg):
-            deg, x, y, w = (float(g.group(i)) for i in (1, 2, 3, 4))
-            size = 150
-            rm = ((size / 2 - 6) + (size / 2 - 6) * 0.58) / 2
-            ang = math.atan2(y - size / 2, x - size / 2)
-            spans.append((ang, (w / 2) / rm))
-        for (a1, h1), (a2, h2) in itertools.combinations(spans, 2):
-            d = abs(a1 - a2) % (2 * math.pi)
-            d = min(d, 2 * math.pi - d)
-            assert d >= h1 + h2, (
-                "two arc labels overlap: centres %.2f rad apart, half-widths "
-                "%.2f + %.2f" % (d, h1, h2))
+    for name, data in _PLATE_CASES.items():
+        plates = _plates(_donut(data))
+        for p1, p2 in itertools.combinations(plates, 2):
+            assert not _arcs_overlap(p1, p2), (
+                "%s: two label plates overlap on the ring - centres %.3f and "
+                "%.3f rad, half-widths %.3f and %.3f"
+                % (name, p1["mid"], p2["mid"], p1["half"], p2["half"]))
 
 
 def test_every_slice_still_renders_and_keeps_its_legend_row() -> None:
@@ -347,3 +425,212 @@ def test_a_zero_slice_leaves_both_the_ring_and_the_key() -> None:
     rows = [r.split(" · ")[0] for r in re.findall(r'</svg>([^<]+)</span>', svg)]
     assert rows == ["Clean", "Pending"], (
         "the legend is not filtered to the same subset as the ring: %s" % rows)
+
+
+# == G8.1 · THE CENTRAL GEOMETRY GUARD =====================================
+def test_the_plate_maths_can_detect_a_plate_that_juts_out() -> None:
+    """THE INERT CONTROL, and it exists because G8's version of this guard could
+    not fail. Feed the measurement a plate that is knowably outside the ring and
+    require it to say so, before it is trusted to say anything is inside."""
+    size, r = 150, 150 / 2 - 6
+    good = _plates('<path d="M75.0,20.0A55,55 0 0 1 95.0,25.0'
+                   'L90.0,35.0A45,45 0 0 0 75.0,30.0Z" style="fill:', size)
+    assert good and max(good[0]["radii"]) < r, good
+    bad = _plates('<path d="M75.0,-5.0A80,80 0 0 1 100.0,0.0'
+                  'L95.0,10.0A70,70 0 0 0 75.0,5.0Z" style="fill:', size)
+    assert bad and max(bad[0]["radii"]) > r, (
+        "the measurement cannot see a plate outside the rim, so nothing below "
+        "means anything")
+
+
+def test_no_label_plate_leaves_the_ring_or_the_viewbox() -> None:
+    """THE DEFECT G8 SHIPPED, measured where the ink lands.
+
+    The fit test is an ARC length; a straight tangential plate of that width has
+    corners further out than the arc it was sized against. "Evaluator unknown"
+    at 28.7% put its corners at radius 79.8 against a rim of 69 and a viewBox
+    half-width of 75 - through the ring AND clipped by the svg.
+
+    G8.1 curved the plate, so its radial extent is exactly its own height at any
+    width. This asserts that outcome directly: every plate radius inside the
+    band, every point inside the viewBox. It never consults the fit test."""
+    size = 150
+    r, rin = size / 2 - 6, (size / 2 - 6) * 0.58
+    for name, data in _PLATE_CASES.items():
+        plates = _plates(_donut(data), size)
+        assert plates, "%s: no label was drawn, so nothing was measured" % name
+        for p in plates:
+            assert p["r_in"] >= rin - 0.5 and p["r_out"] <= r + 0.5, (
+                "%s: a plate spans radius %.1f..%.1f, outside the ring band "
+                "%.1f..%.1f" % (name, p["r_in"], p["r_out"], rin, r))
+            assert max(p["radii"]) <= r + 0.5, (
+                "%s: a plate corner sits at radius %.1f, past the rim at %.1f"
+                % (name, max(p["radii"]), r))
+            for x, y in p["pts"]:
+                assert 0 <= x <= size and 0 <= y <= size, (
+                    "%s: a plate corner at (%.1f, %.1f) is outside the 0..%d "
+                    "viewBox and will be clipped" % (name, x, y, size))
+
+
+def test_the_longest_label_is_actually_exercised() -> None:
+    """G8's fixtures only ever gave "Evaluator unknown" 5.8%, where it is never
+    drawn - so the case that broke had no test at all. The longest label at its
+    largest realistic share is the one worth guarding, and this pins that the
+    fixture still reaches the drawing path."""
+    svg = _donut(_PLATE_CASES["the longest label at a large share"])
+    assert "Evaluator unknown" in re.findall(r'<textPath[^>]*>([^<]*)</textPath>', svg), (
+        "the longest label is no longer drawn in its own fixture, so the "
+        "geometry guard above is measuring easier plates than the ones that broke")
+
+
+def test_the_label_rides_a_curve_not_a_chord() -> None:
+    """The construction, not just its outcome: a textPath on the mid-radius
+    circle. A straight <text> would put the chord back and the guard above would
+    only catch it once some label happened to be long enough."""
+    svg = _donut(_PLATE_CASES["healthy tenant"])
+    assert "<textPath" in svg and 'startOffset="50%"' in svg, svg[:400]
+    assert not re.search(r'<g transform="rotate\([^"]*"><rect', svg), (
+        "a straight rotated plate is back")
+
+
+# == G8.1 · item 3 =========================================================
+def test_the_plate_does_not_steal_its_own_arc_hover(css) -> None:
+    """The plate covers 17px of a 29px ring band and wireTips binds mouseleave
+    per arc, so without pointer-events:none the tooltip blinks out over exactly
+    the big slices worth inspecting."""
+    rule = re.search(r"\.chart-host \.cx-arcplate\{([^}]*)\}", css)
+    assert rule and "pointer-events:none" in rule.group(1), rule and rule.group(1)
+    assert 'class="cx-arcplate"' in _donut(_PLATE_CASES["healthy tenant"])
+
+
+def test_a_theme_toggle_redraws_the_charts() -> None:
+    """TWO chart values are resolved at DRAW time and are not var(): panelBg()
+    feeds segSep's separator stroke and this phase's label plate. A var() fill
+    re-themes itself; a baked rgb() string does not, so toggling on the Ledger
+    page left near-black text on a near-black plate (~1.05:1) until you
+    navigated away and back.
+
+    Fixed by redrawing rather than by making one of the two live, because
+    fixing the plate alone would have left every segment separator stale."""
+    # SCOPED TO foxRedraw'S OWN BODY. Mutation-tested: `"__cxo" in <a slice
+    # containing window.foxChart=>` stayed true after foxRedraw was gutted to
+    # an empty function, because foxChart itself writes host.__cxo. A guard
+    # satisfied by the neighbouring function is the shadowing defect again.
+    # ⚠ THE FUNCTION'S OWN BODY, BY BRACE MATCHING. This assertion was wrong
+    # three times, each time the same class:
+    #   1. `"__cxo" in <slice containing window.foxChart=>` - satisfied by
+    #      foxChart itself, which writes host.__cxo;
+    #   2. scanning forward to a brace PATTERN - ran straight past a gutted
+    #      foxRedraw into the same code;
+    #   3. a fixed 320-character window - ran into the RESIZE handler, which
+    #      redraws with the identical `draw(h,h.__cxo)` expression.
+    # A window is not a scope. Only the matched body is.
+    body = _fn_body(SRC, "window.foxRedraw=function()")
+    assert "draw(h,h.__cxo)" in body, (
+        "foxRedraw no longer redraws from the stored options: %r" % body[:220])
+    apply_dash = SRC[SRC.index("function applyDash(theme)"):]
+    apply_dash = apply_dash[:apply_dash.index("window.applyDash")]
+    assert "foxRedraw()" in apply_dash, (
+        "applyDash still leaves draw-time colours stale: %s" % apply_dash[-300:])
+
+
+def test_the_tone_map_comment_no_longer_claims_unknown_draws_with_warn() -> None:
+    """G6.1's note said the verdict donut's Evaluator unknown draws with warn.
+    G8 moved it to violet and left the sentence standing - a comment that
+    describes code it no longer describes is the same defect class as a guard
+    that measures a value nobody paints."""
+    block = SRC[SRC.index("THE TONE MAP IS WHAT ACTUALLY DRAWS"):
+                SRC.index("var TONE={ok:")]
+    assert "G8 MOVED ONE OF THOSE MARKS" in block, block[-400:]
+
+
+# == G8.1 · #150 · the agreement, guarded so it cannot drift a third time ====
+#: Which pill class the ledger TABLE gives each verdict this donut names.
+#: Read from verdictOf(): blocked/redacted are terminal, breach and safe are
+#: graded outcomes, and unknown, failed(flag) and pending ALL collapse onto
+#: cls:'warn'. That 3-into-1 is the whole reason two slices cannot agree.
+_VERDICT_PILL = {"Clean": "safe", "Breach": "breach", "Blocked": "blocked",
+                 "Redacted": "redacted", "Pending": "warn", "Failed": "warn",
+                 "Evaluator unknown": "warn"}
+
+#: The two the arithmetic forces out, named so the exception is deliberate
+#: rather than whatever happens to be true. Seven slices into five pill classes
+#: means exactly two must disagree; these are the rarest states, and Pending -
+#: far the most common of the three - is the one that agrees.
+_CANNOT_AGREE = {"Failed", "Evaluator unknown"}
+
+
+def _tone_map() -> dict:
+    block = SRC[SRC.index("var TONE={ok:"):]
+    return dict(re.findall(r"(\w+):'var\((--[\w-]+)\)'", block[:block.index("};")]))
+
+
+def _pill_token(cls: str) -> str:
+    hit = re.search(r"\.pill\.%s\{background:var\((--[\w-]+)\)" % cls, SRC)
+    assert hit, "no .pill.%s rule" % cls
+    return hit.group(1)
+
+
+def test_verdict_of_still_collapses_three_states_onto_warn() -> None:
+    """The premise the exception list rests on. If verdictOf ever grows a
+    distinct class for pending or failed, two slices stop being forced out and
+    _CANNOT_AGREE should shrink - this is what says so."""
+    fn = SRC[SRC.index("function verdictOf(it)"):]
+    fn = fn[:fn.index("\n  }")]
+    assert fn.count("cls:'warn'") == 3, (
+        "verdictOf no longer maps exactly three states onto warn (%d) - the "
+        "seven-into-five arithmetic changed" % fn.count("cls:'warn'"))
+    for cls in ("safe", "breach", "blocked", "redacted"):
+        assert "cls:'%s'" % cls in fn, cls
+
+
+def test_the_donut_slice_and_the_table_pill_agree_wherever_they_can() -> None:
+    """#150, GUARDED. G8 moved the disagreement from donut-vs-donut to
+    donut-vs-table; this is what stops it moving a third time.
+
+    Every verdict the table gives its OWN pill class must be painted by the
+    donut from the SAME token. Four are, exactly."""
+    tones, parts = _tone_map(), dict(_parts("ledgerVerdictDonut"))
+    for label, tone in parts.items():
+        if label in _CANNOT_AGREE or _VERDICT_PILL[label] == "warn":
+            continue
+        assert tones[tone] == _pill_token(_VERDICT_PILL[label]), (
+            "%s: the donut paints %s and the .pill.%s paints %s"
+            % (label, tones[tone], _VERDICT_PILL[label],
+               _pill_token(_VERDICT_PILL[label])))
+
+
+def test_pending_agrees_with_its_pill_by_FAMILY_not_by_value() -> None:
+    """⚠ THE TRAP IN THE OBVIOUS VERSION OF THIS GUARD. Pending's slice paints
+    --warn-series and its pill paints --warn-bg: two different ambers in light.
+    Demanding one VALUE would fail on correct code and, worse, would invite
+    somebody to satisfy it by collapsing the split - which is #131/G6's measured
+    conclusion, that --warn-bg fails 3:1 as a chart mark and --warn-series fails
+    4.5:1 as a text plate. Neither can do the other's job.
+
+    So agreement here is the tone FAMILY, and the split is asserted to still be
+    a split, so nobody 'fixes' it into one token."""
+    tones, parts = _tone_map(), dict(_parts("ledgerVerdictDonut"))
+    slice_tok, pill_tok = tones[parts["Pending"]], _pill_token("warn")
+    assert slice_tok.startswith("--warn") and pill_tok.startswith("--warn"), (
+        "Pending: slice %s, pill %s" % (slice_tok, pill_tok))
+    assert slice_tok != pill_tok, (
+        "the series/plate split collapsed to %s - re-read #131 before keeping "
+        "this" % slice_tok)
+
+
+def test_exactly_two_slices_are_allowed_to_disagree() -> None:
+    """Seven slices, five pill classes, three of them collapsed onto warn: two
+    slices MUST disagree, and which two is a choice. Pinned so that choice stays
+    deliberate - moving the disagreement onto a commoner state (which is what G8
+    did in the other direction) fails here."""
+    parts = dict(_parts("ledgerVerdictDonut"))
+    tones = _tone_map()
+    disagree = {label for label, tone in parts.items()
+                if not tones[tone].startswith("--warn")
+                and _VERDICT_PILL[label] == "warn"}
+    assert disagree == _CANNOT_AGREE, (
+        "the slices that disagree with their pill are %s; the recorded, "
+        "deliberate set is %s" % (sorted(disagree), sorted(_CANNOT_AGREE)))
+    assert len(parts) - len(set(_VERDICT_PILL.values())) == 2, (
+        "the seven-into-five arithmetic changed; re-derive the exception list")

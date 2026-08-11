@@ -1047,6 +1047,10 @@ textarea.cin{font-family:var(--mono);font-size:11px;resize:vertical;min-height:7
    on, never on the fill: measured, no single ink clears 4.5:1 across all eight
    tones in both themes. Text wears a text token, which is dataviz's rule. */
 .chart-host .cx-arclabel{fill:var(--ink);font-family:var(--mono);font-size:9px;font-weight:600;}
+/* G8.1 · the plate covers 17px of a 29px ring band, and wireTips binds
+   mouseleave per arc — so without this the tooltip blinks out over exactly the
+   big slices worth inspecting. The label is a legend, not a target. */
+.chart-host .cx-arcplate{pointer-events:none;}
 .chart-host .cx-gauge-track{fill:var(--bg);stroke:var(--bc);stroke-width:2;}
 /* §12 · the endpoint reports "this is the latest datum"; the crosshair answers
    "what was the value here?". Both are motion that says something. */
@@ -3334,8 +3338,11 @@ async function loadLoginHistory(scope){
      on paper. A token that does not reach a mark is not a fix.
      Measured across every tone a shipped call names: warn was the only one
      failing. The rest clear 3:1 in both themes, which is why only this line
-     moves. `violet` is new — see the note on --c-6 for what does and does not
-     use it yet. */
+     moves.
+     ⚠ G8 MOVED ONE OF THOSE MARKS, so the sentence above is history: the
+     verdict donut's Evaluator unknown draws with `violet` now, not `warn`, and
+     `violet` stopped being a reserved slot when it took that job. The grading
+     donut's Pending and the timeline's Medium band still read `warn`. */
   var TONE={ok:'var(--safe-bg)',bad:'var(--breach-bg)',warn:'var(--warn-series)',fox:'var(--fox-series)',brand:'var(--fox-series)',blue:'var(--c-2)',pink:'var(--c-4)',violet:'var(--c-6)',mute:'var(--mute-series)'};
   var SER=['var(--c-1)','var(--c-2)','var(--c-3)','var(--c-4)','var(--c-5)','var(--c-6)'];
   function toneColor(t,i){ if(t){ if(TONE[t])return TONE[t]; if(/^(#|rgb|hsl|var\()/.test(t))return t; } return SER[(i||0)%SER.length]; }
@@ -3787,6 +3794,21 @@ async function loadLoginHistory(scope){
      still reads as a plate, and it is what lets a 13% slice — a healthy
      tenant's Pending — carry its name instead of missing the cut by 4.5px. */
   var ARC_FS=9, ARC_ADV=0.60, ARC_PAD=6;   // px; ARC_ADV is JetBrains Mono's advance at 1em
+  function _pt(cx,cy,rad,a){ return (cx+rad*Math.cos(a)).toFixed(2)+','+(cy+rad*Math.sin(a)).toFixed(2); }
+  /* A bare arc for a textPath to ride. Direction is the caller's: from > to
+     lays it the other way round, which is how a label past the half-turn keeps
+     its glyphs upright. */
+  function arcLine(cx,cy,rad,from,to){
+    var big=Math.abs(to-from)>Math.PI?1:0, sweep=to>from?1:0;
+    return 'M'+_pt(cx,cy,rad,from)+'A'+rad+','+rad+' 0 '+big+' '+sweep+' '+_pt(cx,cy,rad,to);
+  }
+  /* An annular sector — the plate. Same construction as a slice, so it is
+     inside the ring by the same arithmetic the ring is drawn with. */
+  function ringBand(cx,cy,r0,r1,from,to){
+    var big=Math.abs(to-from)>Math.PI?1:0;
+    return 'M'+_pt(cx,cy,r1,from)+'A'+r1+','+r1+' 0 '+big+' 1 '+_pt(cx,cy,r1,to)
+         + 'L'+_pt(cx,cy,r0,to)+'A'+r0+','+r0+' 0 '+big+' 0 '+_pt(cx,cy,r0,from)+'Z';
+  }
   function drawDonut(host,o){
     var d=(o.data||[]).filter(function(x){return (+x.value||0)>0;}); if(!d.length){host.innerHTML=emptyMarkup(o);return;}
     var total=d.reduce(function(a,x){return a+(+x.value||0);},0);
@@ -3800,24 +3822,40 @@ async function loadLoginHistory(scope){
       var ix2=cx+rin*Math.cos(a2),iy2=cy+rin*Math.sin(a2),ix1=cx+rin*Math.cos(ang),iy1=cy+rin*Math.sin(ang);
       var p='M'+x1.toFixed(2)+','+y1.toFixed(2)+'A'+r+','+r+' 0 '+large+' 1 '+x2.toFixed(2)+','+y2.toFixed(2)+'L'+ix2.toFixed(2)+','+iy2.toFixed(2)+'A'+rin+','+rin+' 0 '+large+' 0 '+ix1.toFixed(2)+','+iy1.toFixed(2)+'Z';
       arcs+=S('path',{d:p,class:'cx-arc','data-cxi':i,style:'fill:'+toneColor(x.tone,i)+(touches?segSep(frac*Math.PI*2*r,panel):'')});
-      // The fit test is the arc's own geometry: its length at the band's mid
-      // radius against the label's width, and the band's depth against the
-      // plate's height. Nothing here reads the slice COUNT — a two-slice donut
-      // and the two big slices of a seven-slice one get the same answer.
+      /* G8.1 · THE PLATE IS CURVED, BECAUSE THE FIT TEST MEASURES A CURVE.
+         `frac*2*PI*rm` is the ARC length at the mid radius. A straight
+         tangential rect of that width has corners further out than the arc it
+         was sized against, and the overshoot grows with the width: "Evaluator
+         unknown" at 28.7% put its corners at radius 79.8 against a rim of 69
+         and a viewBox half-width of 75 — through the ring AND clipped by the
+         svg. Ordinary data, not an edge, and the guard could not see it because
+         it restated this same inequality instead of measuring a corner.
+         Testing the CHORD would only have shrunk the label. Curving the plate
+         makes the ORIGINAL test correct instead: an annular sector spans
+         exactly the arc it was measured against, its radial extent is exactly
+         its own height so it sits inside the band at any width, and since its
+         angular span is never wider than its slice's, two plates cannot
+         intersect. The text rides a textPath on the same mid-radius circle, so
+         there is no chord anywhere in the construction. */
       var rm=(r+rin)/2, tw=String(x.label==null?'':x.label).length*ARC_FS*ARC_ADV;
       if(frac*Math.PI*2*rm>=tw+ARC_PAD && (r-rin)>=ARC_FS+8){
-        var am=ang+frac*Math.PI, lx=cx+rm*Math.cos(am), ly=cy+rm*Math.sin(am);
-        var deg=am*180/Math.PI+90; if(deg>90&&deg<270)deg-=180;
-        labels+=S('g',{transform:'rotate('+deg.toFixed(1)+' '+lx.toFixed(1)+' '+ly.toFixed(1)+')'},
-          S('rect',{x:(lx-tw/2-ARC_PAD/2).toFixed(1),y:(ly-ARC_FS/2-4).toFixed(1),
-                    width:(tw+ARC_PAD).toFixed(1),height:(ARC_FS+8).toFixed(1),rx:4,
-                    style:'fill:'+panel})
-          // textLength PINS the rendered width to the number the fit test used,
-          // so the plate can never be outgrown by the text inside it — --mono
-          // falls back through three faces and only the first is measured here.
-          +S('text',{x:lx.toFixed(1),y:(ly+ARC_FS*0.35).toFixed(1),
-                     'text-anchor':'middle',textLength:tw.toFixed(1),
-                     lengthAdjust:'spacing',class:'cx-arclabel'},esc(String(x.label))));
+        var am=ang+frac*Math.PI, half=(tw+ARC_PAD)/(2*rm), hh=(ARC_FS+8)/2;
+        var a0=am-half, a1=am+half;
+        // Past the half-turn a left-to-right path hangs its glyphs upside down,
+        // so the path is laid the other way round and they stay upright.
+        var flip=Math.sin(am)>0, pid='fxarc-'+((host&&host.id)||'c')+'-'+i;
+        labels+=S('defs',{},S('path',{id:pid,fill:'none',
+                   d:arcLine(cx,cy,rm,flip?a1:a0,flip?a0:a1)}))
+          + S('g',{class:'cx-arcplate'},
+              S('path',{d:ringBand(cx,cy,rm-hh,rm+hh,a0,a1),style:'fill:'+panel})
+              // textLength pins the rendered width to the number the fit test
+              // used — --mono falls back through three faces and only the first
+              // is measured here.
+              + S('text',{'text-anchor':'middle','dominant-baseline':'central',
+                          class:'cx-arclabel'},
+                  S('textPath',{href:'#'+pid,startOffset:'50%',
+                                textLength:tw.toFixed(1),lengthAdjust:'spacing'},
+                    esc(String(x.label)))));
       }
       tips.push('<b>'+esc(String(x.label))+'</b> · '+esc(String(+x.value||0))+' ('+Math.round(frac*100)+'%)'); ang=a2; });
     host.__tips=tips;
@@ -3848,6 +3886,11 @@ async function loadLoginHistory(scope){
   // ResizeObserver re-renders on real width changes AND when a hidden page (0-width) becomes visible
   var RO=window.ResizeObserver?new ResizeObserver(function(es){ es.forEach(function(en){ var h=en.target, w=Math.round(h.clientWidth); if(h.__cxo&&w>0&&h.__cxw!==w){ h.__cxw=w; draw(h,h.__cxo); } }); }):null;
   window.foxChart=function(target,o){ var host=resolve(target); if(!host)return; o=o||{}; host.classList.add('chart-host'); host.__cxo=o; host.__cxw=Math.round(host.clientWidth); draw(host,o); if(RO){ try{RO.observe(host);}catch(e){} } else if(registry.indexOf(host)<0)registry.push(host); };
+  /* Every host keeps its own options in __cxo — the same handle the resize path
+     redraws from. */
+  window.foxRedraw=function(){ Array.prototype.forEach.call(
+    document.querySelectorAll('.chart-host'), function(h){
+      if(h.isConnected&&h.__cxo){ try{ draw(h,h.__cxo); }catch(e){} } }); };
   var rT; if(!RO)window.addEventListener('resize',function(){ clearTimeout(rT); rT=setTimeout(function(){ registry.forEach(function(h){ if(h.isConnected&&h.__cxo)draw(h,h.__cxo); }); },170); });
 
   /* ───────── sensitive mask / reveal / copy ───────── */
@@ -6000,6 +6043,15 @@ async function loadLoginHistory(scope){
     if(!theme)return;
     document.documentElement.setAttribute('data-theme',theme);
     try{localStorage.setItem('foxy_dash_theme',theme);}catch(e){}
+    /* G8.1 · REDRAW, because two chart values are resolved at DRAW time and are
+       not var(): panelBg() feeds both segSep's separator stroke and the donut
+       label's plate. A var() fill re-themes itself; an rgb() string baked into
+       the markup does not, so toggling on the Ledger page left near-black text
+       on a near-black plate (~1.05:1) and every segment separator in the old
+       theme's panel colour until you navigated away and back.
+       Fixing the plate alone would have left the separators stale, so the fix
+       is the redraw the resize path already uses. */
+    try{ if(window.foxRedraw)window.foxRedraw(); }catch(e){}
   }
   window.applyDash=applyDash;
   window.toggleDashTheme=function(){ var cur=document.documentElement.getAttribute('data-theme')||'dark'; var next=cur==='dark'?'light':'dark'; applyDash(next); try{showToast('Theme: '+next);}catch(e){} };
@@ -6089,11 +6141,32 @@ async function loadLoginHistory(scope){
        one word, two colours, one product. Resolved toward WARN, which is what
        the grading donut already used and what verdictOf() already gives a
        pending ledger row — so the Pending pill in the table below and the
-       Pending slice in this key finally agree, on the same page. That freed
-       'fox' and moved "Evaluator unknown" onto 'violet', the one TONE slot with
-       no shipped usage: deliberately not a severity hue, which is right for a
-       verdict that was never reached. Measured, it is also the best of the three
-       options — worst adjacent dE 12.0, against 10.5 for either alternative.
+       Pending slice in this key agree, on the same page. That freed 'fox' and
+       moved "Evaluator unknown" onto 'violet'. Measured, it is also the best of
+       the three options — worst adjacent dE 12.0, against 10.5 for either
+       alternative.
+
+       ⚠ G8.1 · IT CANNOT CLOSE COMPLETELY, AND THE ARITHMETIC IS WHY. This
+       donut has SEVEN slices; the table it keys has FIVE pill classes, because
+       verdictOf() collapses unknown, failed and pending all onto cls:'warn'.
+       Seven into five means EXACTLY TWO SLICES MUST DISAGREE with their pill,
+       whatever tone anyone picks. G8 did not create that; it chose WHICH two.
+       The two are the rarest states — Failed (mute) and Evaluator unknown
+       (violet) — and Pending, far the most common of the three, agrees. Before
+       G8 the disagreeing pair included Pending, so this is the better of the
+       two reachable arrangements, not a closure.
+       Closing it properly is a PRODUCT decision, not a colour one, and is left
+       for the owner: either this donut takes the table's five categories (which
+       loses the evaluator_unknown count, the only place it is surfaced), or the
+       table gains pill classes for pending and failed (which changes how the
+       ledger reads). Both are recorded in the phase notes.
+
+       ⚠ AGREEMENT IS BY TONE NAME, NEVER BY RESOLVED VALUE, and that is not a
+       weaker test — it is the only correct one. Pending's slice paints
+       --warn-series and its pill paints --warn-bg, two different ambers, and
+       that split is #131/G6's measured conclusion: --warn-bg fails 3:1 as a
+       chart mark and --warn-series fails 4.5:1 as a text plate. Demanding one
+       value would reopen a settled decision in order to satisfy a guard.
 
        ORDER · a cyclic Hamiltonian search over all 720 rotations, keeping only
        those that hit that 12.0 optimum, then ranked by how little they disturb
