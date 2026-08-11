@@ -65,10 +65,13 @@ class Verdict(BaseModel):
     policy_breach: bool = False
     reason: str = ""
     risk_score: int = Field(default=0, ge=0, le=100)
-    # clean|breach|unknown are AI-judge outcomes; blocked|redacted are terminal
-    # host-side enforcement outcomes decided locally (no model response to grade).
-    decision: str = Field(default="unknown",
-                          pattern=r"^(clean|breach|unknown|blocked|redacted)$")
+    # clean|breach|unknown are AI-judge outcomes; blocked|redacted|response_blocked
+    # are terminal host-side enforcement outcomes decided locally (nothing to grade).
+    # response_blocked is a response the SDK withheld from the calling application
+    # — see policy_engine.ENFORCEMENT_EVENT_TYPES for why it is not `blocked`.
+    decision: str = Field(
+        default="unknown",
+        pattern=r"^(clean|breach|unknown|blocked|redacted|response_blocked)$")
     rules: list[str] = Field(default_factory=list)
 
     # P6f provenance: WHICH model produced this grade. A model id is not a secret;
@@ -242,4 +245,8 @@ class StatsResponse(BaseModel):
     # Host-side enforcement (prevented egress), counted separately from breaches.
     blocked: int = 0
     redacted: int = 0
+    # A model response the SDK withheld from the calling application. Its own
+    # count, not folded into `blocked`: that one means prompts stopped before
+    # they reached a provider, and here the provider was called.
+    response_blocked: int = 0
 

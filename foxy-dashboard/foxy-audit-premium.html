@@ -4016,6 +4016,12 @@ async function loadLoginHistory(scope){
     // prevented egress, distinct from graded AI-judge verdicts, not as "safe".
     if(it.event_type==='blocked')  return {v:'blocked', cls:'blocked'};
     if(it.event_type==='redacted') return {v:'redacted',cls:'redacted'};
+    // A response the SDK withheld from the calling application (SDK >= 1.4).
+    // Same pill as a blocked prompt on purpose — a seventh verdict colour is a
+    // design decision, not a correctness fix — but it must NOT fall through to
+    // the judge branches below, where grading_status==='graded' would render a
+    // withheld response as "safe".
+    if(it.event_type==='response_blocked') return {v:'blocked', cls:'blocked'};
     const verdict=it.gemini_verdict||{};
     if(String(verdict.reason||'').startsWith('evaluator_unavailable') || String(verdict.reason||'').startsWith('evaluator_unknown') || verdict.decision==='unknown') return {v:'unknown',cls:'warn'};
     if(verdict.policy_breach) return {v:'breach',cls:'breach'};

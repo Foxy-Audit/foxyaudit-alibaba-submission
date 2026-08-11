@@ -11,6 +11,16 @@ Three properties are load-bearing and each one is a test here:
 Streaming is the one place the promise is smaller than it looks, so the promise
 and its two bounds are asserted rather than described.
 
+⚠ THE FIXTURE SHAPE IS PART OF THE TEST. The first version of this file fed
+STRING chunks to every streaming guard. All of them were green while a
+``<script>`` split across three OpenAI-shaped chunks was never flagged and was
+delivered in full under ``block`` — the scanner was carrying serialised JSON, so
+two halves of a match ended up ~30 characters apart inside an envelope. The
+provider-shaped case is now the primary one everywhere and the string case is
+kept as the degenerate one. See ``conftest``-free fixtures below: they are built
+from the wire shapes the SDKs actually return, not from a dict that happens to
+work.
+
 Run with:  cd sdk && python -m pytest -q
 """
 
@@ -46,6 +56,63 @@ def _capture(monkeypatch):
 def _blocking(**kw):
     return FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
                       response_scan="block", **kw)
+
+
+# ── provider-shaped fixtures ─────────────────────────────────────────────────
+# Attribute access with a pydantic-style model_dump, which is what the OpenAI and
+# Anthropic SDKs hand back. Deliberately NOT a plain dict: a dict would have
+# passed the broken implementation too, because the bug was in how the object was
+# serialised on the way into the scanner.
+class _Obj:
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+    def model_dump(self):
+        def plain(v):
+            if isinstance(v, _Obj):
+                return v.model_dump()
+            if isinstance(v, list):
+                return [plain(i) for i in v]
+            return v
+        return {k: plain(v) for k, v in self.__dict__.items()}
+
+
+def openai_chunk(text):
+    """ChatCompletionChunk: choices[0].delta.content."""
+    return _Obj(id="chatcmpl-x", object="chat.completion.chunk", model="gpt-4o",
+                choices=[_Obj(index=0, finish_reason=None,
+                              delta=_Obj(role="assistant", content=text))])
+
+
+def openai_completion(text):
+    """ChatCompletion: choices[0].message.content."""
+    return _Obj(id="chatcmpl-x", object="chat.completion", model="gpt-4o",
+                choices=[_Obj(index=0, finish_reason="stop",
+                              message=_Obj(role="assistant", content=text))])
+
+
+def anthropic_delta(text):
+    """content_block_delta: delta.text."""
+    return _Obj(type="content_block_delta", index=0,
+                delta=_Obj(type="text_delta", text=text))
+
+
+def anthropic_message(text):
+    """Message: content is a list of blocks."""
+    return _Obj(id="msg_x", type="message", role="assistant", model="claude-3",
+                content=[_Obj(type="text", text=text)])
+
+
+def gemini_response(text):
+    """GenerateContentResponse: candidates[0].content.parts[0].text."""
+    return _Obj(candidates=[_Obj(content=_Obj(parts=[_Obj(text=text)]),
+                                 finish_reason="STOP")])
+
+
+SHAPES = {"openai_stream": openai_chunk, "openai_full": openai_completion,
+          "anthropic_stream": anthropic_delta, "anthropic_full": anthropic_message,
+          "gemini": gemini_response, "plain_string": lambda t: t,
+          "raw_bytes": lambda t: t.encode("utf-8")}
 
 
 # ── config: the control exists, defaults safe, and a typo cannot arm it ───────
@@ -166,16 +233,17 @@ def test_flagged_response_never_reaches_caller_sync_generator():
     foxy = _blocking()
     received = []
 
+    sent = [openai_chunk("Sure, here it is: "), openai_chunk(XSS_RESPONSE),
+            openai_chunk(" — enjoy!")]
+
     @foxy.audit(policy="default")
     def ask(prompt: str):
-        yield "Sure, here it is: "
-        yield XSS_RESPONSE
-        yield " — enjoy!"
+        yield from sent
 
     with pytest.raises(FoxyResponseBlocked):
         for chunk in ask(CLEAN_PROMPT):
             received.append(chunk)
-    assert received == ["Sure, here it is: "], \
+    assert received == sent[:1], \
         "the flagged chunk and everything after it must never be yielded"
 
 
@@ -183,11 +251,13 @@ def test_flagged_response_never_reaches_caller_async_generator():
     foxy = _blocking()
     received = []
 
+    sent = [anthropic_delta("Sure, here it is: "), anthropic_delta(XSS_RESPONSE),
+            anthropic_delta(" — enjoy!")]
+
     @foxy.audit(policy="default")
     async def ask(prompt: str):
-        yield "Sure, here it is: "
-        yield XSS_RESPONSE
-        yield " — enjoy!"
+        for chunk in sent:
+            yield chunk
 
     async def drive():
         async for chunk in ask(CLEAN_PROMPT):
@@ -195,7 +265,7 @@ def test_flagged_response_never_reaches_caller_async_generator():
 
     with pytest.raises(FoxyResponseBlocked):
         asyncio.run(drive())
-    assert received == ["Sure, here it is: "]
+    assert received == sent[:1]
 
 
 def test_response_blocked_is_not_a_subclass_of_policy_blocked():
@@ -355,7 +425,7 @@ def test_blocked_response_hashes_a_real_response_not_the_empty_string(monkeypatc
 
     payload = captured[0]
     key = foxy.cfg.commitment_key or foxy.cfg.api_key
-    assert payload["event_type"] == "blocked"
+    assert payload["event_type"] == "response_blocked"
     assert payload["response_hash"] == hashing.commitment_hex(XSS_RESPONSE, key)
     assert payload["response_hash"] != hashing.commitment_hex("", key)
     assert payload["event_metadata"]["decision"] == "blocked_response"
@@ -456,11 +526,20 @@ def test_scan_off_records_nothing_and_blocks_nothing(monkeypatch):
 
 
 # ── streaming: the promise, and both of its bounds ───────────────────────────
-def test_the_carry_window_catches_a_match_split_across_a_boundary():
+@pytest.mark.parametrize("shape", ["openai_stream", "anthropic_stream", "plain_string"])
+def test_the_carry_window_catches_a_match_split_across_a_boundary(shape):
     """An SSN arriving as "123-45" then "-6789" is invisible to a scanner that
-    only ever sees one chunk. The second assertion is what makes the third
-    meaningful: alone, that chunk trips nothing."""
-    head, tail = "Patient SSN is 123-45", "-6789, thanks."
+    only ever sees one chunk.
+
+    Run against PROVIDER shapes, not just strings. The string-only version of
+    this test was green while the object case never flagged at all: the carry
+    held the serialised chunk, so the two halves sat ~30 characters apart inside
+    `{"choices":[{"delta":{"content":...}}],"id":...}` and rejoined nothing.
+
+    The two "not triggered" assertions are what make the last one mean
+    something: alone, neither chunk trips a rule."""
+    make = SHAPES[shape]
+    head, tail = make("Patient SSN is 123-45"), make("-6789, thanks.")
     assert not response_policy.evaluate_response(head, "hipaa").triggered
     assert not response_policy.evaluate_response(tail, "hipaa").triggered
 
@@ -469,19 +548,40 @@ def test_the_carry_window_catches_a_match_split_across_a_boundary():
     assert scanner.feed(tail) is not None
 
 
-def test_a_boundary_split_stream_is_blocked_before_the_second_chunk_is_yielded():
+@pytest.mark.parametrize("shape", ["openai_stream", "anthropic_stream", "plain_string"])
+def test_a_boundary_split_stream_is_blocked_before_the_second_chunk_is_yielded(shape):
+    make = SHAPES[shape]
+    sent = [make("Patient SSN is 123-45"), make("-6789, thanks.")]
     foxy = _blocking()
     received = []
 
     @foxy.audit(policy="hipaa")
     def ask(prompt: str):
-        yield "Patient SSN is 123-45"
-        yield "-6789, thanks."
+        yield from sent
 
     with pytest.raises(FoxyResponseBlocked):
         for chunk in ask(CLEAN_PROMPT):
             received.append(chunk)
-    assert received == ["Patient SSN is 123-45"]
+    assert received == sent[:1]
+
+
+@pytest.mark.parametrize("shape", ["openai_stream", "anthropic_stream", "plain_string"])
+def test_a_match_split_across_THREE_chunks_is_blocked(shape):
+    """The measured regression, verbatim: `<script>` arriving in three pieces.
+    Before content extraction this was delivered IN FULL with no exception."""
+    make = SHAPES[shape]
+    sent = [make("Here: <scr"), make("ipt>alert(1)</scr"), make("ipt> done")]
+    foxy = _blocking()
+    received = []
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        yield from sent
+
+    with pytest.raises(FoxyResponseBlocked):
+        for chunk in ask(CLEAN_PROMPT):
+            received.append(chunk)
+    assert received == sent[:1], "only the chunks before the match may be delivered"
 
 
 def test_a_match_wider_than_the_carry_window_is_missed_but_still_recorded(monkeypatch):
@@ -513,21 +613,28 @@ def test_a_match_wider_than_the_carry_window_is_missed_but_still_recorded(monkey
     assert "response_markup.event_handler" in md["policy_rules"]
 
 
-def test_an_observed_stream_is_scanned_whole_after_it_ends(monkeypatch):
+@pytest.mark.parametrize("shape", ["openai_stream", "anthropic_stream", "plain_string"])
+def test_an_observed_stream_is_scanned_whole_after_it_ends(monkeypatch, shape):
+    """The recording half had the same root cause: the rescan joined the chunk
+    LIST with a newline, so a split match could not rejoin there either."""
+    make = SHAPES[shape]
     captured = _capture(monkeypatch)
     foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False)   # observe
+    sent = [make("Patient SSN is 123-45"), make("-6789, thanks.")]
 
-    @foxy.audit(policy="default")
+    @foxy.audit(policy="hipaa")
     async def ask(prompt: str):
-        yield "Here: "
-        yield XSS_RESPONSE
+        for chunk in sent:
+            yield chunk
 
     async def drive():
         return [c async for c in ask(CLEAN_PROMPT)]
 
-    assert asyncio.run(drive()) == ["Here: ", XSS_RESPONSE]
+    assert asyncio.run(drive()) == sent          # observe never prevents
     assert captured[0]["event_type"] == "stream"
-    assert "response_markup.script_tag" in captured[0]["event_metadata"]["policy_rules"]
+    md = captured[0]["event_metadata"]
+    assert md["decision"] == "response_flagged"
+    assert "response_phi.ssn_pattern" in md["policy_rules"]
 
 
 def test_a_blocked_stream_commits_only_what_was_delivered(monkeypatch):
@@ -536,17 +643,86 @@ def test_a_blocked_stream_commits_only_what_was_delivered(monkeypatch):
     from foxy_audit import hashing
     captured = _capture(monkeypatch)
     foxy = _blocking()
+    sent = [openai_chunk("prefix"), openai_chunk(XSS_RESPONSE)]
 
     @foxy.audit(policy="default")
     def ask(prompt: str):
-        yield "prefix"
-        yield XSS_RESPONSE
+        yield from sent
 
     with pytest.raises(FoxyResponseBlocked):
         list(ask(CLEAN_PROMPT))
 
     key = foxy.cfg.commitment_key or foxy.cfg.api_key
-    assert captured[0]["response_hash"] == hashing.commitment_hex(["prefix"], key)
+    assert captured[0]["response_hash"] == hashing.commitment_hex(sent[:1], key)
+
+
+# ── prevented, or merely truncated? the Passport depends on the answer ───────
+def test_a_cut_stream_is_NOT_recorded_as_prevented_egress(monkeypatch):
+    """The serious one. Chunks were already yielded into the caller's
+    application, so this is not prevention and must never be counted as it —
+    the Compliance Passport tallies `response_blocked` under prevented, and
+    attesting a prevention that did not happen is the one thing the product
+    whose entire claim is honest evidence must not do."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking()
+    received = []
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        yield openai_chunk("this chunk IS delivered")
+        yield openai_chunk(XSS_RESPONSE)
+
+    with pytest.raises(FoxyResponseBlocked) as excinfo:
+        for chunk in ask(CLEAN_PROMPT):
+            received.append(chunk)
+
+    assert len(received) == 1, "the premise: something WAS delivered"
+    assert captured[0]["event_type"] == "stream", \
+        "a partially delivered stream must not carry the terminal type"
+    assert captured[0]["event_type"] != "response_blocked"
+    assert captured[0]["event_metadata"]["decision"] == "response_truncated"
+    # And the developer is told, because their application already has chunks.
+    assert "already reached your code" in str(excinfo.value)
+
+
+def test_a_stream_flagged_on_its_FIRST_chunk_delivered_nothing(monkeypatch):
+    """The other side of the same line: nothing was yielded, so this genuinely
+    IS prevention and takes the terminal type."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking()
+    received = []
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        yield openai_chunk(XSS_RESPONSE)
+        yield openai_chunk("never reached")
+
+    with pytest.raises(FoxyResponseBlocked) as excinfo:
+        for chunk in ask(CLEAN_PROMPT):
+            received.append(chunk)
+
+    assert received == []
+    assert captured[0]["event_type"] == "response_blocked"
+    assert captured[0]["event_metadata"]["decision"] == "blocked_response"
+    assert "already reached your code" not in str(excinfo.value)
+
+
+def test_a_blocked_response_is_not_typed_as_a_blocked_PROMPT(monkeypatch):
+    """`blocked` asserts the prompt never reached a provider. On a response
+    block it did — the model ran and tokens were spent. Reusing that type made
+    the Passport line "Prompts Blocked (prevented egress)" count something that
+    was neither a prompt nor prevented at the prompt stage."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking()
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    with pytest.raises(FoxyResponseBlocked):
+        ask(CLEAN_PROMPT)
+    assert captured[0]["event_type"] == "response_blocked"
+    assert captured[0]["event_type"] != "blocked"
 
 
 # ── the scan must never become the caller's problem ──────────────────────────
@@ -592,6 +768,312 @@ def test_the_hosts_own_exception_still_wins(monkeypatch):
     with pytest.raises(ValueError, match="provider is down"):
         ask(CLEAN_PROMPT)
     assert captured[0]["event_type"] == "exception"
+
+
+# ── what the scanner is handed: content, or an envelope, or nothing ─────────
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_every_supported_shape_yields_CONTENT_at_full_coverage(shape):
+    """The question this round failed twice: does the fixture have the shape
+    production has? Each entry here is a real wire shape, and each must produce
+    the content itself — not the JSON around it."""
+    text, coverage = response_policy.scan_source(SHAPES[shape]("hello <script>x"))
+    assert text == "hello <script>x", (shape, text)
+    assert coverage == "full", (shape, coverage)
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_every_supported_shape_flags_a_finding_end_to_end(shape):
+    assert response_policy.evaluate_response(SHAPES[shape](XSS_RESPONSE),
+                                             "default").triggered, shape
+
+
+def test_a_chunk_list_joins_with_NO_separator():
+    """A separator between "123-45" and "-6789" is exactly what stopped the
+    whole-stream rescan from rejoining a split match. In the response position a
+    list is the chunks of ONE stream, so they concatenate."""
+    text, coverage = response_policy.scan_source(
+        [openai_chunk("Patient SSN is 123-45"), openai_chunk("-6789.")])
+    assert text == "Patient SSN is 123-45-6789."
+    assert coverage == "full"
+
+
+def test_bytes_are_decoded_rather_than_silently_skipped():
+    """Raw SSE, iter_bytes(), resp.content. These used to scan as "" and report
+    a clean scan — zero coverage with no signal, which is the failure mode this
+    whole phase is about."""
+    d = response_policy.evaluate_response(b"<script>alert(1)</script>", "default")
+    assert d.triggered
+    assert "response_markup.script_tag" in d.rules
+    # An undecodable byte does not derail the ASCII patterns around it.
+    assert response_policy.evaluate_response(b"\xff\xfe<script>x", "default").triggered
+
+
+def test_an_unknown_serialisable_shape_scans_the_envelope_and_SAYS_SO():
+    """A custom pydantic model is still worth scanning — but a match spanning
+    two of its fields is possible and a stream cannot rejoin across the
+    envelope, so the row records degraded coverage rather than claiming a clean
+    read."""
+    d = response_policy.evaluate_response(_Obj(answer=XSS_RESPONSE, tag="x"), "default")
+    assert d.triggered
+    assert "response_markup.script_tag" in d.rules
+    assert "response_scan.degraded" in d.rules
+
+
+def test_degraded_coverage_alone_never_blocks(monkeypatch):
+    """Coverage we do not have is missing evidence, not a finding. An
+    unfamiliar provider object must not start raising FoxyResponseBlocked on
+    responses that contain nothing wrong."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking()
+    harmless = _Obj(answer="Paris is the capital of France.")
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        return harmless
+
+    assert ask(CLEAN_PROMPT) is harmless          # not blocked
+    md = captured[0]["event_metadata"]
+    assert md["decision"] == "response_scan_degraded"
+    assert md["policy_rules"] == ["response_scan.degraded"]
+
+
+def test_an_unreadable_response_is_recorded_as_unread_not_as_clean(monkeypatch):
+    """Silence is the failure mode. A shape the scanner cannot read must show up
+    in the evidence as unread."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking()
+
+    class _Opaque:
+        def __repr__(self):
+            return "<_Opaque object at 0x1234567890>"
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        return _Opaque()
+
+    ask(CLEAN_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert md["decision"] == "response_scan_degraded"
+    assert "response_scan.unreadable" in md["policy_rules"]
+
+
+def test_a_serialiser_that_RAISES_is_unreadable_not_a_repr():
+    """`policy._as_text` catches a failing model_dump() and falls back to
+    str(value) — so the repr hole was still open through that door. The first
+    assertion is the control: that repr, as a string, does trip the scan."""
+    repr_text = "<_Exploding object at 0x1234567890>"
+    assert response_policy.evaluate_response(repr_text, "hipaa").triggered
+
+    class _Exploding:
+        def model_dump(self):
+            raise RuntimeError("this provider object cannot be serialised")
+
+        def __repr__(self):
+            return repr_text
+
+    d = response_policy.evaluate_response(_Exploding(), "hipaa")
+    assert not d.triggered
+    assert "response_scan.unreadable" in d.rules
+
+
+def test_a_tool_call_only_chunk_is_understood_not_unreadable():
+    """An OpenAI delta carrying only a tool call has no text and is FULLY
+    understood. Calling that unreadable would raise a coverage alarm on every
+    tool-calling stream, which is a different kind of dishonest."""
+    text, coverage = response_policy.scan_source(
+        _Obj(choices=[_Obj(delta=_Obj(role="assistant", content=None,
+                                      tool_calls=[_Obj(id="call_1")]))]))
+    assert text == ""
+    assert coverage == "full"
+
+
+def test_the_scanner_never_reads_a_response_through_policy_as_text():
+    """policy._as_text is the prompt side's coercion and is wrong twice over
+    here — it wraps content in an envelope and it reprs. This asserts the two
+    disagree on a provider object, so a future edit that reaches for the
+    familiar helper is caught."""
+    chunk = openai_chunk("hi")
+    assert "choices" in policy._as_text(chunk)
+    assert response_policy.scan_source(chunk)[0] == "hi"
+
+
+# ── the labels must not contradict each other ───────────────────────────────
+@pytest.mark.parametrize("mode", ["block", "redact"])
+def test_a_clean_prompt_does_not_stamp_a_flagged_response_as_allowed(monkeypatch, mode):
+    """`decision: "allowed"` with `blocked_reason: "unsafe_markup"` is a row
+    that contradicts itself, and it meant the documented `response_flagged`
+    never appeared for anyone using prompt enforcement. "allowed" is a statement
+    about the PROMPT and does not outrank a finding on the response."""
+    captured = _capture(monkeypatch)
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False, mode=mode)
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    ask(CLEAN_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert md["decision"] == "response_flagged"
+    assert md["blocked_reason"] == "unsafe_markup"
+
+
+def test_real_prompt_enforcement_still_keeps_its_own_label(monkeypatch):
+    """The precedence fix must not swing the other way: a prompt that WAS
+    redacted keeps saying so, and the response rules are appended."""
+    captured = _capture(monkeypatch)
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False, mode="redact")
+
+    @foxy.audit(policy="hipaa")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    ask(PHI_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert md["decision"] == "redacted"
+    assert any(r.startswith("phi.") for r in md["policy_rules"])
+    assert "response_markup.script_tag" in md["policy_rules"]
+
+
+def test_a_response_BLOCK_outranks_even_a_redacted_prompt(monkeypatch):
+    """A terminal outcome is what actually happened to the caller. The prompt's
+    contribution survives in policy_rules, where it belongs."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking(mode="redact")
+
+    @foxy.audit(policy="hipaa")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    with pytest.raises(FoxyResponseBlocked):
+        ask(PHI_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert captured[0]["event_type"] == "response_blocked"
+    assert md["decision"] == "blocked_response"
+    assert any(r.startswith("phi.") for r in md["policy_rules"])
+
+
+# ── audit_required must not swallow the block ───────────────────────────────
+def test_audit_required_does_not_hide_the_response_block(monkeypatch):
+    """With audit_required=True a delivery failure raises AuditRequiredError
+    from inside the emit, so `except FoxyResponseBlocked` never fired — in a
+    config the project's own e2e driver runs. The security decision outranks
+    the delivery guarantee: the caller must not get the response either way, so
+    the block is what is raised and the delivery failure rides on it."""
+    monkeypatch.setattr(dispatch, "submit",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no backend")))
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
+                      response_scan="block", audit_required=True)
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    with pytest.raises(FoxyResponseBlocked) as excinfo:
+        ask(CLEAN_PROMPT)
+    assert excinfo.value.audit_delivery_failed is True
+    assert "audit_required" in str(excinfo.value)
+
+
+def test_audit_required_reports_success_honestly(monkeypatch):
+    """The flag must mean something — it is False when delivery worked."""
+    _capture(monkeypatch)
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
+                      response_scan="block", audit_required=True)
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return XSS_RESPONSE
+
+    with pytest.raises(FoxyResponseBlocked) as excinfo:
+        ask(CLEAN_PROMPT)
+    assert excinfo.value.audit_delivery_failed is False
+    assert "audit_required" not in str(excinfo.value)
+
+
+# ── the delivery thread must survive a client being built mid-flush ─────────
+@pytest.fixture
+def dispatcher(tmp_path):
+    """A dispatcher that cannot outlive the test.
+
+    ``AsyncDispatcher.__init__`` calls ``atexit.register(self.flush)``, so an
+    instance built in a test still runs at interpreter exit — with the REAL
+    EventSpool restored, over whatever paths the test left in ``_paths``. The
+    first version of these tests wrote 129 stray sqlite files into the repository
+    root that way, one per fake path, long after the assertions had passed."""
+    import atexit
+    made = []
+
+    def build():
+        d = dispatch.AsyncDispatcher()
+        made.append(d)
+        return d
+
+    yield build
+    for d in made:
+        d._shutdown = True
+        d._paths.clear()
+        atexit.unregister(d.flush)
+
+
+def test_a_new_client_during_a_flush_does_not_kill_the_dispatcher(monkeypatch,
+                                                                  dispatcher, tmp_path):
+    """Found while running this phase's gates, not by looking for it: creating a
+    second FoxyClient calls dispatch.resume(), which mutates the same set the
+    dispatcher thread is iterating. The RuntimeError escaped an unwrapped
+    _flush_spool() and killed the thread for the life of the process — the spool
+    kept every later event and nothing was left alive to retry it.
+
+    Made deterministic by mutating the set from inside the loop's own body,
+    which is exactly what the racing thread did. Paths live under tmp_path so
+    that even a leaked flush cannot write into the repository."""
+    d = dispatcher()
+    first, second = str(tmp_path / "a"), str(tmp_path / "b")
+    d._paths = {first, second}
+    seen = []
+
+    class _Spool:
+        def __init__(self, path):
+            seen.append(path)
+            d._paths.add(str(tmp_path / f"added-{len(seen)}"))   # what resume() does
+
+        def due(self, _n):
+            return []
+
+    monkeypatch.setattr(dispatch, "EventSpool", _Spool)
+    d._flush_spool()                                # must not raise
+    assert sorted(seen) == sorted([first, second]), \
+        "the snapshot must be of the paths at entry"
+
+
+def test_the_dispatcher_loop_survives_a_flush_that_raises(dispatcher, monkeypatch):
+    """The wrap, separately from the race it was found through. A dispatcher that
+    dies stops delivering evidence, which is the product.
+
+    The first version of this test set _shutdown=True and called _run(), which
+    exits the while-condition before the body ever runs — it passed with the wrap
+    removed, and tested nothing. The loop has to actually ITERATE, and the
+    assertion has to be that it iterated AGAIN after a raise."""
+    # _run() also drives org_policy.tick(), which fetches over HTTP for every
+    # config any earlier test registered — up to cfg.timeout each, three times
+    # round the loop. Left real, this test turned a 10s suite into 49s and
+    # sometimes minutes, depending on which tests ran before it. The loop's
+    # survival is what is under test; the tick is not.
+    from foxy_audit import org_policy
+    monkeypatch.setattr(org_policy, "tick", lambda *a, **k: None)
+    d = dispatcher()
+    d.flush_interval = 0.01
+    calls = {"n": 0}
+
+    def boom():
+        calls["n"] += 1
+        if calls["n"] >= 3:
+            d._shutdown = True          # let the loop end so the test does too
+        raise RuntimeError("flush exploded")
+
+    d._flush_spool = boom
+    d._run()                            # must return, not propagate
+    assert calls["n"] >= 3, \
+        "the loop stopped at the first raise — a dead dispatcher delivers nothing"
 
 
 def test_the_prompt_guard_still_wins_over_the_response_scan():

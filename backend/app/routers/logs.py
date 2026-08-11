@@ -349,7 +349,7 @@ def list_logs(
     elif v == "unknown":
         conds.append(AuditLog.grading_status == "graded")
         conds.append(AuditLog.gemini_verdict["decision"].astext == "unknown")
-    elif v in ("blocked", "redacted"):
+    elif v in ("blocked", "redacted", "response_blocked"):
         # Host-side enforcement rows are identified by their terminal event_type,
         # so the ledger can surface prevented egress distinctly from graded verdicts.
         conds.append(AuditLog.event_type == v)
@@ -630,6 +630,13 @@ def stats(
         select(func.count()).select_from(AuditLog)
         .where(AuditLog.org_id == org.id, AuditLog.event_type == "redacted")
     ).scalar_one()
+    # Kept OUT of `blocked` on purpose. That count means prompts stopped before
+    # they reached a provider; a withheld response is a different enforcement and
+    # folding it in would inflate a number the Passport also reports.
+    response_blocked = db.execute(
+        select(func.count()).select_from(AuditLog)
+        .where(AuditLog.org_id == org.id, AuditLog.event_type == "response_blocked")
+    ).scalar_one()
 
     gc = {"pending": 0, "in_progress": 0, "graded": 0, "failed": 0}
     for status, cnt in db.execute(
@@ -680,5 +687,5 @@ def stats(
         avg_seconds_to_verdict=round(float(avg_verdict), 1) if avg_verdict is not None else None,
         grading=GradingCounts(**gc), activity_7d=activity,
         evaluator_unknown=evaluator_unknown,
-        blocked=blocked, redacted=redacted,
+        blocked=blocked, redacted=redacted, response_blocked=response_blocked,
     )

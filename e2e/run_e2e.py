@@ -233,6 +233,10 @@ def make_sentinels() -> dict:
         # under a blocking mode. Its sentinel is swept like every other.
         "rscan_prompt": f"FOXYEEE{tok}RSCANPROMPT",
         "rscan_response": f"FOXYEEE{tok}RSCANRESPONSE",
+        # A STREAM, cut mid-flight. The case the Passport must not call
+        # prevention, because chunks reached the caller before it was cut.
+        "rstream_prompt": f"FOXYEEE{tok}RSTREAMPROMPT",
+        "rstream_response": f"FOXYEEE{tok}RSTREAMRESPONSE",
     }
 
 
@@ -249,6 +253,7 @@ def build_spec(sent: dict, spool_path: str) -> dict:
             "blocked": f"e2e-blocked-{tok}",
             "redact": f"e2e-redact-{tok}",
             "rscan": f"e2e-rscan-{tok}",
+            "rstream": f"e2e-rstream-{tok}",
         },
         "prompts": {
             "clean": f"Summarise this quarter's compliance findings. {sent['clean_prompt']}",
@@ -266,6 +271,7 @@ def build_spec(sent: dict, spool_path: str) -> dict:
             # that whatever happens next is the RESPONSE scan's doing and not
             # the prompt guard's.
             "rscan": f"Render the onboarding banner. {sent['rscan_prompt']}",
+            "rstream": f"Stream the onboarding banner. {sent['rstream_prompt']}",
         },
         "responses": {
             "clean": f"Quarterly summary produced. {sent['clean_response']}",
@@ -274,6 +280,14 @@ def build_spec(sent: dict, spool_path: str) -> dict:
             # be rendered. The sentinel rides inside the flagged response, which
             # is the point: it is the text the scan actually reads.
             "rscan": (f"<script>alert('e2e')</script> {sent['rscan_response']}"),
+            # Delivered as OpenAI-shaped chunks, with the markup SPLIT across a
+            # boundary. Two things have to hold at once: the split is rejoined
+            # (which needs the scanner to carry CONTENT, not the JSON envelope),
+            # and the first fragment has already reached the caller when it is,
+            # so the row must record truncation rather than prevention.
+            "rstream_parts": [f"Banner: {sent['rstream_response']} <scr",
+                              "ipt>alert('stream')</script>",
+                              " trailing text that must never arrive"],
         },
     }
 
@@ -296,6 +310,9 @@ def sweep_needles(spec: dict, sent: dict) -> list[tuple[str, str]]:
         ("response-scan prompt sentinel", sent["rscan_prompt"]),
         ("response-scan response (full)", s["rscan"]),
         ("response-scan response sentinel", sent["rscan_response"]),
+        ("streamed-response prompt sentinel", sent["rstream_prompt"]),
+        ("streamed-response sentinel", sent["rstream_response"]),
+        ("streamed chunk that WAS delivered", s["rstream_parts"][0]),
         ("PHI: SSN", p["redact_ssn"]),
         ("PHI: email address", p["redact_email"]),
     ]
@@ -465,7 +482,7 @@ def main() -> int:
         if not drv.get("ok"):
             ck.check("SDK driver completed", False,
                      (drv.get("error") or proc.stderr or proc.stdout or "")[-1500:])
-            raise Fatal("the SDK could not complete its four calls")
+            raise Fatal("the SDK could not complete its five calls")
         ck.check("SDK driver completed (own process, exited 0)", proc.returncode == 0,
                  f"{sdk_wall:.1f}s -- foxy-audit {drv['sdk']['version']} "
                  f"from {drv['sdk']['module_path']}")
@@ -494,11 +511,29 @@ def main() -> int:
         ck.check("RESPONSE SCAN: the exception message is content-blind",
                  not st["rscan"]["message_carries_response_text"],
                  st["rscan"]["message"])
+        # This client runs audit_required=True — the config in which an
+        # AuditRequiredError used to escape from inside the emit, so
+        # `except FoxyResponseBlocked` never fired at all.
+        ck.check("RESPONSE SCAN: audit_required did not swallow the block",
+                 st["rscan"]["audit_delivery_failed"] is False,
+                 f"audit_delivery_failed={st['rscan']['audit_delivery_failed']}")
+
+        ck.check("STREAM SCAN: the split match was rejoined and the stream cut",
+                 st["rstream"]["raised_FoxyResponseBlocked"], st["rstream"]["message"])
+        ck.check("STREAM SCAN: the chunks before the match WERE delivered",
+                 0 < st["rstream"]["chunks_delivered"] < st["rstream"]["chunks_offered"],
+                 f"{st['rstream']['chunks_delivered']}/{st['rstream']['chunks_offered']}")
+        ck.check("STREAM SCAN: the developer is told chunks already arrived",
+                 st["rstream"]["message_says_chunks_were_delivered"],
+                 st["rstream"]["message"])
+        ck.check("STREAM SCAN: the exception message is content-blind",
+                 not st["rstream"]["message_carries_response_text"],
+                 st["rstream"]["message"])
         ck.check("SDK spool fully drained -- nothing left undelivered",
                  drv["spool_undelivered"] == 0,
                  json.dumps(drv["spool_pending_rows"])[:400])
         receipts = {str(r["event_id"]): r for r in drv["receipts"]}
-        ck.check("the backend receipted all four events over HTTP", len(receipts) == 4,
+        ck.check("the backend receipted all five events over HTTP", len(receipts) == 5,
                  ", ".join(f"seq={r['seq']}" for r in drv["receipts"]))
 
         # ── 4 · wait for the worker ──────────────────────────────────────────
@@ -517,12 +552,12 @@ def main() -> int:
         grading_s = time.time() - t_poll
         mine = {k: rows_by_id.get(k) for k in want}
         if not all(v and v["grading_status"] in ("graded", "failed") for v in mine.values()):
-            ck.check("all four rows reached a terminal grading state", False,
+            ck.check("all five rows reached a terminal grading state", False,
                      "actual: " + json.dumps({k: (v or {}).get("grading_status",
                                                                "<absent from /v1/logs>")
                                               for k, v in mine.items()}))
             raise Fatal(f"grading did not finish within {args.grading_timeout}s")
-        ck.check("all four rows reached a terminal grading state", True,
+        ck.check("all five rows reached a terminal grading state", True,
                  f"{grading_s:.1f}s wall-clock after the SDK's last call")
         lat = psql("SELECT seq||'|'||round(extract(epoch from "
                    "(graded_at - created_at))::numeric, 3) FROM audit_logs "
@@ -537,8 +572,9 @@ def main() -> int:
         step("5 . assert the customer API (the gate)")
         by_agent = {r["agent"]: r for r in rows_by_id.values() if r.get("agent")}
         ag = spec["agents"]
-        have_all = all(ag[k] in by_agent for k in ("clean", "blocked", "redact", "rscan"))
-        for kind in ("clean", "blocked", "redact", "rscan"):
+        have_all = all(ag[k] in by_agent
+                       for k in ("clean", "blocked", "redact", "rscan", "rstream"))
+        for kind in ("clean", "blocked", "redact", "rscan", "rstream"):
             ck.check(f"event present on /v1/logs: {kind}", ag[kind] in by_agent)
         if have_all:
             blk = by_agent[ag["blocked"]]
@@ -558,27 +594,33 @@ def main() -> int:
             # backend's enforcement path grades it without a judge, and stays
             # distinguishable from a blocked PROMPT by its decision label and by
             # rule ids that name the side they came from.
-            ck.check("RESPONSE SCAN row is typed 'blocked' with a response decision",
-                     rsc["event_type"] == "blocked"
+            # NOT 'blocked'. That type asserts the prompt never reached a
+            # provider, and the Passport counts it under "Prompts Blocked
+            # (prevented egress)". Here the model ran; what was prevented is the
+            # response reaching the application, and nothing was delivered.
+            ck.check("RESPONSE SCAN row is typed 'response_blocked', not 'blocked'",
+                     rsc["event_type"] == "response_blocked"
                      and rsc_md.get("decision") == "blocked_response"
                      and any(str(r).startswith("response_")
                              for r in (rsc_md.get("policy_rules") or [])),
                      json.dumps(rsc_md)[:400])
-            # All four calls share one spool, so they share one client_id and one
-            # client_seq counter — including the response-scan call, which uses a
-            # SECOND FoxyClient. If a second client ever restarted the sequence,
-            # this is where it would show.
+            # All five calls share one spool, so they share one client_id and one
+            # client_seq counter — including the two response-scan calls, which
+            # use a SECOND FoxyClient. If a second client ever restarted the
+            # sequence, this is where it would show.
             seqs = [by_agent[ag[k]]["client_seq"]
-                    for k in ("clean", "blocked", "redact", "rscan")]
-            ck.check("SDK call ORDER survived the wire (client_seq 1,2,3,4)",
-                     seqs == [1, 2, 3, 4], f"client_seq={seqs}")
+                    for k in ("clean", "blocked", "redact", "rscan", "rstream")]
+            ck.check("SDK call ORDER survived the wire (client_seq 1..5)",
+                     seqs == [1, 2, 3, 4, 5], f"client_seq={seqs}")
 
         vr = requests.get(f"{BASE_URL}/v1/verify", headers=headers, timeout=60).json()
         ck.check("/v1/verify recomputes the chain intact",
                  vr.get("ok") is True and vr.get("first_broken_seq") is None,
                  f"count={vr.get('count')} detail={vr.get('detail')}")
 
-        judged = [by_agent[ag[k]] for k in ("clean", "blocked", "redact") if ag[k] in by_agent]
+        judged = [by_agent[ag[k]]
+                  for k in ("clean", "blocked", "redact", "rscan", "rstream")
+                  if ag[k] in by_agent]
         verdicts = {r["agent"]: (r.get("gemini_verdict") or {}) for r in judged}
         summary["verdicts"] = [dict(agent=a, **v) for a, v in verdicts.items()]
         shown = "; ".join(f"{a}: {v.get('decision')}/{v.get('reason')}"
@@ -616,6 +658,31 @@ def main() -> int:
                      and str(red_v.get("reason", "")).startswith("host_redacted_response:"),
                      f"{red_v.get('decision')}/{red_v.get('reason')} "
                      f"rules={red_v.get('rules')}")
+            # ⚠ THE HONESTY CHECK. A stream cut after chunks were delivered is
+            # NOT prevention, so it must not be an enforcement event_type: it is
+            # an ordinary `stream` row that the judge grades like any other, and
+            # the Passport's prevented-egress tally never sees it.
+            rst = by_agent[ag["rstream"]]
+            rst_md = rst.get("event_metadata") or {}
+            ck.check("STREAM SCAN row is 'stream'/response_truncated, NOT prevented",
+                     rst["event_type"] == "stream"
+                     and rst["event_type"] != "response_blocked"
+                     and rst_md.get("decision") == "response_truncated"
+                     and "response_markup.script_tag" in (rst_md.get("policy_rules") or []),
+                     json.dumps(rst_md)[:400])
+            rsc_v = verdicts[ag["rscan"]]
+            # "host_blocked_response", NOT "host_blocked_egress". The prompt DID
+            # egress — it reached the provider and the model answered. What the
+            # host prevented is the response reaching the calling application,
+            # and the reason string has to say which one happened.
+            ck.check("RESPONSE SCAN verdict is the host's own, and names the "
+                     "response rather than the prompt",
+                     rsc_v.get("decision") == "response_blocked"
+                     and str(rsc_v.get("reason", "")).startswith("host_blocked_response:")
+                     and rsc_v.get("policy_breach") is False
+                     and rsc_v.get("judge_provider") is None,
+                     f"{rsc_v.get('decision')}/{rsc_v.get('reason')} "
+                     f"rules={rsc_v.get('rules')}")
             cln_v = verdicts[ag["clean"]]
             ck.check("CLEAN row fell back to the deterministic metadata grade",
                      cln_v.get("decision") == "clean"
@@ -686,7 +753,7 @@ def main() -> int:
                      pr.status_code == 200 and pr.json().get(f"{provider}_key_set") is True,
                      f"{pr.status_code} {pr.text[:300]}")
             # The events above are already 'graded', so ONLY this fresh batch
-            # routes to a live provider: exactly one billed call.
+            # routes to a live provider: two billed calls (see the split below).
             live_sent = make_sentinels()
             live_spec = build_spec(live_sent, os.path.join(run_dir, "spool-live.sqlite3"))
             lsp = os.path.join(run_dir, "sdk_spec_live.json")
@@ -716,17 +783,25 @@ def main() -> int:
             # Asserting that split is what makes "exactly one billed call" a
             # measurement instead of an intention.
             #
-            # THREE host-enforcement rows now, not two: a response blocked by the
-            # SDK's response scan is typed `blocked` like a blocked prompt, so it
-            # takes the same deterministic path and bills nothing. That it does
-            # not quietly become a fourth judge call is the point of counting.
-            live_i = [r for r in graded if r["event_type"] == "interaction"]
-            live_e = [r for r in graded if r["event_type"] in ("blocked", "redacted")]
-            ck.check("exactly ONE event reached the provider (the interaction row)",
-                     len(live_i) == 1 and len(live_e) == 3
+            # THREE host-enforcement rows now: prompt-blocked, prompt-redacted,
+            # and response_blocked. All three are deterministic and bill nothing.
+            #
+            # ⚠ TWO billed calls under --live-judge, not one. The truncated
+            # stream is deliberately NOT an enforcement row — chunks reached the
+            # caller, so calling it prevention would be false — which means the
+            # judge grades it like any other interaction. That is the honest
+            # cost of the honest label, and it is stated here rather than hidden
+            # in a count that quietly grew.
+            live_i = [r for r in graded
+                      if r["event_type"] not in ("blocked", "redacted", "response_blocked")]
+            live_e = [r for r in graded
+                      if r["event_type"] in ("blocked", "redacted", "response_blocked")]
+            ck.check("exactly TWO events reached the provider; every "
+                     "host-enforcement row did not",
+                     len(live_i) == 2 and len(live_e) == 3
                      and all((r.get("gemini_verdict") or {}).get("judge_provider") is None
                              for r in live_e),
-                     f"{len(live_i)} interaction / {len(live_e)} host-enforcement")
+                     f"{len(live_i)} judged / {len(live_e)} host-enforcement")
             v = (live_i[0].get("gemini_verdict") or {}) if live_i else {}
             # SHAPE ONLY. A real judge is non-deterministic; asserting its content
             # would be asserting today's mood.

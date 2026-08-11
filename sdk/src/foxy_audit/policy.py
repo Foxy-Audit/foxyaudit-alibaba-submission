@@ -83,10 +83,14 @@ _REASON_LABEL = {
     "response_phi": "phi",
     "pii": "pii",
     "response_pii": "pii",
+    # Informational, and LAST on purpose: "we could not read the response" must
+    # never be the dominant label on a row where a real rule also fired.
+    "response_scan": "scan_coverage",
 }
 _REASON_PRIORITY = ("secret", "response_secret", "injection",
                     "response_markup", "response_sql", "response_url",
-                    "phi", "response_phi", "pii", "response_pii")
+                    "phi", "response_phi", "pii", "response_pii",
+                    "response_scan")
 
 
 @dataclass(frozen=True)

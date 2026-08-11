@@ -314,13 +314,156 @@ def test_passport_shows_host_side_enforcement_counts(make_org, client, monkeypat
     assert "prevented from leaving the host" in body
     # Honest per-state counts (blocked/redacted/allowed/evaluator-unknown).
     assert "Prompts Blocked (prevented egress)</dt><dd>1</dd>" in body
-    assert "Responses Redacted</dt><dd>1</dd>" in body
+    # "Prompts Redacted", not "Responses Redacted". redact mode scrubs the
+    # PROMPT before the model sees it — client.py:_evaluate_preflight — so the
+    # old label described the wrong half of the interaction in a compliance
+    # document.
+    assert "Prompts Redacted</dt><dd>1</dd>" in body
     assert "Prompts Allowed to Proceed</dt><dd>2</dd>" in body
     assert "Evaluator Could Not Determine</dt><dd>1</dd>" in body
     # Policies actually enforced, aggregated from event_metadata.policy_rules.
     assert "block.egress" in body
     # Evaluator-unknown must read as an honest non-pass, not a silent success.
     assert "never counted as a compliant pass" in body
+
+
+def _response_blocked_event(seed: str = "rb"):
+    """A response the SDK withheld from the calling application (SDK >= 1.4).
+
+    Unlike a blocked PROMPT, response_hash commits a REAL response: the model ran
+    and produced one. That difference is the whole reason it is not `blocked`."""
+    return {
+        "prompt_hash": _h(f"prompt-{seed}"),
+        "response_hash": _h(f"withheld-response-{seed}"),
+        "token_count": 42,
+        "policy_tag": "chat",
+        "event_type": "response_blocked",
+        "pii_signals": [],
+        "event_metadata": {
+            "decision": "blocked_response",
+            "blocked_reason": "unsafe_markup",
+            "policy_rules": ["response_markup.script_tag"],
+        },
+    }
+
+
+def test_response_blocked_skips_the_judge_and_names_the_response(make_org, client,
+                                                                 monkeypatch):
+    """A withheld response is terminal and locally decided like the other two —
+    the judge is never asked — but its reason must say RESPONSE, not egress. The
+    prompt DID egress: it reached the provider and the model answered."""
+    org = make_org()
+    client.post("/v1/logs/batch", headers=org["auth"], json=[_response_blocked_event()])
+
+    calls = []
+    _grade_pending(monkeypatch, breach_when=lambda m: True, calls=calls)
+    assert calls == [], "a terminal enforcement row must never reach the judge"
+
+    row = client.get("/v1/logs", headers=org["auth"]).json()["items"][0]
+    v = row["gemini_verdict"]
+    assert row["event_type"] == "response_blocked"
+    assert v["decision"] == "response_blocked"
+    assert v["policy_breach"] is False
+    assert v["reason"].startswith("host_blocked_response:")
+    assert not v["reason"].startswith("host_blocked_egress:"), \
+        "that phrasing claims the prompt never left the host, which is false here"
+    assert "response_markup.script_tag" in v["rules"]
+
+
+def test_a_truncated_stream_is_graded_normally_not_as_enforcement(make_org, client,
+                                                                  monkeypatch,
+                                                                  configure_judge):
+    """The honesty line, from the backend's side. A stream cut after chunks were
+    already delivered arrives as an ordinary `stream` row carrying
+    decision=response_truncated. It must be graded like any other interaction —
+    if it took the enforcement path it would be recorded as prevented egress, and
+    nothing was prevented."""
+    org = make_org()
+    configure_judge(org["org_id"])
+    client.post("/v1/logs/batch", headers=org["auth"], json=[{
+        "prompt_hash": _h("tp"), "response_hash": _h("tr"),
+        "token_count": 30, "policy_tag": "chat", "event_type": "stream",
+        "event_metadata": {"decision": "response_truncated",
+                           "blocked_reason": "unsafe_markup",
+                           "policy_rules": ["response_markup.script_tag"]},
+    }])
+
+    calls = []
+    _grade_pending(monkeypatch, breach_when=lambda m: False, calls=calls)
+    assert len(calls) == 1, "a truncated stream is an ordinary interaction to grade"
+
+    v = client.get("/v1/logs", headers=org["auth"]).json()["items"][0]["gemini_verdict"]
+    assert v["decision"] == "clean"
+    assert not str(v["reason"]).startswith("host_blocked")
+
+
+def test_passport_counts_a_withheld_response_apart_from_a_blocked_prompt(
+        make_org, client, monkeypatch, configure_judge):
+    """⚠ THE ONE THAT MATTERS. "Prompts Blocked (prevented egress)" must not
+    count a withheld response — the prompt was not blocked — and a truncated
+    stream must not be counted as enforcement at all, because chunks reached the
+    caller and attesting prevention that did not happen is the one thing this
+    document must never do."""
+    from app.schemas import Verdict
+    _captured: dict = {}
+
+    class _FakeHTML:
+        def __init__(self, string=None, **kw):
+            _captured["html"] = string
+
+        def write_pdf(self):
+            return b"%PDF-1.7\nstub\n%%EOF"
+
+    _fake = type(sys)("weasyprint")
+    _fake.HTML = _FakeHTML
+    monkeypatch.setitem(sys.modules, "weasyprint", _fake)
+    org = make_org()
+    configure_judge(org["org_id"])
+
+    client.post("/v1/logs/batch", headers=org["auth"],
+                json=[_blocked_event(seed="q1", event_type="blocked")])       # seq 1
+    client.post("/v1/logs/batch", headers=org["auth"],
+                json=[_response_blocked_event(seed="q2")])                    # seq 2
+    client.post("/v1/logs/batch", headers=org["auth"], json=[{                # seq 3
+        "prompt_hash": _h("q3"), "response_hash": _h("q3r"),
+        "token_count": 10, "policy_tag": "chat", "event_type": "stream",
+        "event_metadata": {"decision": "response_truncated",
+                           "policy_rules": ["response_markup.script_tag"]},
+    }])
+
+    _grade_each(monkeypatch, lambda meta: Verdict(
+        policy_breach=False, reason="no issues found", risk_score=0, decision="clean"))
+
+    r = client.post("/v1/passport", headers=org["auth"])
+    assert r.status_code == 200, r.text
+    body = _captured["html"]
+
+    assert "Prompts Blocked (prevented egress)</dt><dd>1</dd>" in body
+    assert "Responses Withheld from the Application</dt><dd>1</dd>" in body
+    # Two enforced (the block and the withheld response); the truncated stream is
+    # NOT one of them, so it lands in "allowed to proceed" — which is the honest
+    # answer, because its chunks did proceed.
+    assert "Enforced in Total</dt><dd>2</dd>" in body
+    assert "Prompts Allowed to Proceed</dt><dd>1</dd>" in body
+    # The response-side rule id is aggregated with the rest of the enforcement.
+    assert "response_markup.script_tag" in body
+
+
+def test_stats_and_ledger_filter_see_a_withheld_response(make_org, client):
+    """It gets its own count rather than inflating `blocked`, and the ledger can
+    be filtered to it."""
+    org = make_org()
+    client.post("/v1/logs/batch", headers=org["auth"],
+                json=[_blocked_event(seed="s1", event_type="blocked")])
+    client.post("/v1/logs/batch", headers=org["auth"], json=[_response_blocked_event("s2")])
+
+    stats = client.get("/v1/stats", headers=org["auth"]).json()
+    assert stats["blocked"] == 1
+    assert stats["response_blocked"] == 1
+
+    rb = client.get("/v1/logs?verdict=response_blocked", headers=org["auth"]).json()
+    assert [r["seq"] for r in rb["items"]] == [2]
+    assert rb["items"][0]["event_type"] == "response_blocked"
 
 
 def test_ledger_filter_surfaces_enforcement_rows_distinctly(make_org, client):

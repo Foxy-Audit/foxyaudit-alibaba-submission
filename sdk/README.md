@@ -85,6 +85,25 @@ stream is re-scanned whole in both modes, so the evidence record is exact even w
 was not. Buffering the whole stream would make blocking total and would silently turn a
 streaming API into a non-streaming one, so the SDK does not do it.
 
+**A cut stream is recorded as truncated, never as prevented.** Chunks you already received are
+in your application, so calling that "prevented egress" would put a false statement in your
+Compliance Passport. Only a block where *nothing* reached you is recorded as
+`event_type: response_blocked`; a stream cut after delivery is an ordinary `stream` event with
+`decision: response_truncated`, and the exception says so in as many words.
+
+**What the scan reads, and what it admits it cannot.** Response *content* is extracted from the
+provider's own shape — OpenAI `choices[].delta.content` / `choices[].message.content`, Anthropic
+content blocks and `delta.text`, the Gemini `candidates[].content.parts[]`, the Responses API
+`output[]`/`output_text` — plus plain strings and `bytes` (decoded UTF-8, `errors="replace"`, so
+raw SSE is covered). An unrecognised but serialisable shape is scanned as a serialised envelope
+and recorded as `response_scan.degraded`; an object whose content cannot be reached at all is
+recorded as `response_scan.unreadable`. **Neither ever blocks** — coverage you do not have is
+missing evidence, not a finding — but neither is silently reported as a clean scan.
+
+**`audit_required` does not hide a block.** If the audit event cannot be durably delivered, you
+still get `FoxyResponseBlocked`, with `audit_delivery_failed=True` on it. The security decision
+outranks the delivery guarantee.
+
 **Upgrading from 1.3.x changes nothing you receive.** The default detects and records; it never
 raises and never rewrites. A response that trips nothing emits the identical payload it emitted
 before. Turning on prevention is a deliberate `response_scan="block"`.

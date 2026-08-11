@@ -30,6 +30,14 @@ from .config import FoxyConfig
 # nothing an existing caller receives changes and nothing new raises unless the
 # deployment opts in — but "you can now configure a new exception into your call
 # path" is a feature, and a patch release must not carry one.
+#
+# It also emits one NEW event_type, `response_blocked`, when response_scan=block
+# withholds a response and nothing reached the caller. Against a backend older
+# than that change the row still ingests — event_type is charset-validated, not
+# enumerated — but is graded by the judge as an ordinary interaction instead of
+# taking the deterministic enforcement path, and the Compliance Passport does not
+# count it. Degraded, never broken, and only for a deployment that opted into
+# blocking. Nothing is emitted under the default.
 __version__ = "1.4.0"
 __all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
            "audit", "__version__"]

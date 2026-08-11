@@ -51,6 +51,12 @@ def verdict_of(item: dict) -> tuple[str, str]:
         return "blocked", "blue"
     if event_type == "redacted":
         return "redacted", "pink"
+    # A response the SDK withheld from the calling application (SDK >= 1.4).
+    # Matches the web's verdictOf, per the standing rule that web wins on any
+    # style conflict. Without it this falls through to grading_status ==
+    # "graded" and a withheld response renders as "safe".
+    if event_type == "response_blocked":
+        return "blocked", "blue"
     verdict = item.get("gemini_verdict") or {}
     if not isinstance(verdict, dict):
         verdict = {}

@@ -77,7 +77,16 @@ class AsyncDispatcher:
                 self._q.get(timeout=self.flush_interval)
             except queue.Empty:
                 pass
-            self._flush_spool()
+            # Wrapped for the same reason the org policy tick below is: nothing
+            # may stop event delivery. This call was bare, so ANY exception here
+            # killed the dispatcher thread outright and every later event in the
+            # process silently stopped being delivered — the spool kept them,
+            # but nothing was left alive to retry. Found by the race fixed in
+            # _flush_spool, which reached this line as a RuntimeError.
+            try:
+                self._flush_spool()
+            except Exception as exc:             # noqa: BLE001 — type name only
+                log.debug("foxy-audit: spool flush failed (%s)", type(exc).__name__)
             # Org policy rides THIS thread rather than getting its own (P4 §B2).
             # It is TTL-gated, so ~12 requests an hour per process, and it is
             # wrapped because a policy problem must never stop event delivery.
@@ -88,7 +97,11 @@ class AsyncDispatcher:
                 log.debug("foxy-audit: org policy tick failed (%s)", type(exc).__name__)
 
     def _flush_spool(self, paths: set[str | None] | None = None) -> None:
-        for path in (paths or self._paths or {None}):
+        # SNAPSHOT. `self._paths` is mutated by `resume()` on whatever thread
+        # constructed a FoxyClient, while this loop runs on the dispatcher
+        # thread. Iterating it live raised "Set changed size during iteration"
+        # the moment a second client was created mid-flush.
+        for path in tuple(paths or self._paths or {None}):
             spool = EventSpool(path)
             rows = spool.due(self.batch_size)
             if not rows:

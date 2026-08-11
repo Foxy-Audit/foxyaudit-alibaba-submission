@@ -38,6 +38,7 @@ from ..db import get_db
 from ..evidence_coverage import calculate_capture_coverage
 from ..models import AuditLog, Organization, User
 from ..policy_snapshot import policy_snapshot_hash
+from .. import policy_engine
 from .badge import _explorer_tx
 
 log = logging.getLogger("foxy.passport")
@@ -163,6 +164,14 @@ def generate_passport(
     # ── Host-side enforcement tallies (blocked/redacted events + honest states) ──
     blocked_events = 0
     redacted_events = 0
+    # A response the SDK withheld from the calling application. Counted apart
+    # from blocked_events because that line reads "Prompts Blocked" and a
+    # response block did NOT stop the prompt reaching a provider. The SDK only
+    # sends this type when nothing reached the caller — a stream cut after some
+    # chunks were yielded arrives as an ordinary `stream` row and is never
+    # counted here, because attesting prevention that did not happen is the one
+    # thing this document must not do.
+    response_blocked_events = 0
     unknown_evaluator_events = 0
     enforced_rule_counts: dict[str, int] = defaultdict(int)
     for row in rows:
@@ -180,7 +189,9 @@ def generate_passport(
             blocked_events += 1
         elif row.event_type == "redacted":
             redacted_events += 1
-        if row.event_type in ("blocked", "redacted"):
+        elif row.event_type == "response_blocked":
+            response_blocked_events += 1
+        if row.event_type in policy_engine.ENFORCEMENT_EVENT_TYPES:
             for rule in (metadata.get("policy_rules") or []):
                 enforced_rule_counts[str(rule)] += 1
         # Evaluator-unknown is an honest "could not determine", never a pass.
@@ -218,7 +229,7 @@ def generate_passport(
 
     # Host-side enforcement summary — prompts prevented from leaving the host,
     # recorded as tamper-evident evidence, alongside the policies that fired.
-    enforced_events = blocked_events + redacted_events
+    enforced_events = blocked_events + redacted_events + response_blocked_events
     allowed_events = total_events - enforced_events
     policies_enforced = [
         {"rule": rule, "count": count}
@@ -287,6 +298,7 @@ def generate_passport(
         allowed_events=allowed_events,
         blocked_events=blocked_events,
         redacted_events=redacted_events,
+        response_blocked_events=response_blocked_events,
         enforced_events=enforced_events,
         unknown_evaluator_events=unknown_evaluator_events,
         policies_enforced=policies_enforced,

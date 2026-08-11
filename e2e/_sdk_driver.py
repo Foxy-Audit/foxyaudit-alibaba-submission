@@ -86,7 +86,37 @@ def run(spec: dict, result: dict) -> None:
         response_scan="block",
     )
 
-    seen: dict[str, list] = {"clean": [], "blocked": [], "redact": [], "rscan": []}
+    seen: dict[str, list] = {"clean": [], "blocked": [], "redact": [],
+                             "rscan": [], "rstream": []}
+
+    class _Delta:
+        def __init__(self, content):
+            self.content = content
+
+    class _Choice:
+        def __init__(self, content):
+            self.index = 0
+            self.delta = _Delta(content)
+
+    class _Chunk:
+        """The shape a customer streaming from OpenAI actually receives.
+
+        NOT a hand-written dict that happens to work: the defect this exists to
+        catch was that the scanner serialised the chunk and carried the JSON
+        envelope, so two halves of a split match ended up ~30 characters apart
+        and rejoined nothing. A plain dict would have hidden it."""
+
+        def __init__(self, content):
+            self.id = "chatcmpl-e2e"
+            self.object = "chat.completion.chunk"
+            self.model = "stub-stream"
+            self.choices = [_Choice(content)]
+
+        def model_dump(self):
+            return {"id": self.id, "object": self.object, "model": self.model,
+                    "choices": [{"index": c.index,
+                                 "delta": {"content": c.delta.content}}
+                                for c in self.choices]}
 
     # ── the three calls. The "LLM" is a local stub: the seam under test is
     # SDK → HTTP → backend, not any model provider. Each stub records exactly
@@ -114,6 +144,15 @@ def run(spec: dict, result: dict) -> None:
     def call_rscan(prompt):
         seen["rscan"].append(prompt)
         return responses["rscan"]
+
+    # The same scan on a STREAM of provider-shaped chunks, with the markup split
+    # across a chunk boundary. The first fragment is delivered before the match
+    # completes, so this is truncation, not prevention.
+    @rscan_client.audit(policy="default", agent=agents["rstream"], mode="observe")
+    def call_rstream(prompt):
+        seen["rstream"].append(prompt)
+        for part in responses["rstream_parts"]:
+            yield _Chunk(part)
 
     t0 = time.time()
     call_clean(prompt=prompts["clean"])
@@ -147,11 +186,11 @@ def run(spec: dict, result: dict) -> None:
     }
 
     t0 = time.time()
-    rscan_raised, rscan_returned = None, None
+    rscan_raised, rscan_returned, rscan_exc = None, None, None
     try:
         rscan_returned = call_rscan(prompt=prompts["rscan"])
     except FoxyResponseBlocked as exc:
-        rscan_raised = str(exc)
+        rscan_raised, rscan_exc = str(exc), exc
     result["steps"]["rscan"] = {
         "elapsed_s": round(time.time() - t0, 3),
         "raised_FoxyResponseBlocked": rscan_raised is not None,
@@ -165,6 +204,33 @@ def run(spec: dict, result: dict) -> None:
         "message_carries_response_text": bool(
             rscan_raised and (spec["sentinels"]["rscan_response"] in rscan_raised
                               or "<script>" in rscan_raised)),
+        # This client runs audit_required=True. The block must still be what the
+        # caller sees, and the flag must report delivery honestly.
+        "audit_delivery_failed": (rscan_exc.audit_delivery_failed
+                                  if rscan_exc is not None else None),
+    }
+
+    t0 = time.time()
+    delivered, rstream_raised = [], None
+    try:
+        for chunk in call_rstream(prompt=prompts["rstream"]):
+            delivered.append(chunk)
+    except FoxyResponseBlocked as exc:
+        rstream_raised = str(exc)
+    result["steps"]["rstream"] = {
+        "elapsed_s": round(time.time() - t0, 3),
+        "raised_FoxyResponseBlocked": rstream_raised is not None,
+        "message": rstream_raised,
+        "stub_invocations": len(seen["rstream"]),
+        # The whole point: something DID arrive before the cut. Count only —
+        # the chunks themselves are response content.
+        "chunks_delivered": len(delivered),
+        "chunks_offered": len(responses["rstream_parts"]),
+        "message_says_chunks_were_delivered": bool(
+            rstream_raised and "already reached your code" in rstream_raised),
+        "message_carries_response_text": bool(
+            rstream_raised and (spec["sentinels"]["rstream_response"] in rstream_raised
+                                or "<script>" in rstream_raised)),
     }
 
     result["steps"]["clean_stub_received_prompt_unchanged"] = bool(

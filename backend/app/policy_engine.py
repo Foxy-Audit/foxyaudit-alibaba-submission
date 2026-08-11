@@ -11,14 +11,25 @@ from typing import Any
 
 from .schemas import Verdict
 
-# Terminal, locally-decided event types. The host already enforced policy and no
-# model response left the machine, so these are NEVER sent to an external judge —
-# there is nothing to grade. They are recorded as prevented egress, not a breach.
-ENFORCEMENT_EVENT_TYPES = {"blocked", "redacted"}
+# Terminal, locally-decided event types. The host already enforced policy, so
+# these are NEVER sent to an external judge — there is nothing to grade. They are
+# recorded as prevented egress, not a breach.
+#
+# `response_blocked` (SDK >= 1.4) is a model response the SDK withheld from the
+# calling application. It is a SEPARATE type from `blocked`, and both reasons are
+# honesty rather than tidiness:
+#
+#   * `blocked` asserts the prompt never reached a provider. On a response block
+#     it did — the model ran and tokens were spent.
+#   * it is emitted ONLY when nothing reached the caller. A stream cut after some
+#     chunks were already yielded is not prevention, so the SDK sends that as an
+#     ordinary `stream` row carrying decision=response_truncated — graded
+#     normally, and never counted as prevented egress in the Passport.
+ENFORCEMENT_EVENT_TYPES = {"blocked", "redacted", "response_blocked"}
 
 
 def evaluate_enforcement(meta: dict[str, Any]) -> Verdict:
-    """Deterministic verdict for a host-side enforcement event (blocked/redacted).
+    """Deterministic verdict for a host-side enforcement event.
 
     Built only from the content-blind enforcement labels the host recorded — the
     terminal event_type, the policy rules that fired, and a short blocked_reason.
@@ -36,7 +47,12 @@ def evaluate_enforcement(meta: dict[str, Any]) -> Verdict:
     rules = [str(rule)[:80] for rule in (metadata.get("policy_rules") or [])
              if isinstance(rule, str)]
     label = str(metadata.get("blocked_reason") or "").strip()[:200]
-    if decision == "redacted":
+    if decision == "response_blocked":
+        # Deliberately NOT "egress": the prompt did leave, the model did answer.
+        # What was prevented is the response reaching the calling application.
+        reason = (f"host_blocked_response:{label}" if label
+                  else "host withheld the model response from the calling application")
+    elif decision == "redacted":
         reason = (f"host_redacted_response:{label}" if label
                   else "host redacted the response before it left the host")
     else:

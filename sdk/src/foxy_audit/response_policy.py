@@ -48,18 +48,23 @@ signal rather than to prevent anything (see ``FoxyConfig.response_scan``).
 Blocking on these is opt-in precisely because a false positive on the response
 side raises into the caller's own code.
 
-Structured responses (a provider object, a list of stream chunks) are scanned
-through :func:`scan_text`, i.e. their canonical-JSON form. The ASCII patterns
-here survive that encoding; a rule that needed to match non-ASCII would not, and
-none does. An object whose content is not reachable scans as "" — see
-:func:`scan_text` for why scanning its repr would be actively harmful.
+WHAT THE RULES ARE APPLIED TO
+----------------------------
+Response CONTENT, extracted by ``adapters.response_text`` — the delta text of a
+provider chunk, not the JSON envelope around it. Scanning the envelope was the
+defect this module shipped with: two halves of a split match ended up ~30
+characters apart and the streaming carry window rejoined nothing.
+
+When the shape cannot be read, that is recorded as degraded coverage rather
+than passed off as a clean scan. Coverage never blocks — an unfamiliar object
+is missing evidence, not a finding.
 """
 
 from __future__ import annotations
 
 import re
 
-from . import pii, policy
+from . import adapters, pii, policy
 from .policy import PolicyDecision
 
 # ── markup that will be rendered (the canonical LLM05 case) ──────────────────
@@ -122,59 +127,67 @@ def _personal_prefix(policy_tag: str) -> str | None:
     return _POLICY_PERSONAL.get((policy_tag or "").strip().lower())
 
 
-def _is_serialisable(value) -> bool:
-    """Whether ``hashing.canonical_json`` can reach this object's CONTENT."""
-    return (hasattr(value, "model_dump")
-            or (hasattr(value, "dict") and callable(value.dict))
-            or (hasattr(value, "to_dict") and callable(value.to_dict)))
+def scan_source(value) -> tuple[str, str]:
+    """(text, coverage) for one response value — see ``adapters.response_text``.
+
+    A thin alias so the scan has one name for "what am I actually reading", and
+    so nothing in this module ever calls ``policy._as_text``. That helper
+    serialises to canonical JSON, which is right for a prompt and wrong twice
+    over for a response: it wraps content fragments in ~30 characters of
+    envelope, so a stream's carry window rejoins nothing; and it falls back to
+    ``str(value)``, so an opaque object is scanned as its repr — a memory
+    address, a random digit run, matched by the phone detector whenever it comes
+    out the right length."""
+    return adapters.response_text(value)
 
 
-def scan_text(value) -> str:
-    """The text a response rule actually sees.
-
-    NOT ``policy._as_text``, and the difference is a bug rather than a taste.
-    That helper falls back to ``str(value)`` for an object it cannot serialise,
-    which for an opaque provider object means its repr —
-    ``<Foo object at 0x1234567890>``. That string contains no response content
-    and DOES contain a memory address, which is a random run of digits, which
-    ``pii._PHONE_RE`` matches whenever the run comes out the right length. Under
-    ``response_scan="block"`` that is a real response blocked at random, on a
-    schedule set by the allocator. Scanning an address is worse than scanning
-    nothing, so an unreachable object scans as "".
-
-    Every mainstream provider object IS reachable — the OpenAI and Anthropic
-    SDKs return pydantic models (``model_dump``), Gemini exposes ``to_dict`` —
-    so this costs coverage only where there was no content to cover.
-    """
-    if isinstance(value, str):
-        return value
-    if _is_serialisable(value):
-        return policy._as_text(value)
-    if isinstance(value, dict):
-        return "\n".join(scan_text(v) for v in value.values())
-    if isinstance(value, (list, tuple)):
-        return "\n".join(scan_text(v) for v in value)
-    return ""
-
-
-def evaluate_response(value, policy_tag: str = "default") -> PolicyDecision:
-    """Evaluate a model response under ``policy_tag``; return labels only."""
-    text = scan_text(value)
+def _match(text: str, policy_tag: str) -> tuple[list[str], list[str]]:
     rules: list[str] = []
     signals: list[str] = []
-
     prefix = _personal_prefix(policy_tag)
     if prefix:
         for label in pii.detect_pii(text, ""):
             rules.append(f"{prefix}.{label}")
             signals.append(label)
-
     for rule_id, signal, regex in _ALWAYS:
         if regex.search(text):
             rules.append(rule_id)
             signals.append(signal)
+    return rules, signals
 
-    return PolicyDecision(action="flag" if rules else "allow",
+
+_COVERAGE_RULES = {
+    adapters.COVERAGE_DEGRADED: ("response_scan.degraded", "scan_degraded"),
+    adapters.COVERAGE_NONE: ("response_scan.unreadable", "scan_unreadable"),
+}
+
+
+def coverage_rule(coverage: str) -> str | None:
+    """The informational rule id for a coverage level, or None when it is full."""
+    pair = _COVERAGE_RULES.get(coverage)
+    return pair[0] if pair else None
+
+
+def evaluate_response(value, policy_tag: str = "default") -> PolicyDecision:
+    """Evaluate a model response under ``policy_tag``; return labels only.
+
+    Degraded or absent coverage is recorded as an INFORMATIONAL rule id
+    (``response_scan.degraded`` / ``response_scan.unreadable``) while ``action``
+    stays ``"allow"``. Both halves of that matter. Recording it means a shape the
+    scanner could not read shows up in the evidence as unread rather than as
+    clean — silence there is the failure mode this phase was sent back for. And
+    not flagging it means an unfamiliar provider object cannot start raising
+    ``FoxyResponseBlocked`` on responses that contain nothing wrong: coverage we
+    do not have is not a finding.
+    """
+    text, coverage = scan_source(value)
+    rules, signals = _match(text, policy_tag)
+    action = "flag" if rules else "allow"
+    informational = _COVERAGE_RULES.get(coverage)
+    if informational:
+        rules.append(informational[0])
+        signals.append(informational[1])
+    return PolicyDecision(action=action,
                           rules=sorted(set(rules)),
                           signals=sorted(set(signals)))
 
@@ -197,15 +210,31 @@ class StreamScanner:
     stream, and it is stated in the SDK docs rather than papered over.
     """
 
-    __slots__ = ("_policy_tag", "_carry")
+    __slots__ = ("_policy_tag", "_carry", "coverage")
 
     def __init__(self, policy_tag: str = "default") -> None:
         self._policy_tag = policy_tag
         self._carry = ""
+        #: Worst coverage seen across every chunk fed so far. A stream is only
+        #: as well-scanned as its least-readable chunk.
+        self.coverage = adapters.COVERAGE_FULL
 
     def feed(self, chunk) -> PolicyDecision | None:
-        """Return a triggered decision for this chunk, or ``None`` if clean."""
-        text = self._carry + scan_text(chunk)
-        decision = evaluate_response(text, self._policy_tag)
-        self._carry = text[-CARRY_CHARS:]
-        return decision if decision.triggered else None
+        """Return a triggered decision for this chunk, or ``None`` if clean.
+
+        The carry holds CONTENT, not the serialised chunk. That is the whole
+        fix: an OpenAI chunk serialises to
+        ``{"choices":[{"delta":{"content":"..."}}],"id":...}``, so carrying the
+        serialised form put ~30 characters of envelope between two halves of a
+        split match and the window rejoined nothing — measured, a ``<script>``
+        split across three chunks was never flagged and was delivered in full
+        under ``block``."""
+        text, coverage = scan_source(chunk)
+        self.coverage = adapters.worst_coverage(self.coverage, coverage)
+        scanned = self._carry + text
+        rules, signals = _match(scanned, self._policy_tag)
+        self._carry = scanned[-CARRY_CHARS:]
+        if not rules:
+            return None
+        return PolicyDecision(action="flag", rules=sorted(set(rules)),
+                              signals=sorted(set(signals)))
