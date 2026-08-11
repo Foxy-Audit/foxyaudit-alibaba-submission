@@ -358,6 +358,13 @@ def main() -> int:
     ap.add_argument("--grading-timeout", type=float, default=120.0)
     args = ap.parse_args()
 
+    if args.live_judge and args.reuse_stack:
+        # The KEK reaches the backend only through a compose `up`, which
+        # --reuse-stack deliberately does not run. Left alone this would surface
+        # as a 503 from PUT /v1/policies twenty seconds in, blamed on the key.
+        ap.error("--live-judge needs the stack brought up with its generated KEK "
+                 "override, so it cannot be combined with --reuse-stack")
+
     os.makedirs(ARTIFACTS, exist_ok=True)
     if not os.environ.get("FOXY_E2E_BOOTSTRAPPED"):
         bootstrap_and_reexec(sys.argv)
