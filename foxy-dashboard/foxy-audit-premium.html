@@ -1037,6 +1037,12 @@ textarea.cin{font-family:var(--mono);font-size:11px;resize:vertical;min-height:7
 .chart-host .cx-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:11px;font-family:var(--mono);font-size:9.5px;color:var(--muted);}
 .chart-host .cx-legend span{display:inline-flex;align-items:center;gap:5px;}
 .chart-host .cx-legend i{width:10px;height:10px;border-radius:3px;border:var(--border-xs);flex-shrink:0;}
+/* G7 · the swatch is an SVG rect so it can paint the band's own url(#pattern)
+   and so forced-colors leaves it alone — measured, an HTML background-color
+   collapses to Canvas there and the legend keys nothing. No border: --border-xs
+   on a 10px chip is the one place a transparent edge would survive HCM and
+   look like a missing swatch (register #147). */
+.chart-host .cx-legend .cx-sw{width:10px;height:10px;flex-shrink:0;display:block;}
 .chart-host .cx-gauge-track{fill:var(--bg);stroke:var(--bc);stroke-width:2;}
 /* §12 · the endpoint reports "this is the latest datum"; the crosshair answers
    "what was the value here?". Both are motion that says something. */
@@ -1889,15 +1895,21 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
       <!-- P7 · breaches over time × risk band -->
       <div class="clay pad" style="margin-bottom:16px;">
         <div class="stitle">
-          <div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V10M12 20V4M20 20v-7" stroke="#000" stroke-width="2.6" stroke-linecap="round"/></svg></span></div><div class="txt">Breaches over time <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:9.5px;">· by risk band</span></div></div>
+          <div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V10M12 20V4M20 20v-7" stroke="#000" stroke-width="2.6" stroke-linecap="round"/></svg></span></div><div class="txt">Breaches over time <span style="color:var(--muted);font-weight:400;font-family:var(--mono);font-size:9.5px;">· by risk band, High at the base</span></div></div>
           <div class="seg" id="threatRange" role="group" aria-label="Time range">
             <button type="button" data-days="7" aria-pressed="false" onclick="setThreatRange(7)">7d</button>
             <button type="button" data-days="30" aria-pressed="true" onclick="setThreatRange(30)">30d</button>
             <button type="button" data-days="90" aria-pressed="false" onclick="setThreatRange(90)">90d</button>
           </div>
         </div>
+        <!-- G7 · the legend is RENDERED BY THE ENGINE, from the same paint call
+             the bands use, so the two cannot drift again. Hand-written, it had
+             drifted twice over: its Medium swatch still named --warn-bg after G6
+             re-pointed the band to --warn-series, and — measured in the browser —
+             none of its three swatches rendered at all, because every rule that
+             sizes .cx-legend i is scoped to .chart-host and this div was its
+             SIBLING. Three 0x0 chips and no gap: "High (>=70)Medium (40-69)". -->
         <div class="chart-host" id="threatTimeline" style="min-height:180px;"></div>
-        <div class="cx-legend" style="margin-top:4px;"><span><i style="background:var(--breach-bg)"></i>High (≥70)</span><span><i style="background:var(--warn-bg)"></i>Medium (40–69)</span><span><i style="background:var(--mute-series)"></i>Low (&lt;40)</span></div>
       </div>
       <div class="g2">
         <div class="clay pad">
@@ -3376,6 +3388,75 @@ async function loadLoginHistory(scope){
      extent instead of being eaten by its own separator. */
   var MIN_SEG=1;
   function segSep(extent,panel){ return (extent>=SEP_W*2)?(';stroke:'+panel+';stroke-width:'+SEP_W):''; }
+  /* G7 · #151 · THE RISK BAND STOPS DEPENDING ON HUE.
+     --warn-series #b8730d against --breach-bg #DC2626 is dE 3.3 to a deuteranope
+     by dataviz's validator and 6.6 by this repo's own Vienot _cvd_gap — both
+     under the floor of 8. #131 settled that no amber clears 3:1 against this
+     panel AND separates from breach-red, so the fill keeps its hue and identity
+     moves to a channel that is not colour.
+
+     TEXTURE, and F1's rejections do not reach it. F1 ruled out HUE ("the three
+     bands ARE the hue") and OPACITY / mixing toward the panel ("it composites a
+     status fill toward the background and drops it under 3:1"). A tone-on-tone
+     hatch is neither: the fill is untouched, and the ink is a DARKER step of the
+     band's own colour — #131's "soften toward a NEUTRAL, never toward the
+     panel", over a third of the area rather than all of it. Measured: the
+     composited band still clears 3:1 on its own panel in both themes (worst
+     3.9:1, dark High), so the thing F1 refused does not happen here. F1 went to
+     TYPE because it had to emphasise ONE bar out of thirty; this has to identify
+     THREE bands on every bar, and dataviz forbids a number on every mark.
+
+     ORDERED, because risk is a scale: 45deg for High, its 135deg mirror for
+     Medium, none for Low. Those are the only two angles dataviz allows (never
+     horizontal or vertical — they read as gridlines), they are 90deg apart,
+     which is the whole separation the channel has, and it lands on exactly the
+     pair that fails. Low stays solid as the low end of the rotation; grey
+     already separates from both (dE 13.2 light / 34.0 dark).
+
+     ⚠ BELOW TEX_MIN THERE IS NO TEXTURE, AND SAYING SO IS THE POINT. One tile is
+     the least that renders a legible stripe; under it a hatch degrades into
+     phase-dependent specks that state nothing. A 1px band — MIN_SEG, the one
+     High-risk day in a thousand that #112 exists to keep on screen — therefore
+     carries no in-mark encoding at all. Neither does the hue it has today, and
+     segSep already refuses its own stroke there for the same reason. What
+     identifies it is the one channel that survives a single pixel: the stack's
+     fixed order, High at the base, which drawStacked guarantees and the card's
+     subtitle now states. Truthfully small beats invisibly textured.
+
+     Emitted in BOTH themes. Dark separates on hue alone (dE 18.8), but a band
+     striped in one theme and plain in the other is two marks for one meaning. */
+  var TEX_TILE=6, TEX_MIN=6, TEX_BAR=2.1, TEX_INK='rgba(0,0,0,.45)';
+  var TEX_ANGLE={bad:45,warn:135};
+  function texId(host,tone){ return 'fxtex-'+tone+'-'+((host&&host.id)||'c'); }
+  /* Emitted for every textured tone in the series, never only for the segments
+     that happened to clear TEX_MIN — the legend swatch paints from the same
+     url() and would render as nothing on a chart of thin days. */
+  function texDefs(host,series){
+    var out='';
+    series.forEach(function(s,i){
+      var a=TEX_ANGLE[s.tone]; if(!a)return;
+      out+=S('pattern',{id:texId(host,s.tone),width:TEX_TILE,height:TEX_TILE,
+                        patternUnits:'userSpaceOnUse',
+                        patternTransform:'rotate('+a+')'},
+             S('rect',{width:TEX_TILE,height:TEX_TILE,style:'fill:'+toneColor(s.tone,i)})
+             +S('rect',{width:TEX_BAR,height:TEX_TILE,style:'fill:'+TEX_INK}));
+    });
+    return out?S('defs',{},out):'';
+  }
+  function bandPaint(host,tone,i,extent){
+    return (extent>=TEX_MIN&&TEX_ANGLE[tone])?('url(#'+texId(host,tone)+')')
+                                             :toneColor(tone,i);
+  }
+  /* The legend swatch is an SVG rect, not a styled <i>, for two reasons that
+     both bite. It has to be able to paint url(#pattern), so the key carries the
+     same texture as the mark; and MEASURED in headless Chrome with
+     --force-high-contrast, forced-colors overrides an HTML background-color
+     (every swatch collapses to Canvas and the legend keys nothing) while it
+     leaves an SVG fill alone. Same paint expression as the mark, one source. */
+  function swatch(paint){
+    return S('svg',{class:'cx-sw',width:10,height:10,'aria-hidden':'true'},
+             S('rect',{width:10,height:10,rx:3,style:'fill:'+paint}));
+  }
   function norm(o){
     if(o.series)return {labels:o.labels||[],series:o.series.map(function(s){return {name:s.name,tone:s.tone,values:(s.values||[]).map(function(v){return +v||0;})};})};
     var d=o.data||[]; return {labels:d.map(function(x){return x.label!=null?x.label:'';}),series:[{name:o.name,tone:o.tone,values:d.map(function(x){return +x.value||0;})}]};
@@ -3565,7 +3646,7 @@ async function loadLoginHistory(scope){
       +S('circle',{cx:0,cy:0,r:5.5,class:'cx-hov'})
       +S('rect',{x:pl,y:pt,width:Math.max(0,iw).toFixed(1),height:Math.max(0,ih).toFixed(1),class:'cx-hit'}); }
     host.innerHTML=svgWrap(W,H,grid+paths+dots+ends+xl+cross,o.aria||'line chart');
-    if(!spark&&o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span><i style="background:'+(s.tone?toneColor(s.tone,i):toneColor(null,i))+'"></i>'+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
+    if(!spark&&o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span>'+swatch(toneColor(s.tone,i))+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
     if(!spark){ wireTips(host,'.cx-dot'); wireCrosshair(host,{X:X,Y:Y,n:n,series:series,labels:labels,pl:pl,iw:iw,W:W}); }
   }
   // A crosshair answers a question the per-point dots cannot: "what was the
@@ -3612,15 +3693,18 @@ async function loadLoginHistory(scope){
     var panel=panelBg(host), touches=series.length>1;
     for(i=0;i<n;i++){ var yb=H-pb, bx=i*(bw+gap), parts=[];
       series.forEach(function(s,si){ var v=+s.values[i]||0; if(v>0){ var seg=Math.max(MIN_SEG,(v/max)*(H-pb-pt)); yb-=seg;
-        marks+=S('rect',{x:bx.toFixed(1),y:yb.toFixed(1),width:bw.toFixed(1),height:seg.toFixed(1),class:'cx-bar','data-cxi':i,style:'fill:'+(s.tone?toneColor(s.tone,si):toneColor(null,si))+(touches?segSep(seg,panel):'')}); }
+        marks+=S('rect',{x:bx.toFixed(1),y:yb.toFixed(1),width:bw.toFixed(1),height:seg.toFixed(1),class:'cx-bar','data-cxi':i,style:'fill:'+bandPaint(host,s.tone,si,seg)+(touches?segSep(seg,panel):'')}); }
         if(v>0)parts.push(esc(s.name||('S'+(si+1)))+': '+v); });
       labs+=S('text',{x:(bx+bw/2).toFixed(1),y:(H-6).toFixed(1),'text-anchor':'middle',class:(i===fi?'cx-focus':'cx-axis')},esc(String(labels[i]!=null?labels[i]:'')));
       // a stack's direct label is its TOTAL — the per-band split is the tooltip's
       // job and is already there. yb is the top of the stack at this point.
       if(i===fi&&bw>=14&&totals[i]>0)labs+=S('text',{x:(bx+bw/2).toFixed(1),y:(yb-6).toFixed(1),'text-anchor':'middle',class:'cx-val'},esc(String(totals[i])));
       tips.push('<b>'+esc(String(labels[i]!=null?labels[i]:''))+'</b><br>'+parts.join('<br>')+'<br>total '+totals[i]); }
-    host.__tips=tips; host.innerHTML=svgWrap(W,H,marks+labs,o.aria||'stacked bar chart');
-    if(o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span><i style="background:'+(s.tone?toneColor(s.tone,i):toneColor(null,i))+'"></i>'+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
+    host.__tips=tips; host.innerHTML=svgWrap(W,H,texDefs(host,series)+marks+labs,o.aria||'stacked bar chart');
+    /* The swatch paints at TEX_MIN, not at whatever this chart's segments came
+       out at: the key states what the band MEANS, and a legend that dropped its
+       hatch on a quiet week would be keying the week rather than the band. */
+    if(o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span>'+swatch(bandPaint(host,s.tone,i,TEX_MIN))+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
     wireTips(host,'.cx-bar');
   }
   function drawDonut(host,o){
@@ -3640,7 +3724,7 @@ async function loadLoginHistory(scope){
     host.__tips=tips;
     var center=o.center!=null?S('text',{x:cx,y:(cy+size*0.05).toFixed(1),'text-anchor':'middle',style:'fill:var(--ink);font-family:var(--disp);font-weight:800;font-size:'+(size*0.16).toFixed(0)+'px'},esc(String(o.center))):'';
     var svg=S('svg',{viewBox:'0 0 '+size+' '+size,width:size,height:size,style:'width:'+size+'px;max-width:100%;flex-shrink:0',role:'img','aria-label':o.aria||'donut chart'},arcs+center);
-    var legend=o.legend===false?'':'<div class="cx-legend" style="flex-direction:column;gap:7px">'+d.map(function(x,i){return '<span><i style="background:'+toneColor(x.tone,i)+'"></i>'+esc(String(x.label))+' · '+esc(String(+x.value||0))+'</span>';}).join('')+'</div>';
+    var legend=o.legend===false?'':'<div class="cx-legend" style="flex-direction:column;gap:7px">'+d.map(function(x,i){return '<span>'+swatch(toneColor(x.tone,i))+esc(String(x.label))+' · '+esc(String(+x.value||0))+'</span>';}).join('')+'</div>';
     host.innerHTML='<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:center;">'+svg+legend+'</div>';
     wireTips(host,'.cx-arc');
   }
@@ -5635,11 +5719,13 @@ async function loadLoginHistory(scope){
     let d; try{ d=await (await api('/v1/analytics/timeseries?days='+_threatDays)).json(); }catch(e){ d=null; }
     const days=(d&&Array.isArray(d.days))?d.days:[];
     if(!days.length){ window.foxChart('threatTimeline',{type:'stacked',height:180,labels:[],series:[],empty:{title:'No breaches in this window',desc:'Breaches appear here as the Judge flags interactions.'}}); return; }
+    // The thresholds ride on the series names because the engine now renders the
+    // legend from them; they are the same numbers the hand-written legend carried.
     window.foxChart('threatTimeline',{type:'stacked',height:180,labels:days.map(x=>x.day),series:[
-      {name:'High',tone:'bad',values:days.map(x=>x.high||0)},
-      {name:'Medium',tone:'warn',values:days.map(x=>x.medium||0)},
-      {name:'Low',tone:'mute',values:days.map(x=>x.low||0)}
-    ],focus:'last',aria:'breaches per day by risk band'});
+      {name:'High (≥70)',tone:'bad',values:days.map(x=>x.high||0)},
+      {name:'Medium (40–69)',tone:'warn',values:days.map(x=>x.medium||0)},
+      {name:'Low (<40)',tone:'mute',values:days.map(x=>x.low||0)}
+    ],legend:true,focus:'last',aria:'breaches per day by risk band, stacked with High at the base'});
   }
   async function loadByAgent(){
     const host=$('threatByAgent'); if(!host||!window.foxChart)return;

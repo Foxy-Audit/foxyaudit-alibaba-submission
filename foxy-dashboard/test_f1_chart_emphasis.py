@@ -218,7 +218,15 @@ def test_the_two_charts_that_were_given_the_treatment_actually_ask_for_it() -> N
     src = SRC
     ana = src[src.index("window.foxChart('ana7d'"):][:400]
     assert "focus:'last'" in ana, "ana7d lost its focal mark: %s" % ana[:200]
-    timeline = src[src.index("window.foxChart('threatTimeline',{type:'stacked',height:180,labels:"):][:600]
+    # ⚠ THE EMPTY-STATE CALL COMES FIRST and shares this prefix. A fixed 600-char
+    # window off index() covered both while the call was short; G7 added
+    # `legend:true` and longer series names and pushed focus:'last' out of it,
+    # which reads as "the timeline lost its focal mark". Take the LAST call.
+    hits = [m.start() for m in re.finditer(
+        re.escape("window.foxChart('threatTimeline',{type:'stacked'"), src)]
+    assert len(hits) == 2, "expected an empty-state call and a data call, got %d" % len(hits)
+    timeline = src[hits[-1]:hits[-1] + 700]
+    assert "series:[" in timeline and "tone:'bad'" in timeline, timeline[:200]
     assert "focus:'last'" in timeline, "the threat timeline lost its focal mark"
 
 
@@ -291,11 +299,32 @@ def test_the_gauge_no_longer_starts_from_a_fill_that_fails(css) -> None:
 
 
 def test_the_threat_legend_swatch_matches_the_band_it_names() -> None:
-    """The legend is hand-written markup next to a generated chart, so the two
-    drift silently. Low is TONE.mute; the swatch has to be the same step or the
-    key lies about the picture."""
-    legend = SRC[SRC.index('Low (&lt;40)') - 400:SRC.index('Low (&lt;40)')]
-    assert "var(--mute-series)" in legend, legend[-200:]
+    """RE-AIMED BY G7 (#151), NOT DELETED — ITS SUBJECT WAS REMOVED, ITS JOB WAS NOT.
+
+    It read the hand-written legend markup and checked Low's swatch named
+    --mute-series. Two things were wrong with that. It only ever covered Low, so
+    it watched the one swatch that had not drifted while Medium still named
+    --warn-bg; and measured in the browser, NONE of those three swatches rendered
+    at all — every rule that sizes `.cx-legend i` is scoped to `.chart-host` and
+    that div was the chart host's SIBLING, so the legend read
+    "High (>=70)Medium (40-69)Low (<40)" with no chips and no gaps.
+
+    G7 deleted the markup and made the engine render the legend, so there is no
+    hand-written swatch left to check. The job survives: read the tones out of
+    the SHIPPED call, render THAT, and assert each swatch paints exactly what its
+    band paints. Now it covers all three, and it is tied to the real call rather
+    than to a fixture."""
+    from test_g7_band_texture import _SWATCH, _fills, _timeline_call
+
+    call = _timeline_call()
+    tones = re.findall(r"tone:'(\w+)'", call)
+    assert tones == ["bad", "warn", "mute"], "the shipped bands changed: %s" % tones
+    svg = _render({"type": "stacked", "height": 180, "labels": ["d1"],
+                   "series": [{"name": n, "tone": t, "values": [6]}
+                              for n, t in zip(("High", "Medium", "Low"), tones)],
+                   "legend": True})
+    assert _SWATCH.findall(svg) == _fills(svg), (
+        "legend paints %s, the bands paint %s" % (_SWATCH.findall(svg), _fills(svg)))
 
 
 # ── #113 · the amber that could not move ────────────────────────────────────
@@ -367,13 +396,46 @@ def test_the_medium_band_still_separates_from_the_high_one(themes) -> None:
 
     Below 8 is dataviz's floor and it is not reachable with any amber that also
     passes contrast, so failing this means somebody traded the wrong one away.
+
+    ── RE-AIMED BY G7 (#151), NOT DELETED — IT WAS MEASURING A COLOUR NOBODY DREW.
+
+    Everything above is the history. What it did NOT survive is G6 re-pointing
+    the band from --warn-bg to --warn-series: this kept reading the old token and
+    asserted dE 19.1 while the chart painted 6.6. A green suite over a shipped
+    defect, and the second time this file has proved that a guard must measure
+    what is EMITTED rather than what is declared.
+
+    The invariant is still right — the two bands touch and the legend cannot undo
+    that — but the answer changed. #131 closed the amber sweep, so G7 kept the
+    hue and moved identity to a 45/135 deg tone-on-tone hatch. This now asserts
+    the invariant in the form that shipped: the pair is distinguishable EITHER on
+    hue OR by the texture channel.
+
+    Pull the hatch while the hue still measures 6.6 and this goes red. Find an
+    amber that clears 8 on hue alone and it goes green with the hatch gone —
+    which is the day the hatch stops being load-bearing. The measurement of the
+    ANGLE lives in test_g7_band_texture.py, which rasterises it.
     """
+    from test_g7_band_texture import _patterns
+
+    textured = set(_patterns(_render(_STACK_TOUCHING)))
     for theme, tokens in themes.items():
-        gap = _cvd_gap(tokens["warn-bg"], tokens["breach-bg"])
-        assert gap >= 8.0, (
-            "%s: Medium and High are dE %.1f apart to a deuteranope — they are "
-            "stacked segments that touch, and the legend cannot undo that"
-            % (theme, gap))
+        gap = _cvd_gap(tokens["warn-series"], tokens["breach-bg"])
+        if gap >= 8.0:
+            continue                                  # hue alone still does it
+        assert textured >= {"fxtex-bad-c", "fxtex-warn-c"}, (
+            "%s: Medium and High are dE %.1f apart to a deuteranope, under the "
+            "floor of 8, and the bands carry no texture either (%s). They are "
+            "stacked segments that touch, and the legend cannot undo that."
+            % (theme, gap, sorted(textured) or "none"))
+
+
+_STACK_TOUCHING = {
+    "type": "stacked", "height": 180, "labels": ["d1"],
+    "series": [{"name": "High", "tone": "bad", "values": [6]},
+               {"name": "Medium", "tone": "warn", "values": [6]},
+               {"name": "Low", "tone": "mute", "values": [6]}],
+}
 
 
 def test_the_two_bands_that_touch_are_the_ones_being_measured() -> None:
