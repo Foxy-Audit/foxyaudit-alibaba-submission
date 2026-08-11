@@ -3424,8 +3424,38 @@ async function loadLoginHistory(scope){
      subtitle now states. Truthfully small beats invisibly textured.
 
      Emitted in BOTH themes. Dark separates on hue alone (dE 18.8), but a band
-     striped in one theme and plain in the other is two marks for one meaning. */
-  var TEX_TILE=6, TEX_MIN=6, TEX_BAR=2.1, TEX_INK='rgba(0,0,0,.45)';
+     striped in one theme and plain in the other is two marks for one meaning.
+
+     ── G7.1 · THE GATE WAS IN THE WRONG PLACE, AND THE TILE IS WHY.
+     seg is RELATIVE — (v/max)*(H-pb-pt) over a ~138px plot — so an absolute
+     6px gate meant "at least 4.4% of the peak column". Breach data is spiky by
+     nature; if it were flat nobody would need this chart. Driven against a
+     30-day window with one incident day at 13x, **4 of 60 High/Medium bands
+     carried the hatch**. The encoding was absent on every ordinary day and
+     present only on the day that was already obvious from its height.
+
+     The gate itself is right — one full tile, or the hatch degrades into
+     phase-dependent specks. What was wrong is that the TILE was too coarse, so
+     "one tile" landed at 6px, in the middle of the typical band distribution
+     (median band on that window: 7.9px). Making the tile finer lowers the gate
+     without loosening the rule.
+
+     4px IS MEASURED, NOT PICKED. A structure tensor recovers the 90deg
+     separation down to its own 3-row stencil, which is a machine floor and
+     says nothing about a person, so the ladder was rendered at 1:1 and looked
+     at: at 2px both angles read as a solid line, at 3px as dots with no
+     readable lean, and at 4px the alternating dashes visibly lean. A finer
+     tile reads BETTER at small heights (more arms sampled), and at large ones
+     it is only slightly finer.
+
+     Coverage on that same window goes 7% -> 42%; on a moderate 4x spike
+     73% -> 100%; on 90 days 44% -> 64%. It does NOT reach every band, and it
+     cannot: below 4px nothing fits. Which is why the legend stopped claiming
+     it — see the swatch rule in drawStacked. */
+  var TEX_TILE=4, TEX_BAR=1.4, TEX_INK='rgba(0,0,0,.45)';
+  /* ONE number, derived. TEX_MIN was a second constant that could drift away
+     from the tile it describes; the rule is "one full tile fits", so say that. */
+  var TEX_MIN=TEX_TILE;
   var TEX_ANGLE={bad:45,warn:135};
   function texId(host,tone){ return 'fxtex-'+tone+'-'+((host&&host.id)||'c'); }
   /* Emitted for every textured tone in the series, never only for the segments
@@ -3690,10 +3720,12 @@ async function loadLoginHistory(scope){
     var marks='', labs='', tips=[];
     /* C0 · once per chart: panelBg walks ancestors and getComputedStyle is the
        expensive call in this loop. One series stacks against nothing. */
-    var panel=panelBg(host), touches=series.length>1;
+    var panel=panelBg(host), touches=series.length>1, hatched={};
     for(i=0;i<n;i++){ var yb=H-pb, bx=i*(bw+gap), parts=[];
       series.forEach(function(s,si){ var v=+s.values[i]||0; if(v>0){ var seg=Math.max(MIN_SEG,(v/max)*(H-pb-pt)); yb-=seg;
-        marks+=S('rect',{x:bx.toFixed(1),y:yb.toFixed(1),width:bw.toFixed(1),height:seg.toFixed(1),class:'cx-bar','data-cxi':i,style:'fill:'+bandPaint(host,s.tone,si,seg)+(touches?segSep(seg,panel):'')}); }
+        var paint=bandPaint(host,s.tone,si,seg);
+        if(paint.indexOf('url(')===0)hatched[s.tone]=true;
+        marks+=S('rect',{x:bx.toFixed(1),y:yb.toFixed(1),width:bw.toFixed(1),height:seg.toFixed(1),class:'cx-bar','data-cxi':i,style:'fill:'+paint+(touches?segSep(seg,panel):'')}); }
         if(v>0)parts.push(esc(s.name||('S'+(si+1)))+': '+v); });
       labs+=S('text',{x:(bx+bw/2).toFixed(1),y:(H-6).toFixed(1),'text-anchor':'middle',class:(i===fi?'cx-focus':'cx-axis')},esc(String(labels[i]!=null?labels[i]:'')));
       // a stack's direct label is its TOTAL — the per-band split is the tooltip's
@@ -3701,10 +3733,20 @@ async function loadLoginHistory(scope){
       if(i===fi&&bw>=14&&totals[i]>0)labs+=S('text',{x:(bx+bw/2).toFixed(1),y:(yb-6).toFixed(1),'text-anchor':'middle',class:'cx-val'},esc(String(totals[i])));
       tips.push('<b>'+esc(String(labels[i]!=null?labels[i]:''))+'</b><br>'+parts.join('<br>')+'<br>total '+totals[i]); }
     host.__tips=tips; host.innerHTML=svgWrap(W,H,texDefs(host,series)+marks+labs,o.aria||'stacked bar chart');
-    /* The swatch paints at TEX_MIN, not at whatever this chart's segments came
-       out at: the key states what the band MEANS, and a legend that dropped its
-       hatch on a quiet week would be keying the week rather than the band. */
-    if(o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span>'+swatch(bandPaint(host,s.tone,i,TEX_MIN))+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
+    /* G7.1 · THE SWATCH KEYS WHAT WAS ACTUALLY DRAWN, tone by tone: hatched
+       only where at least one band of that tone cleared TEX_MIN in THIS render.
+
+       It used to paint at TEX_MIN unconditionally, reasoning that the key states
+       what the band MEANS and should not follow a quiet week. That reasoning is
+       wrong in the one direction that matters here. Below the gate no band
+       carries the hatch, and a key showing one then advertises an encoding the
+       marks do not have — the single defect class this repo has shipped most
+       often, and exactly what the legend this phase deleted was doing in source.
+       A key that overstates is worse than one that follows its data.
+
+       The colour and the label are unchanged either way, and the stack order
+       that identifies a sub-gate band is stated in the card subtitle. */
+    if(o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span>'+swatch(hatched[s.tone]?bandPaint(host,s.tone,i,TEX_MIN):toneColor(s.tone,i))+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
     wireTips(host,'.cx-bar');
   }
   function drawDonut(host,o){

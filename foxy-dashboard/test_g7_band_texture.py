@@ -210,7 +210,7 @@ def test_the_two_bands_separate_by_stripe_angle_to_a_deuteranope(themes) -> None
     of the channel, and the hue underneath it is dE 3.3."""
     svg = _render(_THREE_BANDS)
     pats = _patterns(svg)
-    assert set(pats) == {"fxtex-bad-c", "fxtex-warn-c"}, (
+    assert set(pats) == {"fxtex-bad-threatTimeline", "fxtex-warn-threatTimeline"}, (
         "expected exactly the High and Medium hatches, got %s" % sorted(pats))
 
     # ⚠ A DEFINED PATTERN IS NOT A PAINTED ONE. Mutation-tested: stubbing
@@ -233,8 +233,8 @@ def test_the_two_bands_separate_by_stripe_angle_to_a_deuteranope(themes) -> None
                 "deuteranope. The angle is still 90 deg apart and completely "
                 "unreadable." % (theme, pid, amp))
     for theme, tokens in themes.items():
-        hi = _orientation(_deutan_luma_field(pats["fxtex-bad-c"], tokens))
-        med = _orientation(_deutan_luma_field(pats["fxtex-warn-c"], tokens))
+        hi = _orientation(_deutan_luma_field(pats["fxtex-bad-threatTimeline"], tokens))
+        med = _orientation(_deutan_luma_field(pats["fxtex-warn-threatTimeline"], tokens))
         gap = _apart(hi, med)
         assert gap >= 80.0, (
             "%s: High and Medium read %.1f deg and %.1f deg to a deuteranope, "
@@ -373,14 +373,145 @@ def test_the_legend_swatch_paints_exactly_what_the_band_paints() -> None:
         "legend paints %s, the bands paint %s" % (swatches, drawn))
 
 
-def test_the_legend_swatch_keeps_its_texture_on_a_quiet_week() -> None:
-    """The swatch paints at TEX_MIN, not at whatever this chart's segments came
-    out at. A key that dropped its hatch because the week was quiet would be
-    keying the week rather than the band."""
-    swatches = _SWATCH.findall(_render(_ONE_HIGH_DAY))
-    assert sum("url(" in s for s in swatches) == 2, (
-        "expected the High and Medium keys to stay hatched on a thin chart, got %s"
-        % swatches)
+def test_the_legend_never_claims_an_encoding_the_marks_do_not_carry() -> None:
+    """G7.1 INVERTED THIS GUARD'S RULE, deliberately, and kept it aimed here.
+
+    It used to assert the opposite — the swatch painted at TEX_MIN whatever the
+    data did, reasoning that a key states what the band MEANS and should not
+    follow a quiet week. Wrong in the one direction that matters: where no band
+    of a tone clears the gate, a hatched key advertises an encoding the marks do
+    not have. That is the single defect class this repo has shipped most often,
+    and it is what the legend G7 deleted was doing in source.
+
+    So the rule is now PER TONE and read off what was drawn. The fixture is the
+    thin case: High=1 is below the gate and must key SOLID, Medium=400 is above
+    it and must key HATCHED — in the same legend, from the same render."""
+    svg = _render(_ONE_HIGH_DAY)
+    swatches = _SWATCH.findall(svg)
+    fills = _fills(svg)
+    hatched_tones = {re.search(r"fxtex-(\w+)-", f).group(1) for f in fills if "url(" in f}
+    assert hatched_tones == {"warn"}, (
+        "fixture drifted: expected only Medium to clear the gate, got %s" % hatched_tones)
+    assert [("url(" in s) for s in swatches] == [False, True, False], (
+        "the key does not match what was drawn. bands=%s swatches=%s" % (fills, swatches))
+
+
+# ══ G7.1 · the gate, measured on the shape this chart is for ════════════════
+# One incident day at ~13x against ordinary days. Breach data is spiky by
+# nature — if it were flat nobody would need the chart — so THIS is the typical
+# window, not the extreme, and it is what the gate has to be judged on.
+_SPIKY = {
+    "type": "stacked", "height": 180, "focus": "last", "legend": True,
+    "labels": [str(i) for i in range(30)],
+    "series": [
+        {"name": "High", "tone": "bad", "values":
+         [3, 2, 4, 1, 3, 2, 5, 2, 3, 4, 2, 1, 3, 2, 4, 3, 2, 40, 3, 2,
+          4, 1, 3, 2, 5, 2, 3, 4, 2, 3]},
+        {"name": "Medium", "tone": "warn", "values":
+         [4, 3, 5, 2, 4, 3, 6, 3, 4, 5, 3, 2, 4, 3, 5, 4, 3, 55, 4, 3,
+          5, 2, 4, 3, 6, 3, 4, 5, 3, 4]},
+        {"name": "Low", "tone": "mute", "values":
+         [2, 4, 3, 5, 2, 6, 3, 2, 4, 3, 5, 2, 3, 4, 2, 5, 3, 30, 2, 4,
+          3, 5, 2, 6, 3, 2, 4, 3, 5, 2]}],
+}
+
+
+def test_the_typical_spiky_window_mostly_carries_the_encoding() -> None:
+    """THE GUARD G7 DID NOT HAVE, and the reason G7.1 exists.
+
+    `seg` is RELATIVE — (v/max)*(H-pb-pt) — so an ABSOLUTE gate is a percentage
+    of the peak column. At TEX_MIN=6 on a ~138px plot that was 4.4% of the peak,
+    and on this window **4 of 60** High/Medium bands carried the hatch: absent on
+    every ordinary day, present only on the day already obvious from its height.
+
+    The number is asserted, not the threshold, because a threshold nobody
+    measured is how the first one got chosen. Measured after the tile went
+    6px -> 4px: 25/60. The floor is set below that so a small re-tune does not
+    fail the suite, but far above the 4/60 this replaced.
+
+    ⚠ This deliberately does NOT demand 100%. Below one tile nothing fits, and
+    the honest answer there is the stack order plus a legend that stops
+    claiming a hatch — see the two tests either side of this one."""
+    svg = _render(_SPIKY)
+    hm = [(f, h) for f, h in zip(_fills(svg), _heights(svg))
+          if "mute-series" not in f]
+    assert len(hm) == 60, "fixture drifted: %d High/Medium bands" % len(hm)
+    got = sum(1 for f, _ in hm if "url(" in f)
+    assert got >= 20, (
+        "only %d of %d High/Medium bands carry the hatch (%.0f%%). The gate is "
+        "an absolute px threshold on a relative quantity, so it drifts with the "
+        "spikiness of the data; it was 4/60 before the tile was made finer."
+        % (got, len(hm), 100.0 * got / len(hm)))
+
+
+def test_the_gate_is_one_full_tile_and_the_tile_is_what_was_measured() -> None:
+    """The rule is 'one full tile fits', so TEX_MIN is DERIVED from TEX_TILE
+    rather than being a second constant that can drift away from the thing it
+    describes.
+
+    4px is measured, not picked: a structure tensor recovers the 90 deg
+    separation down to its own 3-row stencil, which is a machine floor and says
+    nothing about a person, so the ladder was rendered at 1:1 and looked at —
+    2px reads as a solid line, 3px as dots with no readable lean, 4px as
+    alternating dashes that visibly lean."""
+    engine = SRC[SRC.index("var TEX_TILE="):SRC.index("function texId")]
+    assert "var TEX_MIN=TEX_TILE;" in engine, (
+        "TEX_MIN is no longer derived from the tile: %r" % engine[-200:])
+    assert "var TEX_TILE=4," in engine, "the measured tile changed: %r" % engine[:60]
+    # ...and the gate must actually be the tile at render time, not just in source.
+    pats = _patterns(_render(_THREE_BANDS))
+    tiles = {p["tile"] for p in pats.values()}
+    assert tiles == {4.0}, "the emitted tile is %s" % tiles
+    thin = _render({**_THREE_BANDS,
+                    "series": [{**s, "values": [4, 4]} if s["tone"] == "bad"
+                               else {**s, "values": [1000, 1000]}
+                               for s in _THREE_BANDS["series"]]})
+    heights = dict(zip(_fills(thin), _heights(thin)))
+    assert any("url(" in f and h >= 4.0 for f, h in heights.items()), heights
+
+
+def test_the_guards_render_the_id_production_actually_uses() -> None:
+    """⚠ EVERY GUARD IN THIS FILE USED TO EXERCISE A PATH PRODUCTION NEVER TAKES.
+
+    texId namespaces its <pattern> ids by host.id, and every foxChart call in the
+    shipped file passes one. The node shim's host had none, so all of them fell
+    through to texId's 'c' fallback — meaning a texDefs/bandPaint mismatch in the
+    REAL path would emit an unresolvable url(#...), which SVG renders as nothing
+    at all, and the suite would stay green.
+
+    The shim carries an id now. This pins that, so nobody quietly removes it."""
+    ids = set(_patterns(_render(_THREE_BANDS)))
+    assert ids == {"fxtex-bad-threatTimeline", "fxtex-warn-threatTimeline"}, (
+        "the guards are not rendering the production id path: %s" % sorted(ids))
+
+
+def test_the_no_id_fallback_still_resolves() -> None:
+    """The 'c' fallback is unreachable from the shipped calls but it is still
+    live code, and an id that does not match between texDefs and bandPaint paints
+    NOTHING. Kept covered explicitly rather than by accident."""
+    from test_c0_chart_segments import _SHIM, _chart_source
+    import json as _json, subprocess as _sp, tempfile as _tf
+    from pathlib import Path as _P
+
+    probe = (_SHIM + _chart_source()
+             + "\nvar parent=El('rgb(242, 240, 238)',null), "
+               "host=El('rgba(0, 0, 0, 0)', parent, '');\n"
+             + "window.foxChart(host, " + _json.dumps(_THREE_BANDS) + ");\n"
+             + "console.log(JSON.stringify(host.innerHTML));\n")
+    with _tf.TemporaryDirectory() as tmp:
+        path = _P(tmp) / "chart.js"
+        path.write_text(probe, encoding="utf-8")
+        proc = _sp.run([shutil.which("node"), str(path)],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, proc.stderr
+    svg = _json.loads(proc.stdout.strip().splitlines()[-1])
+    defined = set(_patterns(svg))
+    used = {re.search(r"url\(#([^)]+)\)", f).group(1)
+            for f in _fills(svg) if "url(" in f}
+    assert defined == {"fxtex-bad-c", "fxtex-warn-c"}, sorted(defined)
+    assert used == defined, (
+        "an id-less host defines %s but paints %s — an unresolvable url() renders "
+        "a BLANK band" % (sorted(defined), sorted(used)))
 
 
 def test_no_legend_swatch_is_an_html_background() -> None:

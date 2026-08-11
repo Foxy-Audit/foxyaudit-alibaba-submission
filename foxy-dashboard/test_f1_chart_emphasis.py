@@ -423,7 +423,7 @@ def test_the_medium_band_still_separates_from_the_high_one(themes) -> None:
         gap = _cvd_gap(tokens["warn-series"], tokens["breach-bg"])
         if gap >= 8.0:
             continue                                  # hue alone still does it
-        assert textured >= {"fxtex-bad-c", "fxtex-warn-c"}, (
+        assert textured >= {"fxtex-bad-threatTimeline", "fxtex-warn-threatTimeline"}, (
             "%s: Medium and High are dE %.1f apart to a deuteranope, under the "
             "floor of 8, and the bands carry no texture either (%s). They are "
             "stacked segments that touch, and the legend cannot undo that."

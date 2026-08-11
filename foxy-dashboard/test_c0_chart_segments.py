@@ -53,7 +53,14 @@ PANEL = "rgb(242, 240, 238)"
 
 _SHIM = """
 var PANEL='%s';
-function El(bg,parent){ return {nodeType:1,parentElement:parent||null,__bg:bg,
+// G7.1 · THE SHIM CARRIES AN id, BECAUSE PRODUCTION ALWAYS DOES. Every
+// foxChart call passes a host id string, and texId namespaces its <pattern>
+// ids by it. A shim without one sent every guard down texId's 'c' fallback, so
+// a texDefs/bandPaint mismatch in the SHIPPING path would emit an unresolvable
+// url(#...) -- which SVG renders as NOTHING, a blank band -- and stay green.
+// The fallback keeps its own explicit test; see test_g7_band_texture.py.
+function El(bg,parent,id){ return {nodeType:1,parentElement:parent||null,__bg:bg,
+  id:(id===undefined?'threatTimeline':id),
   clientWidth:400, innerHTML:'', __attrs:{},
   classList:{add:function(){},remove:function(){}},
   setAttribute:function(k,v){this.__attrs[k]=v;},
