@@ -44,3 +44,8 @@ foxy-adminpage/icons/
 # token, so a commit would not be an incident — but gitleaks would not flag it
 # either, and a deployment config in the repo is wrong whatever it holds.
 foxy-checkout/config.js
+
+# Full-stack E2E run state: the isolated venv, the SDK spool (which holds the
+# live API key), sentinel prompts, screenshots, and the generated --live-judge
+# compose override. Everything here is per-run and some of it is secret.
+e2e/.artifacts/

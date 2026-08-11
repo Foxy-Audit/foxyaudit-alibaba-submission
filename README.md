@@ -188,6 +188,25 @@ python demo/mock_llm.py --scenario all  # drive the host-side guard with a mock 
 For the full live GPT-5.6 path, `demo/live_openai_client.py` makes a real Responses API call wrapped
 by `@foxy.audit` — see [docs/OPENAI_BUILD_WEEK_SUBMISSION.md](docs/OPENAI_BUILD_WEEK_SUBMISSION.md).
 
+### End-to-end, on a running stack
+
+```bash
+python e2e/run_e2e.py
+```
+
+One command. It brings the compose stack up, drives the SDK **as `pip install` produces it** over
+real HTTP, waits for the grading worker, asserts the customer API, and signs into the dashboard in a
+real browser to screenshot the ledger. Exit code 0 = pass; the last line is a machine-readable
+`E2E_SUMMARY {...}`.
+
+Its most valuable assertion is that the raw prompt and response text appear **nowhere** — not in any
+`/v1/*` body, not in the export bundle, not in **any column of any table**, not in the rendered
+dashboard DOM — checked with distinctive sentinel strings, alongside a negative control that fails
+the run if the search itself stops working.
+
+[e2e/README.md](e2e/README.md) says what it proves **and what it does not**. The second half is the
+shorter read and the more useful one.
+
 <br>
 
 ## 🤖 How this was built with Codex / GPT-5.6
