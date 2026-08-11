@@ -1043,6 +1043,10 @@ textarea.cin{font-family:var(--mono);font-size:11px;resize:vertical;min-height:7
    on a 10px chip is the one place a transparent edge would survive HCM and
    look like a missing swatch (register #147). */
 .chart-host .cx-legend .cx-sw{width:10px;height:10px;flex-shrink:0;display:block;}
+/* G8 · the donut's direct label. --ink on the PANEL plate the arc label sits
+   on, never on the fill: measured, no single ink clears 4.5:1 across all eight
+   tones in both themes. Text wears a text token, which is dataviz's rule. */
+.chart-host .cx-arclabel{fill:var(--ink);font-family:var(--mono);font-size:9px;font-weight:600;}
 .chart-host .cx-gauge-track{fill:var(--bg);stroke:var(--bc);stroke-width:2;}
 /* §12 · the endpoint reports "this is the latest datum"; the crosshair answers
    "what was the value here?". Both are motion that says something. */
@@ -3749,10 +3753,44 @@ async function loadLoginHistory(scope){
     if(o.legend&&series.length>1){ host.insertAdjacentHTML('beforeend','<div class="cx-legend">'+series.map(function(s,i){return '<span>'+swatch(hatched[s.tone]?bandPaint(host,s.tone,i,TEX_MIN):toneColor(s.tone,i))+esc(s.name||('Series '+(i+1)))+'</span>';}).join('')+'</div>'); }
     wireTips(host,'.cx-bar');
   }
+  /* G8 · #152 · THE ARC SAYS ITS OWN NAME, wherever there is room for it.
+
+     A REORDER CANNOT FIX THIS DONUT, AND THE ARITHMETIC SAYS SO. Zero-value
+     slices are filtered out one line below, so the arcs are the NON-ZERO
+     SUBSET, cyclically adjacent — and in a cycle every slice has exactly two
+     neighbours, so at three slices or fewer EVERY pair is adjacent whatever
+     order the array is in. Driven over all 120 non-empty subsets of the seven
+     verdict slices, the tone fix and the reorder together take the count with
+     a sub-floor adjacency from 88 to 67. Real, and nowhere near enough: 67 of
+     120 still fail, because at three slices or fewer no order can help. A
+     healthy tenant is Clean + Pending, and those two touch no matter what.
+
+     So the reorder ships, because it is free and it does fix the full array.
+     But the REMEDY is here: identity stops depending on hue at all.
+
+     SELECTIVE, because dataviz's rule is that direct labels work *because* they
+     are sparing. A label is drawn only where its own arc can hold it — which is
+     exactly the few-large-slices case a reorder cannot help. A crowded
+     seven-slice donut keeps the legend, which is filtered to the same subset in
+     the same order, so legend row k is always arc k.
+
+     ON A PLATE IN THE PANEL COLOUR, not inked onto the fill. Measured: no
+     single ink clears 4.5:1 on all eight tones in both themes — white fails on
+     warn in light (3.82), black fails on mute in dark (4.49) — and a per-fill
+     choice would need the resolved hex, which is still a var() here. The panel
+     is already resolved for segSep, and --ink on it is 14.5:1 light / 15.8:1
+     dark for every tone, with no arithmetic at all.
+
+     Tangential, and never upside-down: past the half-turn the baseline flips. */
+  /* The plate's padding IS the fit threshold, so it is one constant, not two
+     that can disagree. 6px was measured, not guessed: at 3px a side the plate
+     still reads as a plate, and it is what lets a 13% slice — a healthy
+     tenant's Pending — carry its name instead of missing the cut by 4.5px. */
+  var ARC_FS=9, ARC_ADV=0.60, ARC_PAD=6;   // px; ARC_ADV is JetBrains Mono's advance at 1em
   function drawDonut(host,o){
     var d=(o.data||[]).filter(function(x){return (+x.value||0)>0;}); if(!d.length){host.innerHTML=emptyMarkup(o);return;}
     var total=d.reduce(function(a,x){return a+(+x.value||0);},0);
-    var size=o.height||150, cx=size/2, cy=size/2, r=size/2-6, rin=r*0.58, ang=-Math.PI/2, arcs='', tips=[];
+    var size=o.height||150, cx=size/2, cy=size/2, r=size/2-6, rin=r*0.58, ang=-Math.PI/2, arcs='', labels='', tips=[];
     /* C0 · adjacent arcs share a radial edge. The thin test is the arc's own
        OUTER length, not its value: a 1% slice is a few px wide and a stroke on
        both radial edges would close over it, dropping a real grading status. */
@@ -3762,10 +3800,30 @@ async function loadLoginHistory(scope){
       var ix2=cx+rin*Math.cos(a2),iy2=cy+rin*Math.sin(a2),ix1=cx+rin*Math.cos(ang),iy1=cy+rin*Math.sin(ang);
       var p='M'+x1.toFixed(2)+','+y1.toFixed(2)+'A'+r+','+r+' 0 '+large+' 1 '+x2.toFixed(2)+','+y2.toFixed(2)+'L'+ix2.toFixed(2)+','+iy2.toFixed(2)+'A'+rin+','+rin+' 0 '+large+' 0 '+ix1.toFixed(2)+','+iy1.toFixed(2)+'Z';
       arcs+=S('path',{d:p,class:'cx-arc','data-cxi':i,style:'fill:'+toneColor(x.tone,i)+(touches?segSep(frac*Math.PI*2*r,panel):'')});
+      // The fit test is the arc's own geometry: its length at the band's mid
+      // radius against the label's width, and the band's depth against the
+      // plate's height. Nothing here reads the slice COUNT — a two-slice donut
+      // and the two big slices of a seven-slice one get the same answer.
+      var rm=(r+rin)/2, tw=String(x.label==null?'':x.label).length*ARC_FS*ARC_ADV;
+      if(frac*Math.PI*2*rm>=tw+ARC_PAD && (r-rin)>=ARC_FS+8){
+        var am=ang+frac*Math.PI, lx=cx+rm*Math.cos(am), ly=cy+rm*Math.sin(am);
+        var deg=am*180/Math.PI+90; if(deg>90&&deg<270)deg-=180;
+        labels+=S('g',{transform:'rotate('+deg.toFixed(1)+' '+lx.toFixed(1)+' '+ly.toFixed(1)+')'},
+          S('rect',{x:(lx-tw/2-ARC_PAD/2).toFixed(1),y:(ly-ARC_FS/2-4).toFixed(1),
+                    width:(tw+ARC_PAD).toFixed(1),height:(ARC_FS+8).toFixed(1),rx:4,
+                    style:'fill:'+panel})
+          // textLength PINS the rendered width to the number the fit test used,
+          // so the plate can never be outgrown by the text inside it — --mono
+          // falls back through three faces and only the first is measured here.
+          +S('text',{x:lx.toFixed(1),y:(ly+ARC_FS*0.35).toFixed(1),
+                     'text-anchor':'middle',textLength:tw.toFixed(1),
+                     lengthAdjust:'spacing',class:'cx-arclabel'},esc(String(x.label))));
+      }
       tips.push('<b>'+esc(String(x.label))+'</b> · '+esc(String(+x.value||0))+' ('+Math.round(frac*100)+'%)'); ang=a2; });
     host.__tips=tips;
     var center=o.center!=null?S('text',{x:cx,y:(cy+size*0.05).toFixed(1),'text-anchor':'middle',style:'fill:var(--ink);font-family:var(--disp);font-weight:800;font-size:'+(size*0.16).toFixed(0)+'px'},esc(String(o.center))):'';
-    var svg=S('svg',{viewBox:'0 0 '+size+' '+size,width:size,height:size,style:'width:'+size+'px;max-width:100%;flex-shrink:0',role:'img','aria-label':o.aria||'donut chart'},arcs+center);
+    // Labels after the arcs, so a plate is never painted over by a later slice.
+    var svg=S('svg',{viewBox:'0 0 '+size+' '+size,width:size,height:size,style:'width:'+size+'px;max-width:100%;flex-shrink:0',role:'img','aria-label':o.aria||'donut chart'},arcs+labels+center);
     var legend=o.legend===false?'':'<div class="cx-legend" style="flex-direction:column;gap:7px">'+d.map(function(x,i){return '<span>'+swatch(toneColor(x.tone,i))+esc(String(x.label))+' · '+esc(String(+x.value||0))+'</span>';}).join('')+'</div>';
     host.innerHTML='<div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:center;">'+svg+legend+'</div>';
     wireTips(host,'.cx-arc');
@@ -6023,10 +6081,33 @@ async function loadLoginHistory(scope){
         // none of them are "clean", so exclude them rather than mislabel them green.
         clean=Math.max(0,graded-breaches-blocked-redacted-unknown),
         pending=(+g.pending||0)+(+g.in_progress||0), failed=+g.failed||0;
-    var parts=[{label:'Clean',value:clean,tone:'ok'},{label:'Breach',value:breaches,tone:'bad'},
-      {label:'Blocked',value:blocked,tone:'blue'},{label:'Redacted',value:redacted,tone:'pink'},
-      {label:'Evaluator unknown',value:unknown,tone:'warn'},
-      {label:'Pending',value:pending,tone:'fox'},{label:'Failed',value:failed,tone:'mute'}];
+    /* G8 · #152/#150 · TONES SETTLED FIRST, THEN ORDER — the second depends on
+       the first, so deciding them the other way round reorders against a
+       palette you are about to change.
+
+       #150 · "Pending" was tone:'warn' in the grading donut and tone:'fox' here:
+       one word, two colours, one product. Resolved toward WARN, which is what
+       the grading donut already used and what verdictOf() already gives a
+       pending ledger row — so the Pending pill in the table below and the
+       Pending slice in this key finally agree, on the same page. That freed
+       'fox' and moved "Evaluator unknown" onto 'violet', the one TONE slot with
+       no shipped usage: deliberately not a severity hue, which is right for a
+       verdict that was never reached. Measured, it is also the best of the three
+       options — worst adjacent dE 12.0, against 10.5 for either alternative.
+
+       ORDER · a cyclic Hamiltonian search over all 720 rotations, keeping only
+       those that hit that 12.0 optimum, then ranked by how little they disturb
+       the old reading order. This is the closest (3 inversions): Breach and
+       Blocked swap, and Evaluator unknown moves to the end. The narrative
+       survives — the four determinate outcomes still lead, the three
+       indeterminate states still follow. Worst adjacency 5.4 -> 12.0.
+
+       ⚠ THE ORDER IS A CYCLE, NOT A LIST: the last slice touches the first.
+       Failed|Clean is the wraparound pair and it is 11.0, not an accident. */
+    var parts=[{label:'Clean',value:clean,tone:'ok'},{label:'Blocked',value:blocked,tone:'blue'},
+      {label:'Breach',value:breaches,tone:'bad'},{label:'Redacted',value:redacted,tone:'pink'},
+      {label:'Pending',value:pending,tone:'warn'},{label:'Failed',value:failed,tone:'mute'},
+      {label:'Evaluator unknown',value:unknown,tone:'violet'}];
     var total=parts.reduce(function(a,x){return a+x.value;},0);
     var dn=$('ledgerVerdictDonut');
     if(dn&&window.foxChart){
