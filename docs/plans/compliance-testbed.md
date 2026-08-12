@@ -2,8 +2,8 @@
 
 **Plan of record** · 2026-08-12 · MAIN chat is the committer; executors build per this file.
 
-Phases **T0 → T4**. Companion plan: [`sdk-policy-truth.md`](sdk-policy-truth.md) (S2–S6).
-T4 depends on **S4**; everything else is independent of it.
+Phases **T0 → T4**. Companion plan: [`sdk-policy-truth.md`](sdk-policy-truth.md) (S3–S7).
+T4 depends on **S5**; everything else is independent of it.
 
 ---
 
@@ -125,10 +125,10 @@ behind it. That distinction is the honest claim and must be visible on every sur
 | **T1** | `feat/testbed-cli` | Interactive REPL |
 | **T2** | `feat/testbed-web` | Local server + page — **UI phase, skills block mandatory** |
 | **T3** | `feat/testbed-desktop` | Console page — **UI phase, skills block mandatory** |
-| **T4** | `feat/testbed-evidence` | "Verify this turn" — wires the evidence pane to S4's `foxy explain` |
+| **T4** | `feat/testbed-evidence` | "Verify this turn" — wires the evidence pane to S5's `foxy explain` |
 
 T0 first and alone; T1/T2/T3 are then parallelisable across executors. T4 last, and
-**only after S4 has merged**.
+**only after S5 has merged**.
 
 ### T0 — engine, sectors, probes
 
@@ -136,7 +136,7 @@ Finance and legal have **no rule families in `policy.py` today**. Decide deliber
 rather than inventing tags that fall through to baseline (that is exactly the
 `hipaa_basic` defect in [`sdk-policy-truth.md`](sdk-policy-truth.md) §2):
 
-- **healthcare** → `policy="hipaa"` — exists after S2, with PHI + baseline.
+- **healthcare** → `policy="hipaa"` — exists after S3, with PHI + baseline.
 - **finance** → PCI-shaped. The card check already exists (`pii._has_card`, Luhn-gated)
   and `secret.*` covers keys. Ship as `policy="default"` for now and **say so in the
   preset**, or propose a `pci` family to the owner. Do not invent `policy="finance"`.
@@ -173,7 +173,7 @@ verbatim.
 
 ### T4 — evidence
 
-A "verify this turn" control that runs S4's `explain` path against the turn's
+A "verify this turn" control that runs S5's `explain` path against the turn's
 `event_id` and shows: this prompt → this commitment → this ledger row → these rules,
 under this ruleset version. It closes the loop from the owner's second question and is
 the single most persuasive thing in the build.

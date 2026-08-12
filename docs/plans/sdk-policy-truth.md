@@ -2,7 +2,7 @@
 
 **Plan of record** · 2026-08-12 · MAIN chat is the committer; executors build per this file.
 
-Phases **S2 → S6**, continuing the `S` series (S1 = response scanning / OWASP LLM05,
+Phases **S3 → S7**, continuing the `S` series (S1 = response scanning / OWASP LLM05,
 shipped in 1.4.0 at `3e0f6d8`).
 
 ---
@@ -22,7 +22,7 @@ SDK's *mechanism* is sound and its *coverage and provability* are not:
 
 1.4.0 went to PyPI at 13:54 UTC today (`Release` run 31603849761, all 8 jobs green),
 so the broken quickstart is now the first thing a visitor to the package page reads.
-That is what makes S2 and S6 urgent rather than merely correct.
+That is what makes S3 and S7 urgent rather than merely correct.
 
 ---
 
@@ -40,12 +40,12 @@ Read at `24d3699`. The owner's five questions, checked against the code:
 | 6 | A blocked event is tamper-evident | **holds** | `event_metadata` — which carries `decision`, `policy_rules`, `blocked_reason` — **is bound into the chain hash** at `chain_version ≥ 2` ([`chain.py:61-71`](../../backend/app/chain.py#L61-L71)) and [`verifier/foxy_verify.py`](../../verifier/foxy_verify.py) recomputes it with zero Foxy imports. Nobody can retroactively change which rule we said fired. |
 | 7 | We can prove the rule actually matched | **NO** | Nothing shipped re-runs a rule against the text. And `policy_rules` carries **no ruleset version or hash**, so an auditor cannot establish what `injection.ignore_previous` meant on the day it fired. This is the real gap behind the owner's question 2. |
 | 8 | The SDK can be called from a console | **NO** | `foxy doctor` is the *only* subcommand and is connectivity-only ([`cli.py:110-120`](../../sdk/src/foxy_audit/cli.py#L110-L120)). `FoxyClient` has **no `.check()`** — the decorator is the sole entry point. `policy.evaluate` is reachable but is a private module, absent from `__all__`, returning an internal dataclass. |
-| 9 | 1.4.0 needs publishing | **already done** | The owner tagged it mid-session. Run 31603849761: `check-version`, `build-sdk`, `publish-pypi`, all three `build-desktop`, `publish-installers-to-vm`, `publish-github-release` — **all success**. Nothing to do; what remains is listing quality (S6). |
+| 9 | 1.4.0 needs publishing | **already done** | The owner tagged it mid-session. Run 31603849761: `check-version`, `build-sdk`, `publish-pypi`, all three `build-desktop`, `publish-installers-to-vm`, `publish-github-release` — **all success**. Nothing to do; what remains is listing quality (S7). |
 | 10 | A test chatbot exists to try this as a client | **NO** | Nearest are `demo/mock_llm.py` and `demo/live_openai_client.py`, both CLI-only. A repo-wide grep for playground/chatbot/sandbox returns only Paddle's payment sandbox. → separate plan, [`compliance-testbed.md`](compliance-testbed.md). |
 
 **Not in the registers.** `Worth Noting — Issues.md` runs to #161 and contains no entry
-for the policy map, `hipaa_basic`, or the risk score. These are new; allocate **#162
-(policy map) · #163 (`hipaa_basic`) · #164 (fox risk score)** when syncing.
+for the policy map, `hipaa_basic`, or the risk score. These are new; allocate **#166
+(policy map) · #167 (`hipaa_basic`) · #168 (fox risk score)** when syncing.
 
 ---
 
@@ -56,7 +56,7 @@ for the policy map, `hipaa_basic`, or the risk score. These are new; allocate **
 | How to fix the policy map | **Additive baseline.** Injection + secrets always run on every tag; `hipaa`/`gdpr` add PHI/PII on top. Alias the `_basic` tags. Owner accepted the stated behaviour change. |
 | How far to take provability | **Replay tool + ruleset version.** `foxy explain` replays locally against a *pinned* ruleset, and `ruleset_version` + `ruleset_hash` go on the wire and into the chain. |
 | Test chatbot | **All of the above** — healthcare *and* finance *and* legal, on web *and* desktop *and* CLI. Scoped separately in [`compliance-testbed.md`](compliance-testbed.md). |
-| v1.4.0 to PyPI | Owner tagged it during the session; it published cleanly. Next release is **1.5.0** (S2 changes behaviour — see §5). |
+| v1.4.0 to PyPI | Owner tagged it during the session; it published cleanly. Next release is **1.6.0** (S3 changes behaviour — see §5). ⚠ 1.5.0 is TAKEN — it shipped #158 at `b651a62`. |
 
 ---
 
@@ -75,7 +75,7 @@ if unknown:
     raise ValueError("event_metadata contains unsupported fields")
 ```
 
-So S3 is **not** a free ride on an open dict. Three consequences, and the ordering is
+So S4 is **not** a free ride on an open dict. Three consequences, and the ordering is
 not negotiable:
 
 1. **The backend must ship the widened allowlist BEFORE any SDK sends the new keys.**
@@ -95,7 +95,7 @@ that rather than assume it (§8).
 
 ---
 
-## 5 · The blast radius of the additive change — read before building S2
+## 5 · The blast radius of the additive change — read before building S3
 
 This is the part to get wrong quietly, so it is stated in full.
 
@@ -115,7 +115,7 @@ That last row is the one to put in the release notes. It is correct behaviour �
 *are* breaches, and we were silently not looking — but a customer who sees their breach
 count jump after a version bump deserves to have been told.
 
-**This is a MINOR bump: 1.5.0.** Not a patch. New rules fire, new exceptions raise from
+**This is a MINOR bump: 1.6.0.** Not a patch. New rules fire, new exceptions raise from
 code that did not raise before, and the redacted prompt changes shape.
 
 ---
@@ -124,27 +124,27 @@ code that did not raise before, and the redacted prompt changes shape.
 
 | Phase | Branch | Scope |
 |---|---|---|
-| **S2** | `fix/sdk-additive-policy` | Additive baseline + tag aliases + versioned ruleset registry |
-| **S3** | `feat/ruleset-provenance` | Widen the backend allowlist, then ship `ruleset_version`/`ruleset_hash` on the wire |
-| **S4** | `feat/sdk-check-explain` | Public `check()` / `explain()` + `foxy check` / `foxy explain` CLI |
-| **S5** | `fix/fox-unscored-breach` | Stop the fox rendering a hardcoded 100/100 |
-| **S6** | `docs/sdk-1-5-0-listing` | PyPI listing, README, version bump to 1.5.0 |
+| **S3** | `fix/sdk-additive-policy` | Additive baseline + tag aliases + versioned ruleset registry |
+| **S4** | `feat/ruleset-provenance` | Widen the backend allowlist, then ship `ruleset_version`/`ruleset_hash` on the wire |
+| **S5** | `feat/sdk-check-explain` | Public `check()` / `explain()` + `foxy check` / `foxy explain` CLI |
+| **S6** | `fix/fox-unscored-breach` | Stop the fox rendering a hardcoded 100/100 |
+| **S7** | `docs/sdk-1-6-0-listing` | PyPI listing, README, version bump to 1.6.0 |
 
-**Order.** S3 has a hard internal ordering (backend before SDK — §4). S2 → S3 → S4 → S6
-is the dependency chain; **S5 is independent and can be built in parallel by a second
-executor.** S6 must be last: it documents whatever S2–S4 actually shipped.
+**Order.** S4 has a hard internal ordering (backend before SDK — §4). S3 → S4 → S5 → S7
+is the dependency chain; **S6 is independent and can be built in parallel by a second
+executor.** S7 must be last: it documents whatever S3–S5 actually shipped.
 
 ---
 
 ## 7 · Per phase
 
-### S2 — additive baseline + aliases + ruleset registry
+### S3 — additive baseline + aliases + ruleset registry
 
 **Files:** `sdk/src/foxy_audit/policy.py` · new `sdk/src/foxy_audit/ruleset.py` ·
 `sdk/tests/`
 
 Move `_INJECTION_RULES` and `_SECRET_RULES` out of `policy.py` into a **versioned,
-frozen registry** in `ruleset.py`. S3 and S4 both depend on historical rulesets still
+frozen registry** in `ruleset.py`. S4 and S5 both depend on historical rulesets still
 existing, so this is not a cosmetic move:
 
 ```python
@@ -186,7 +186,7 @@ only aliases worth having. If telemetry or the sale page uses other tags (`soc2`
 in `sdk/README.md:38`), say so — `soc2` currently gets baseline checks and may be fine,
 but it should be a decision.
 
-### S3 — ruleset provenance on the wire
+### S4 — ruleset provenance on the wire
 
 **Files:** `backend/app/schemas.py` (first, and merged first) · then
 `sdk/src/foxy_audit/client.py` · `backend/tests/integration/` · `sdk/tests/`
@@ -211,7 +211,7 @@ but it should be a decision.
   before.
 - **CI does not run `pytest verifier/`** (memory: `export-bundle-e2`). Run it by hand.
 
-### S4 — the console API and the replay tool
+### S5 — the console API and the replay tool
 
 **Files:** `sdk/src/foxy_audit/client.py` · `cli.py` · `__init__.py` · `sdk/tests/`
 
@@ -239,14 +239,14 @@ from the local key + sidecar salt, matches it against the exported ledger row, r
 - **Salted rows need the sidecar.** `commitment_alg == "hmac-sha256-salted"` cannot be
   recomputed without `salt_sidecar_path`. Say so plainly rather than reporting a
   mismatch that looks like tampering.
-- **A row with no `ruleset_version` (anything written before S3) must say
+- **A row with no `ruleset_version` (anything written before S4) must say
   "unversioned — cannot pin", not silently replay today's rules.** Replaying current
   rules against a historical row and calling it a match is exactly the false assurance
   this phase exists to remove.
 - **Export `PolicyResult` in `__all__`.** A public API returning a type users cannot
   import or name is not a public API.
 
-### S5 — the fox's unscored breach *(independent; parallelisable)*
+### S6 — the fox's unscored breach *(independent; parallelisable)*
 
 **Files:** `desktop/companion_events.py` · `desktop/omni_fox.py` ·
 `desktop/test_d12_companion.py`
@@ -264,7 +264,7 @@ Three sites: `on_breach`'s `body` f-string and `bubble`, and the chat-popup bubb
 number there — distinguish "absent" from "zero", and keep the graded path showing its
 real score.
 
-### S6 — the listing
+### S7 — the listing
 
 **Files:** `sdk/README.md` · `sdk/src/foxy_audit/__init__.py` · `sdk/pyproject.toml` ·
 `VERSION` · `demo/run_demo.py` · `desktop/sdk_bridge.py` (docstring)
@@ -272,11 +272,11 @@ real score.
 - `sdk/README.md` **Install** currently says `pip install -e .` — a developer
   instruction, and the first thing a PyPI visitor reads. Make it `pip install foxy-audit`.
 - Replace every `hipaa_basic` with a tag that does what the surrounding prose claims.
-- Document the additive baseline and the 1.5.0 behaviour change (§5).
+- Document the additive baseline and the 1.6.0 behaviour change (§5).
 - Document `foxy check` / `foxy explain`.
 - Add a `Changelog` entry to `[project.urls]`, and link `SECURITY.md` (landed at
   `24d3699`).
-- Bump **1.5.0** in three places: `VERSION`, `sdk/pyproject.toml`, and
+- Bump **1.6.0** in three places: `VERSION`, `sdk/pyproject.toml`, and
   `sdk/src/foxy_audit/__init__.py.__version__`.
 
 **Trap:** `check-version` in `release.yml` validates only **two** of the three version
@@ -320,9 +320,9 @@ Per playbook §4:
 - **Devlog** `Devlogs/2026-08-12.md` — append. Lead with what surprised you: the
   allowlist 422, and that our own documented tag did no HIPAA checking.
 - **Area notes** — re-stamp `updated:` / `verified-against:` / `verified-on:` on
-  `SDK/CLAUDE.md` (S2/S3/S4/S6), `Backend/CLAUDE.md` (S3), `Desktop/CLAUDE.md` (S5),
-  `Verifier/CLAUDE.md` (S3, if the export shape moved). Carry the **traps**, not the
+  `SDK/CLAUDE.md` (S3/S4/S5/S7), `Backend/CLAUDE.md` (S4), `Desktop/CLAUDE.md` (S6),
+  `Verifier/CLAUDE.md` (S4, if the export shape moved). Carry the **traps**, not the
   changelog. `SDK/CLAUDE.md` still says `pip install foxy-audit — 1.3.0`.
-- **Register** — open **#162** (policy map exclusive), **#163** (`hipaa_basic` does no
-  PHI), **#164** (fox renders a hardcoded 100/100), each with `file:line` and why it
+- **Register** — open **#166** (policy map exclusive), **#167** (`hipaa_basic` does no
+  PHI), **#168** (fox renders a hardcoded 100/100), each with `file:line` and why it
   matters; close them ✅ with the SHA as each phase lands, keeping the original text.
