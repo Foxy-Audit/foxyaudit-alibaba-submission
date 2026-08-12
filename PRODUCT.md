@@ -155,8 +155,12 @@ on and off — because the two surfaces share almost no components. That census
 found four things invisible: the active nav page, the active settings section,
 the settings switch, and every container edge, since all 52 of this surface's
 shadows are dropped. `foxy-dashboard/test_g9_forced_colors.py` measures the
-rendered result rather than the presence of an at-rule; Chrome is absent from
-CI, so those guards skip there and a cheap deletion alarm runs in their place.
+rendered result rather than the presence of an at-rule — and reads the surviving
+rules out of the **CSSOM**, because a comment that closed early once deleted one
+of them while the source text and the brace count both looked correct. Those
+guards run in CI: every job is `ubuntu-latest`, which ships Chrome. Nothing in
+them compares a system colour to a literal, so a different palette cannot redden
+the job.
 
 **Known gap:** the marketing site and the checkout page have no
 `@media (forced-colors)` support. The marketing site matters least — it carries

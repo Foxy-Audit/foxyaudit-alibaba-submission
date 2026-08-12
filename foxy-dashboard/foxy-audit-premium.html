@@ -1624,21 +1624,25 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
      Canvas with `border: 0px none` and `box-shadow: none`. This surface draws
      every container with a shadow, so in High Contrast the page collapses into
      one undifferentiated field of text. An edge is the whole fix. */
-  .clay,.stat,.topbar,.dock{border:1px solid ButtonBorder;}
+  .clay,.stat,.topbar,.dock,.foxdlg-box{border:1px solid ButtonBorder;}
   .stat .face{border:1px solid ButtonBorder;}
 
   /* ── 2 · the states the census found INVISIBLE ────────────────────────────
      Each was carried by background and ink alone, and both are overridden, so
      the selected item rendered identically to its unselected sibling: the
-     active nav page and the active settings section. */
-  .dock-item.active,.mnbtn.active,.kstatus.active{
-    background:Highlight;color:HighlightText;}
+     active nav page, the active settings section, and the segmented switchers
+     (range / metric / key mode), whose pressed state added a shadow to the
+     same two and whose `.seg button` base declares `border:none`, so all three
+     of its distinguishers were gone at once. */
+  .dock-item.active,.mnbtn.active,.kstatus.active,
+  .seg button[aria-pressed="true"]{background:Highlight;color:HighlightText;}
 
   /* The switch is the worst of them, because it is the only one with no word.
      A toggle whose on/off is carried purely by the track's fill cannot be read
      at all. The track gets an edge so the control still exists, the checked
      fill becomes Highlight, and the knob flips to HighlightText so it stays
-     visible ON that fill instead of disappearing into it. */
+     visible ON that fill instead of disappearing into it.
+
      The knob is paired with whatever it sits ON — CanvasText on the unchecked
      Canvas track, HighlightText on the checked Highlight one. Those two happen
      to resolve to the same value in the default Windows palette (measured: both
@@ -1651,13 +1655,19 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
   .ttrack::after{background:CanvasText;}
   .toggle input:checked + .ttrack::after{background:HighlightText;}
 
-  /* ── 3 · status marks keep their word, and gain an edge ───────────────────
-     The verdict pills lose their hue here, and that is ACCEPTED rather than
-     fixed: R2's rule is that hue says which state, weight says whether it is
-     the expected one, and a WORD says it in text — so "breach" and "safe" stay
-     readable once the colour is gone. What they need is an edge, or they
-     dissolve into the row as bare text. */
-  .pill,.seg-chip,.vres{border:1px solid ButtonBorder;}
+  /* ── 3 · status marks need NOTHING here either, and that was measured ─────
+     The verdict pills lose their hue, and that is ACCEPTED rather than fixed:
+     R2's rule is that hue says which state, weight says whether it is the
+     expected one, and a WORD says it in text — so "breach" and "safe" stay
+     readable once the colour is gone.
+
+     A `.pill,.seg-chip,.vres{border:1px solid ButtonBorder}` rule was written
+     here and then deleted: removing it changed nothing, because all three
+     already declare `border:var(--border-sm)` in their base rules, and
+     forced-colors remaps that colour while keeping width and style. It was
+     green by construction — the second rule in this block to measure redundant,
+     after the focus one. `test_status_marks_declare_a_real_border` guards the
+     base declarations that are doing the work. */
 
   /* ── 4 · focus needs NOTHING here, and that was measured ──────────────────
      A blanket `:focus-visible{outline:2px solid Highlight}` was written, and

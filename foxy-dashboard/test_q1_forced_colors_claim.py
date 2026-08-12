@@ -37,9 +37,18 @@ def _blocks(path: Path) -> int:
 
 
 def _accessibility_section() -> str:
+    """The section, bounded by the NEXT heading — not a character count.
+
+    This read `text[start:start + 1800]`, which only happened to cover the right
+    prose because that section is currently last in PRODUCT.md. Add a section
+    after it and the window spills into the neighbour; add prose inside it and
+    the window stops short. A window is not a scope — the same failure this repo
+    has hit in source-slicing guards three times."""
     text = _PRODUCT.read_text(encoding="utf-8")
     start = text.index("## Accessibility & Inclusion")
-    return text[start:start + 1800].lower()
+    nxt = re.search(r"^## ", text[start + 1:], re.M)
+    end = start + 1 + nxt.start() if nxt else len(text)
+    return text[start:end].lower()
 
 
 def test_the_two_stateful_surfaces_have_forced_colors_support():
