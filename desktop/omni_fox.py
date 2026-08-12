@@ -182,8 +182,15 @@ class BreachPollWorker(QThread):
         self._first_poll = False
         for b in to_fire:
             self.breach_detected.emit({
+                # No `, 100` default. A graded breach row normally DOES carry a
+                # real score, so this default only fired when the backend had
+                # omitted one — the same fabrication as the SDK path, just
+                # rarer, and rarer is worse because it is the case nobody looks
+                # at. Absent stays absent: `on_breach` still treats a missing
+                # score as maximum for the THRESHOLD, so the alert is unchanged,
+                # and the UI simply shows no score rather than inventing 100.
                 "reason": b.get("reason", "Policy breach"),
-                "risk_score": b.get("risk_score", 100),
+                "risk_score": b.get("risk_score"),
                 "policy": b.get("policy_tag", "default"),
             })
 
@@ -1166,21 +1173,17 @@ class OmniAwareFox(QWidget):
             self._show_from_tray()
         self._apply(react)
 
-        reason = payload.get("reason", "Unknown injection")
-        score = payload.get("risk_score", 100)
+        # What goes in the bubble is `companion_events`' call, not this window's
+        # — it decides what the evidence supports, the same way it decides
+        # whether to interrupt at all. The old text here hardcoded
+        # `payload.get("risk_score", 100)`, so every SDK-path breach announced
+        # "Risk Score: 100/100" whatever had actually happened.
+        detail = ce.breach_detail(payload)
 
         if self.chat_popup is None:
             self.chat_popup = ChatPopup(self, settings=self.settings)
             self.chat_popup.popup_closed.connect(self._on_chat_closed)
-            self.chat_popup._add_bubble(
-                f"🚨 **POLICY BREACH DETECTED** 🚨\n\n**Reason:** {reason}\n**Risk Score:** {score}/100",
-                is_user=False
-            )
-        else:
-            self.chat_popup._add_bubble(
-                f"🚨 **POLICY BREACH DETECTED** 🚨\n\n**Reason:** {reason}\n**Risk Score:** {score}/100",
-                is_user=False
-            )
+        self.chat_popup._add_bubble(detail, is_user=False)
 
         self.open_chat()
 

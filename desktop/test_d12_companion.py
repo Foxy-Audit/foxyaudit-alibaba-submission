@@ -67,9 +67,120 @@ def test_a_breach_below_the_users_threshold_does_not_interrupt():
 
 
 def test_an_unscored_breach_is_treated_as_the_worst_case():
-    """A breach the grader could not score is not a quiet one."""
+    """A breach the grader could not score is not a quiet one.
+
+    RE-AIMED (#168), not relaxed. The gate half is unchanged and is the half
+    that matters: an unscored breach must still clear the highest threshold a
+    user can set, or this fix would silently swallow every SDK-path alert.
+
+    What changed is that this used to assert ``"100" in react["bubble"]`` — it
+    pinned the fabrication in place. The worst-case assumption is a COMPARISON
+    value; printing it told the user the grader had returned 100 when the
+    grader had never run.
+    """
     react = ce.on_breach({"reason": "x"}, threshold=99)
-    assert react is not None and "100" in react["bubble"]
+    assert react is not None, "an unscored breach must clear any threshold"
+    assert react["state"] == "ALERTING" and react["overlay"] == "red"
+    # Exact, not "100" not in ...: a bubble reading "⚠ Breach — risk None"
+    # contains no "100" and would satisfy a mere absence check while still
+    # claiming a score. Say what it must be, not what it must not contain.
+    assert react["bubble"] == "⚠ Breach", f"claimed a score: {react['bubble']!r}"
+    assert react["toast"][1] == "x", f"claimed a score: {react['toast'][1]!r}"
+    assert "risk" not in react["bubble"].lower()
+
+
+def test_dropping_the_score_does_not_degrade_the_alert():
+    """The loud parts are deliberate and none of them depend on the number.
+
+    Sprite, overlay, duration, sound, and the route to the page that can act on
+    it must be bit-identical between a scored breach and an unscored one. Only
+    the two human-readable strings may differ. Asserting the whole dict minus
+    the text is stronger than listing the keys I happened to think of — a new
+    field that quietly varied with the score would fail this too.
+    """
+    scored = ce.on_breach(BREACH)
+    unscored = ce.on_breach({"reason": "PHI in prompt", "policy": "hipaa"})
+    assert scored is not None and unscored is not None
+    text_fields = {"bubble", "toast"}
+    assert {k: v for k, v in scored.items() if k not in text_fields} == \
+           {k: v for k, v in unscored.items() if k not in text_fields}
+    # And the toast still EXISTS and is still critical — only its body changed.
+    assert unscored["toast"][0] == scored["toast"][0]
+    assert unscored["toast"][2] == scored["toast"][2] == "critical"
+
+
+def test_a_scored_breach_still_shows_its_real_score():
+    """The other side of the same coin — poller rows are genuinely graded."""
+    react = ce.on_breach(BREACH)
+    assert "82" in react["bubble"] and "82" in react["toast"][1]
+
+
+def test_score_or_none_separates_absent_from_zero():
+    """0 is a real grade and must not be confused with 'not graded'."""
+    assert ce.score_or_none(0) == 0
+    assert ce.score_or_none(82) == 82
+    assert ce.score_or_none("82") == 82
+    assert ce.score_or_none(None) is None
+    assert ce.score_or_none("") is None
+    assert ce.score_or_none("n/a") is None
+    # Clamped, not rejected — a nonsense number is still a number.
+    assert ce.score_or_none(140) == 100 and ce.score_or_none(-5) == 0
+
+
+def test_a_zero_scored_breach_is_gated_on_zero_not_on_maximum():
+    """CONTROL for the gate.
+
+    ``score_or_none`` returning a falsy 0 must not be mistaken for "absent" and
+    promoted to 100 — that would make a genuinely harmless graded row shout
+    past a threshold the user set precisely to silence it. This is the bug an
+    ``if not risk`` shortcut would introduce, so it is pinned.
+    """
+    assert ce.on_breach({"reason": "x", "risk_score": 0}, threshold=50) is None
+    assert ce.on_breach({"reason": "x"}, threshold=50) is not None
+
+
+# ══ breach detail — the popup body (#168) ═══════════════════════════════════
+SDK_PING = {"event": "policy_breach", "policy": "hipaa",
+            "reason": "prompt_injection", "decision": "blocked",
+            "rules": ["injection.ignore_previous", "secret.openai_key"]}
+
+
+def test_an_sdk_path_breach_popup_states_no_score():
+    """THE DEFECT. The SDK ping carries no risk_score, so the popup must not
+    print one — it used to say "Risk Score: 100/100" on every single one."""
+    detail = ce.breach_detail(SDK_PING)
+    assert "Risk Score" not in detail
+    assert "100" not in detail
+
+
+def test_an_sdk_path_breach_popup_shows_the_reason_and_the_rules():
+    """What it says INSTEAD — and this is the part that was never shown."""
+    detail = ce.breach_detail(SDK_PING)
+    assert "prompt_injection" in detail
+    assert "injection.ignore_previous" in detail
+    assert "secret.openai_key" in detail
+    assert "POLICY BREACH DETECTED" in detail
+
+
+def test_a_poller_path_breach_with_a_real_score_still_renders_it():
+    """The fix must not throw away a number that genuinely exists."""
+    detail = ce.breach_detail({"reason": "PHI in prompt", "risk_score": 82})
+    assert "**Risk Score:** 82/100" in detail
+    assert "PHI in prompt" in detail
+
+
+def test_the_popup_caps_the_rule_list_like_the_ping_does():
+    """The ping ships at most 8 rules; the popup must not imply more."""
+    detail = ce.breach_detail({"reason": "x", "rules": [f"r.{i}" for i in range(20)]})
+    assert "r.7" in detail and "r.8" not in detail
+
+
+def test_the_popup_survives_a_junk_payload():
+    """A malformed UDP datagram must not take the incident popup with it."""
+    for junk in (None, "boom", 42, {}, {"rules": None}, {"rules": ["", "  "]}):
+        detail = ce.breach_detail(junk)
+        assert "POLICY BREACH DETECTED" in detail
+        assert "Rules:" not in detail or "r." in detail
 
 
 def test_turning_breach_alerts_off_silences_the_whole_reaction():

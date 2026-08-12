@@ -69,6 +69,7 @@ from chrome_widgets import (
     NotificationsPanel, Pip, ShortcutsOverlay, Toast,
 )
 from charts import FoxChart
+import companion_events as ce
 import home_data as hd
 
 import panel_state
@@ -1482,7 +1483,12 @@ class DashboardWindow(QWidget):
         self._logs_total += 1
         self._flagged_total += 1
         reason = payload.get("reason", "Policy violation")
-        risk = int(payload.get("risk_score", 100))
+        # The SDK bridge routes the SAME scoreless UDP payload here as to the
+        # fox, so `int(payload.get("risk_score", 100))` put a fabricated 100 in
+        # the live Risk column of every SDK-path breach row. None is already the
+        # honest value here: the risk cell renders it as a muted "—", which is
+        # exactly what the hash_ok path a few lines up already passes.
+        risk = ce.score_or_none(payload.get("risk_score"))
         policy = payload.get("policy", "default")
         self._add_event({
             "time": datetime.now().strftime("%H:%M:%S"),

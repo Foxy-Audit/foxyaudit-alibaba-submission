@@ -81,30 +81,74 @@ def on_breach(payload, *, threshold: int = 0, alerts_enabled: bool = True,
 
     The threshold is the user's, not ours: below it the event is still real and
     still in the ledger, the fox simply does not interrupt for it. A payload
-    with no risk score at all is treated as maximum — a breach the grader could
-    not score is not a quiet one.
+    with no risk score at all is treated as maximum FOR THE COMPARISON — a
+    breach the grader could not score is not a quiet one.
+
+    That maximum is a gate value and never a displayed one. The SDK's UDP ping
+    carries no risk score at all — the SDK produces LABELS, and the score is the
+    JUDGE's, computed server-side afterwards — so reusing "missing means 100"
+    for the text is how every SDK-path breach came to announce "risk 100" as
+    though it had been graded. Unscored alerts at full volume and says nothing
+    about a number it does not have.
     """
     if not alerts_enabled or not isinstance(payload, dict):
         return None
-    risk = _score(payload.get("risk_score"), default=100)
-    if risk < max(0, int(threshold)):
+    risk = score_or_none(payload.get("risk_score"))
+    if (100 if risk is None else risk) < max(0, int(threshold)):
         return None
     reason = str(payload.get("reason") or "Policy breach")
     policy = str(payload.get("policy") or payload.get("policy_tag") or "")
-    body = f"{reason} (risk {risk}/100)"
+    body = f"{reason} (risk {risk}/100)" if risk is not None else reason
     return reaction(
         "ALERTING", 5.0, overlay="red",
-        bubble=f"⚠ Breach — risk {risk}",
+        bubble=f"⚠ Breach — risk {risk}" if risk is not None else "⚠ Breach",
         toast=("🚨 Policy breach", body + (f" · {policy}" if policy else ""),
                "critical") if toasts else None,
         sound=sound, route="threats")
 
 
-def _score(value, *, default: int) -> int:
+def breach_detail(payload) -> str:
+    """The chat-popup body for a breach: everything KNOWN, nothing invented.
+
+    Lives here rather than in the window for the same reason ``on_breach``
+    does — it is a decision about what the evidence supports, not about Qt —
+    and because a pure function can be asserted directly instead of by slicing
+    the window's source.
+
+    ``Risk Score`` appears only when the payload actually carries one. The SDK's
+    UDP ping never does: its policy engine emits LABELS, and the score is the
+    judge's, computed server-side afterwards. The old default of 100 meant every
+    SDK-path breach popup read "Risk Score: 100/100" regardless of what
+    happened. Deriving a number here from the rule count or a severity table
+    would just relocate the fabrication, so the line is omitted instead — and
+    the rule ids, which the ping HAS carried all along and which say what
+    actually tripped, are shown in its place.
+    """
+    if not isinstance(payload, dict):
+        payload = {}
+    lines = [f"**Reason:** {payload.get('reason') or 'Unknown injection'}"]
+    score = score_or_none(payload.get("risk_score"))
+    if score is not None:
+        lines.append(f"**Risk Score:** {score}/100")
+    rules = [str(r).strip() for r in (payload.get("rules") or []) if str(r).strip()]
+    if rules:
+        lines.append("**Rules:** " + ", ".join(rules[:8]))
+    return "🚨 **POLICY BREACH DETECTED** 🚨\n\n" + "\n".join(lines)
+
+
+def score_or_none(value) -> int | None:
+    """The graded risk 0-100, or None when there is not one.
+
+    Deliberately NOT a ``default=`` parameter. One helper with a default served
+    two callers that need different things — the threshold gate needs some
+    number to compare, the UI needs to know whether a number EXISTS — and
+    collapsing those is precisely what put "Risk Score: 100/100" on screen for
+    every SDK-path breach. Keeping "is there a score?" answerable is the fix.
+    """
     try:
         return max(0, min(100, int(float(value))))
     except (TypeError, ValueError):
-        return default
+        return None
 
 
 # ── anchoring ───────────────────────────────────────────────────────────────
@@ -263,4 +307,4 @@ def on_sdk_hash(payload) -> dict:
 __all__ = ["GRADING_SPIKE", "OVERLAYS", "QUOTA_WARN_PCT", "STATES",
            "grading_streak", "on_anchors", "on_breach", "on_connectivity",
            "on_grading", "on_quota", "on_sdk_evaluating", "on_sdk_hash",
-           "reaction"]
+           "breach_detail", "reaction", "score_or_none"]
