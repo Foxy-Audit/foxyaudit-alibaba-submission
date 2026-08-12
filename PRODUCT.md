@@ -147,9 +147,18 @@ contrast is recomputed from token values in the test suites on both the dashboar
 and the admin console, and a **fill is measured against its background, not only
 its ink**.
 
-**Known gap:** no `@media (forced-colors)` support on the customer **dashboard**,
-where the design language is shadow-based and several controls carry no border.
-The admin console does have it — one block, `foxy-adminpage/index.html:2190` —
-so this sentence named the wrong surface until #154; the gap is real and it is
-the dashboard's. The marketing site has none either, which matters less: it
-carries no controls whose state a High Contrast user has to read.
+Windows High Contrast is covered on the two surfaces that carry state: the admin
+console since G2, and the customer dashboard since G9 (#154). The dashboard's
+block was **measured, not ported** — the shipped file was rendered under
+`--force-high-contrast` and every control compared against itself with the state
+on and off — because the two surfaces share almost no components. That census
+found four things invisible: the active nav page, the active settings section,
+the settings switch, and every container edge, since all 52 of this surface's
+shadows are dropped. `foxy-dashboard/test_g9_forced_colors.py` measures the
+rendered result rather than the presence of an at-rule; Chrome is absent from
+CI, so those guards skip there and a cheap deletion alarm runs in their place.
+
+**Known gap:** the marketing site and the checkout page have no
+`@media (forced-colors)` support. The marketing site matters least — it carries
+no control whose state a High Contrast user has to read — but the checkout page
+is a payment step and needs its own pass.

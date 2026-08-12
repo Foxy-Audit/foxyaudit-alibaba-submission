@@ -1,18 +1,20 @@
-"""PRODUCT.md's forced-colors "known gap" must name the surface that has it.
+"""PRODUCT.md's forced-colors sentence must match the surfaces, whichever way.
 
-It named the admin console. The admin console SHIPPED that support in G2 — one
-`@media (forced-colors: active)` block — and the customer dashboard has none. So
-the documented gap pointed at the one surface where it had been closed, which is
-worse than no note: a reader checks the named file, finds the support, and
-concludes the note is stale rather than that the real gap is elsewhere.
+Q1 wrote this file when the sentence named the admin console as lacking
+`@media (forced-colors)` while the admin console had shipped it in G2 and the
+DASHBOARD had none. It was built to fail when #154 was fixed rather than to go
+quietly stale — and in G9 it did exactly that, which is why it now asserts the
+opposite state.
 
 ⚠ THE COUNT MUST BE OF THE AT-RULE, NOT THE WORD. The dashboard mentions
-forced-colors twice in COMMENTS (the G7 legend swatch, the chart shim) while
-having zero rules. A `"forced-colors" in src` check reports the dashboard as
-covered — the same comments-shadow-selectors trap the admin guards hit before.
+forced-colors in COMMENTS (G7's legend swatch, G8's chart shim) as well as in
+its rule. A `"forced-colors" in src` check cannot tell those apart, which is the
+same comments-shadow-selectors trap the admin guards hit before — so the control
+below still pins the difference.
 
-This is a doc-accuracy guard, so it is meant to fail when #154 is FIXED: add
-support to the dashboard and this turns red until the sentence is updated.
+This file only checks that the DOCUMENTATION matches which surfaces have a
+block. Whether the dashboard's block actually WORKS is measured against a
+rendered page in test_g9_forced_colors.py.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 _PRODUCT = _ROOT / "PRODUCT.md"
 _DASHBOARD = _ROOT / "foxy-dashboard" / "foxy-audit-premium.html"
 _ADMIN = _ROOT / "foxy-adminpage" / "index.html"
+_SALE = _ROOT / "foxy-sale-page" / "index.html"
+_CHECKOUT = _ROOT / "foxy-checkout" / "index.html"
 
 _AT_RULE = re.compile(r"@media\s*\(\s*forced-colors")
 
@@ -32,34 +36,42 @@ def _blocks(path: Path) -> int:
     return len(_AT_RULE.findall(path.read_text(encoding="utf-8")))
 
 
-def _gap_sentence() -> str:
+def _accessibility_section() -> str:
     text = _PRODUCT.read_text(encoding="utf-8")
-    start = text.index("**Known gap:**")
-    return text[start:start + 600]
+    start = text.index("## Accessibility & Inclusion")
+    return text[start:start + 1800].lower()
 
 
-def test_the_admin_console_really_does_have_forced_colors_support():
-    assert _blocks(_ADMIN) >= 1, \
-        "the admin console lost its forced-colors block; PRODUCT.md now needs it back"
+def test_the_two_stateful_surfaces_have_forced_colors_support():
+    """The admin console since G2, the dashboard since G9. Both carry controls
+    whose selected state a High Contrast user has to be able to read."""
+    assert _blocks(_ADMIN) >= 1, "the admin console lost its forced-colors block"
+    assert _blocks(_DASHBOARD) >= 1, "the dashboard lost its forced-colors block"
 
 
-def test_the_dashboard_really_does_not():
-    """If this fails, #154 has been fixed — good. Update the PRODUCT.md sentence
-    and delete this guard rather than loosening it."""
-    assert _blocks(_DASHBOARD) == 0, \
-        "the dashboard has forced-colors support now; PRODUCT.md still calls it a gap"
+def test_the_dashboard_has_exactly_one_block():
+    """One block, so there is one place to read the whole policy. A second means
+    two half-answers that can disagree."""
+    assert _blocks(_DASHBOARD) == 1, f"found {_blocks(_DASHBOARD)} blocks"
 
 
-def test_the_word_alone_would_have_measured_the_wrong_thing():
-    """The inert control for the counter: the dashboard DOES contain the string,
-    in comments. A guard that searched for it would call the dashboard covered
-    and this whole file would agree with a false sentence."""
-    assert "forced-colors" in _DASHBOARD.read_text(encoding="utf-8")
-    assert _blocks(_DASHBOARD) == 0
+def test_the_word_alone_would_still_measure_the_wrong_thing():
+    """The control for the counter, kept from Q1 and still true in reverse: the
+    dashboard contains the string more often than it contains the rule, so a
+    word search reports a coverage number that is not the number of rules."""
+    src = _DASHBOARD.read_text(encoding="utf-8")
+    assert src.count("forced-colors") > _blocks(_DASHBOARD), \
+        "the word and the at-rule now appear equally often; this control is moot"
 
 
-def test_the_documented_gap_names_the_dashboard_not_the_admin_console():
-    sentence = _gap_sentence().lower()
-    assert "dashboard" in sentence
-    assert not re.search(r"no `@media \(forced-colors\)` support on the admin", sentence), \
-        "PRODUCT.md is back to naming the admin console, which has the support"
+def test_the_documented_gap_names_the_surfaces_that_still_lack_it():
+    """The sentence has to keep up with the surfaces. It named the wrong one for
+    a whole release, which is what this file exists to stop happening again."""
+    section = _accessibility_section()
+    assert _blocks(_SALE) == 0 and _blocks(_CHECKOUT) == 0, \
+        "a surface gained forced-colors support; PRODUCT.md still calls it a gap"
+    assert "marketing site" in section and "checkout" in section, \
+        "the remaining gaps are no longer named in PRODUCT.md"
+    assert not re.search(r"no `@media \(forced-colors\)` support on the customer",
+                         section), \
+        "PRODUCT.md still calls the dashboard a gap after G9 closed it"

@@ -1596,6 +1596,81 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
   /* the final state, immediately — not a half-swept ring frozen in place */
   .vbar,.vtick{transition:none;}
 }
+
+/* ════════ G9 · #154 · Windows High Contrast (forced-colors: active) ═════════
+   MEASURED, NOT PORTED. The admin console's block was read for its principle —
+   "give every control that draws its own edge an edge that survives" — and for
+   its system-colour vocabulary, then deliberately not copied: the dashboard has
+   no `.modal-card`, no `.cmdk`, no `aria-sort` header and no `.segbtn`, so half
+   of it would have been CSS for components that do not exist here.
+
+   What Chrome actually does, measured on THIS file rather than assumed:
+     background-color -> Canvas          an HTML fill becomes the page
+     color            -> CanvasText      ink is replaced too
+     box-shadow       -> none            all 52 of this surface's shadows
+     border-color     -> ButtonBorder    but WIDTH and STYLE are preserved
+     SVG fill         -> untouched       G7's hatch and G8's donut are safe
+   The last two are the whole strategy: an edge survives, a shadow does not, and
+   the charts need nothing done to them.
+
+   HCM IS NOT A THEME. No token is defined here and no third palette exists —
+   only system colours, which the OS guarantees against each other.
+   Highlight/HighlightText is the pair that means "this one is selected"; every
+   selected state below uses it rather than inventing a mark. */
+@media (forced-colors: active){
+
+  /* ── 1 · structure ────────────────────────────────────────────────────────
+     Measured: .clay, .stat.kpi, .topbar and .dock all resolve to the page's own
+     Canvas with `border: 0px none` and `box-shadow: none`. This surface draws
+     every container with a shadow, so in High Contrast the page collapses into
+     one undifferentiated field of text. An edge is the whole fix. */
+  .clay,.stat,.topbar,.dock{border:1px solid ButtonBorder;}
+  .stat .face{border:1px solid ButtonBorder;}
+
+  /* ── 2 · the states the census found INVISIBLE ────────────────────────────
+     Each was carried by background and ink alone, and both are overridden, so
+     the selected item rendered identically to its unselected sibling: the
+     active nav page and the active settings section. */
+  .dock-item.active,.mnbtn.active,.kstatus.active{
+    background:Highlight;color:HighlightText;}
+
+  /* The switch is the worst of them, because it is the only one with no word.
+     A toggle whose on/off is carried purely by the track's fill cannot be read
+     at all. The track gets an edge so the control still exists, the checked
+     fill becomes Highlight, and the knob flips to HighlightText so it stays
+     visible ON that fill instead of disappearing into it. */
+     The knob is paired with whatever it sits ON — CanvasText on the unchecked
+     Canvas track, HighlightText on the checked Highlight one. Those two happen
+     to resolve to the same value in the default Windows palette (measured: both
+     rgb(220,220,220)), so this is not about the knob CHANGING; the state is
+     carried by the track's fill and by the knob's position, which forced-colors
+     does not touch because `transform` is not a colour. Pairing it correctly is
+     what keeps it visible on a palette where they differ. */
+  .ttrack{border:1px solid ButtonBorder;}
+  .toggle input:checked + .ttrack{background:Highlight;}
+  .ttrack::after{background:CanvasText;}
+  .toggle input:checked + .ttrack::after{background:HighlightText;}
+
+  /* ── 3 · status marks keep their word, and gain an edge ───────────────────
+     The verdict pills lose their hue here, and that is ACCEPTED rather than
+     fixed: R2's rule is that hue says which state, weight says whether it is
+     the expected one, and a WORD says it in text — so "breach" and "safe" stay
+     readable once the colour is gone. What they need is an edge, or they
+     dissolve into the row as bare text. */
+  .pill,.seg-chip,.vres{border:1px solid ButtonBorder;}
+
+  /* ── 4 · focus needs NOTHING here, and that was measured ──────────────────
+     A blanket `:focus-visible{outline:2px solid Highlight}` was written, and
+     then deleted: mutating it away changed nothing, because all 20 of this
+     file's focus rules already declare a real `outline`, and forced-colors
+     remaps outline-color while preserving width and style. Not one of them
+     leans on a box-shadow ring, which is the version that would have died.
+
+     The rule would have been dead CSS that also overrode each component's own
+     offset — exactly the blind-port failure this block was written to avoid.
+     `test_no_focus_ring_is_carried_by_a_shadow` guards the mechanism that is
+     actually doing the work. */
+}
 </style>
 </head>
 <body>
