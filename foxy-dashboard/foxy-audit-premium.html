@@ -6134,7 +6134,13 @@ async function loadLoginHistory(scope){
     if($('ldgClean'))$('ldgClean').textContent=fmtPct(s.clean_rate);
     if($('ldgPending'))$('ldgPending').textContent=num((g.pending||0)+(g.in_progress||0));
     var breaches=+s.breaches||0, graded=+g.graded||0,
-        blocked=+s.blocked||0, redacted=+s.redacted||0, unknown=+s.evaluator_unknown||0,
+        // response_blocked rides in the SAME slice as blocked, because verdictOf
+        // badges both rows "blocked" — a donut that split them would disagree
+        // with every row beneath it, and a slice added here changes the adjacency
+        // G8 settled. Left out of this sum it fell through to `clean`: a response
+        // the SDK withheld was counted GREEN.
+        blocked=(+s.blocked||0)+(+s.response_blocked||0),
+        redacted=+s.redacted||0, unknown=+s.evaluator_unknown||0,
         // Blocked/redacted are prevented egress and evaluator-unknown is a non-pass —
         // none of them are "clean", so exclude them rather than mislabel them green.
         clean=Math.max(0,graded-breaches-blocked-redacted-unknown),

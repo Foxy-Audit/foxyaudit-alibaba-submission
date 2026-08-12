@@ -465,6 +465,54 @@ def test_stats_and_ledger_filter_see_a_withheld_response(make_org, client):
     assert [r["seq"] for r in rb["items"]] == [2]
     assert rb["items"][0]["event_type"] == "response_blocked"
 
+    # Every surface badges a withheld response "blocked" (the dashboard's
+    # verdictOf, the desktop's verdict_of), so the Blocked filter has to return
+    # it — otherwise a row visibly labelled blocked vanishes under Blocked.
+    both = client.get("/v1/logs?verdict=blocked", headers=org["auth"]).json()
+    assert sorted(r["seq"] for r in both["items"]) == [1, 2], \
+        "the Blocked filter must match both terminal block types"
+    assert {r["event_type"] for r in both["items"]} == {"blocked", "response_blocked"}
+
+
+def test_coverage_ids_are_not_counted_as_enforced_rules(make_org, client, monkeypatch,
+                                                        configure_judge):
+    """response_scan.degraded / .unreadable record what the SDK's scan COULD NOT
+    READ. They belong in the ledger, and they must not appear in the Passport's
+    "Policy rule enforced / Times fired" table — "we could not read the response,
+    40 times" listed beside phi.ssn_pattern reads as a control that fired."""
+    from app.schemas import Verdict
+    _captured: dict = {}
+
+    class _FakeHTML:
+        def __init__(self, string=None, **kw):
+            _captured["html"] = string
+
+        def write_pdf(self):
+            return b"%PDF-1.7\nstub\n%%EOF"
+
+    _fake = type(sys)("weasyprint")
+    _fake.HTML = _FakeHTML
+    monkeypatch.setitem(sys.modules, "weasyprint", _fake)
+    org = make_org()
+    configure_judge(org["org_id"])
+
+    event = _response_blocked_event(seed="cov")
+    event["event_metadata"]["policy_rules"] = ["response_markup.script_tag",
+                                               "response_scan.degraded",
+                                               "response_scan.unreadable"]
+    client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+    _grade_each(monkeypatch, lambda meta: Verdict(
+        policy_breach=False, reason="no issues found", risk_score=0, decision="clean"))
+
+    r = client.post("/v1/passport", headers=org["auth"])
+    assert r.status_code == 200, r.text
+    body = _captured["html"]
+
+    # The real rule is tallied; the coverage ids are not.
+    assert "response_markup.script_tag" in body
+    assert "response_scan.degraded" not in body
+    assert "response_scan.unreadable" not in body
+
 
 def test_ledger_filter_surfaces_enforcement_rows_distinctly(make_org, client):
     """The ledger can be filtered to host-side enforcement rows so the record shows

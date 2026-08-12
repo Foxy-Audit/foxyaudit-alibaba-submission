@@ -132,7 +132,15 @@ class AsyncDispatcher:
         self._shutdown = True
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-        self._flush_spool()
+        # Wrapped for the same reason the loop's call is. This one is the atexit
+        # handler, so an exception here surfaces during interpreter shutdown, in
+        # the customer's process, out of a library they did not call — and it
+        # cannot help them: the spool is durable, so the events survive to the
+        # next run either way.
+        try:
+            self._flush_spool()
+        except Exception as exc:                 # noqa: BLE001 — type name only
+            log.debug("foxy-audit: final spool flush failed (%s)", type(exc).__name__)
 
 
 _DISPATCHER = AsyncDispatcher()

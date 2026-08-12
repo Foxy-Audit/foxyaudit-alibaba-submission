@@ -190,7 +190,10 @@ def verdict_slices(stats: dict | None) -> tuple[list[dict], int]:
         grading = {}
     breaches = _num(stats.get("breaches"))
     graded = _num(grading.get("graded"))
-    blocked = _num(stats.get("blocked"))
+    # response_blocked rides in the SAME slice as blocked, matching the web and
+    # matching verdict_of, which badges both rows "blocked". Left out of this sum
+    # it fell through to `clean`: a response the SDK withheld was counted green.
+    blocked = _num(stats.get("blocked")) + _num(stats.get("response_blocked"))
     redacted = _num(stats.get("redacted"))
     unknown = _num(stats.get("evaluator_unknown"))
     clean = max(0.0, graded - breaches - blocked - redacted - unknown)

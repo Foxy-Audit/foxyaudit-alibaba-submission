@@ -27,6 +27,17 @@ from .schemas import Verdict
 #     normally, and never counted as prevented egress in the Passport.
 ENFORCEMENT_EVENT_TYPES = {"blocked", "redacted", "response_blocked"}
 
+# Rule ids that record what the SDK's response scan COULD NOT READ
+# (response_scan.degraded / .unreadable). They are real evidence and belong in
+# the ledger, but they are not rules anything enforced, so they must never be
+# tallied as such — "Policy rule enforced / Times fired" listing "we could not
+# read the response 40 times" reads as a control that fired.
+COVERAGE_RULE_PREFIX = "response_scan."
+
+
+def is_coverage_rule(rule: object) -> bool:
+    return isinstance(rule, str) and rule.startswith(COVERAGE_RULE_PREFIX)
+
 
 def evaluate_enforcement(meta: dict[str, Any]) -> Verdict:
     """Deterministic verdict for a host-side enforcement event.

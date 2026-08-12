@@ -193,6 +193,12 @@ def generate_passport(
             response_blocked_events += 1
         if row.event_type in policy_engine.ENFORCEMENT_EVENT_TYPES:
             for rule in (metadata.get("policy_rules") or []):
+                # Coverage ids say what the scan could not read. Aggregating
+                # them here would list "we could not read the response" beside
+                # phi.ssn_pattern under "Policy rule enforced / Times fired",
+                # which reads as a control that fired.
+                if policy_engine.is_coverage_rule(rule):
+                    continue
                 enforced_rule_counts[str(rule)] += 1
         # Evaluator-unknown is an honest "could not determine", never a pass.
         reason = str(verdict.get("reason") or "")

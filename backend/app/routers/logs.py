@@ -320,7 +320,9 @@ def list_logs(
     policy_tag: str | None = Query(default=None, max_length=64),
     agent: str | None = Query(default=None, max_length=128),
     verdict: str | None = Query(default=None,
-                                description="clean | breach | unknown | pending | blocked | redacted"),
+                                description="clean | breach | unknown | pending | blocked "
+                                            "(includes response_blocked) | redacted | "
+                                            "response_blocked"),
     since: datetime | None = Query(default=None, description="created_at >= (ISO)"),
     until: datetime | None = Query(default=None, description="created_at <= (ISO)"),
 ):
@@ -349,7 +351,14 @@ def list_logs(
     elif v == "unknown":
         conds.append(AuditLog.grading_status == "graded")
         conds.append(AuditLog.gemini_verdict["decision"].astext == "unknown")
-    elif v in ("blocked", "redacted", "response_blocked"):
+    elif v == "blocked":
+        # BOTH terminal block types. Every surface badges a withheld response
+        # "blocked" (the dashboard's verdictOf, the desktop's verdict_of), so a
+        # filter matching only event_type="blocked" made a row visibly labelled
+        # blocked vanish under the Blocked filter. `response_blocked` stays
+        # available as an exact value for callers that want just that one.
+        conds.append(AuditLog.event_type.in_(("blocked", "response_blocked")))
+    elif v in ("redacted", "response_blocked"):
         # Host-side enforcement rows are identified by their terminal event_type,
         # so the ledger can surface prevented egress distinctly from graded verdicts.
         conds.append(AuditLog.event_type == v)

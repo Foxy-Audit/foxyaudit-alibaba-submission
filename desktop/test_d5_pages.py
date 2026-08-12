@@ -117,6 +117,13 @@ def test_enforcement_outcomes_outrank_the_judge_verdict():
                           "gemini_verdict": {"policy_breach": True}}) == \
         ("blocked", "blue")
     assert ld.verdict_of({"event_type": "redacted"}) == ("redacted", "pink")
+    # A response the SDK withheld (SDK >= 1.4) is terminal too, and arrives
+    # already graded — so without its own branch it falls through to
+    # grading_status == "graded" and renders as "safe".
+    assert ld.verdict_of({"event_type": "response_blocked",
+                          "grading_status": "graded",
+                          "gemini_verdict": {"decision": "response_blocked"}}) == \
+        ("blocked", "blue")
 
 
 def test_evaluator_non_answers_are_unknown_not_clean():
@@ -146,6 +153,23 @@ def test_clean_excludes_prevented_egress_and_non_answers():
     assert by["Clean"] == 20 - 2 - 3 - 1 - 4
     assert by["Pending"] == 6 and by["Failed"] == 2
     assert total == by["Clean"] + 2 + 3 + 1 + 4 + 6 + 2
+
+
+def test_a_withheld_response_is_not_counted_as_clean():
+    """A response the SDK withheld (SDK >= 1.4) reaches the ledger `graded` and
+    terminal, so leaving stats.response_blocked out of the subtraction fell it
+    straight through into Clean — a prevented egress reported green.
+
+    It joins the Blocked slice rather than getting its own, because verdict_of
+    badges both rows "blocked"; a slice the rows disagree with is a second bug,
+    and an eighth slice moves the adjacency G8 settled."""
+    slices, total = ld.verdict_slices({
+        "breaches": 1, "blocked": 2, "response_blocked": 3, "redacted": 1,
+        "evaluator_unknown": 0, "grading": {"graded": 10}})
+    by = {s["label"]: s["value"] for s in slices}
+    assert by["Blocked"] == 5
+    assert by["Clean"] == 10 - 1 - 5 - 1
+    assert total == 10
 
 
 def test_clean_never_goes_negative():

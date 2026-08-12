@@ -85,11 +85,14 @@ stream is re-scanned whole in both modes, so the evidence record is exact even w
 was not. Buffering the whole stream would make blocking total and would silently turn a
 streaming API into a non-streaming one, so the SDK does not do it.
 
-**A cut stream is recorded as truncated, never as prevented.** Chunks you already received are
-in your application, so calling that "prevented egress" would put a false statement in your
-Compliance Passport. Only a block where *nothing* reached you is recorded as
-`event_type: response_blocked`; a stream cut after delivery is an ordinary `stream` event with
-`decision: response_truncated`, and the exception says so in as many words.
+**A cut stream is recorded as truncated, never as prevented — whatever `mode` you run.** Chunks
+you already received are in your application, so calling that "prevented egress" would put a
+false statement in your Compliance Passport. Only a block where *nothing* reached you is recorded
+as `event_type: response_blocked`; a stream cut after delivery is an ordinary `stream` event with
+`decision: response_truncated`, and the exception says so in as many words. One consequence worth
+knowing: if `mode="redact"` scrubbed the prompt and the stream is then cut, that row is *not*
+counted in the Passport's redaction tally — one row carries one terminal outcome, and this one's
+is truncation. The redaction is still in the record, as the `phi.*`/`pii.*` rule ids that fired.
 
 **What the scan reads, and what it admits it cannot.** Response *content* is extracted from the
 provider's own shape — OpenAI `choices[].delta.content` / `choices[].message.content`, Anthropic
@@ -98,7 +101,9 @@ content blocks and `delta.text`, the Gemini `candidates[].content.parts[]`, the 
 raw SSE is covered). An unrecognised but serialisable shape is scanned as a serialised envelope
 and recorded as `response_scan.degraded`; an object whose content cannot be reached at all is
 recorded as `response_scan.unreadable`. **Neither ever blocks** — coverage you do not have is
-missing evidence, not a finding — but neither is silently reported as a clean scan.
+missing evidence, not a finding — but neither is silently reported as a clean scan. They appear
+only as rule ids: never as a `decision`, never as a `blocked_reason`, and never in the Passport's
+enforced-rule table. "We could not read this" is not a verdict on the interaction.
 
 **`audit_required` does not hide a block.** If the audit event cannot be durably delivered, you
 still get `FoxyResponseBlocked`, with `audit_delivery_failed=True` on it. The security decision

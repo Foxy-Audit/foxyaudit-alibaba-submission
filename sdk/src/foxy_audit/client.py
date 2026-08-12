@@ -48,18 +48,25 @@ the prompt: see ``config.DEFAULT_RESPONSE_SCAN`` for why.
   provider envelope between two halves of a split match, and a ``<script>``
   arriving in three OpenAI chunks was delivered in full with no exception.
 
-* **A cut stream is NOT recorded as prevented egress.** Chunks that were already
-  yielded are in the caller's application; calling that prevention would make
-  the Compliance Passport attest something that did not happen. Only a block
-  where NOTHING reached the caller emits ``event_type="response_blocked"`` (the
-  terminal type the Passport counts). A stream cut after delivery keeps its
-  ordinary ``stream`` type and records ``decision="response_truncated"``.
+* **A cut stream is NOT recorded as prevented egress, in any mode.** Chunks that
+  were already yielded are in the caller's application; calling that prevention
+  would make the Compliance Passport attest something that did not happen. Only
+  a block where NOTHING reached the caller emits
+  ``event_type="response_blocked"`` (the terminal type the Passport counts). A
+  stream cut after delivery is ``stream`` + ``decision="response_truncated"``
+  — including under ``mode="redact"``, where borrowing the plan's ``redacted``
+  type would put the row straight back into the prevented tally. The
+  consequence is stated in :meth:`_emit_response_block`: such a row is not
+  counted in ``redacted_events``, and the redaction stays in the evidence as its
+  rule ids.
 
 * **A shape the scanner cannot read is recorded as unread, not as clean.**
   ``response_scan.degraded`` (an envelope was scanned instead of content) and
-  ``response_scan.unreadable`` (nothing was reachable) ride in ``policy_rules``.
+  ``response_scan.unreadable`` (nothing was reachable) ride in ``policy_rules``
+  and NOWHERE else — they never become a ``decision``, never set a
+  ``blocked_reason``, and are never tallied as an enforced rule in the Passport.
   Neither ever blocks: coverage we do not have is missing evidence, not a
-  finding.
+  finding, and "we could not read this" is not a verdict on the interaction.
 
 * **``audit_required`` does not hide a block.** If the audit event cannot be
   durably delivered, ``FoxyResponseBlocked`` is still what is raised, carrying
@@ -114,9 +121,16 @@ class FoxyPolicyBlocked(RuntimeError):
 class FoxyResponseBlocked(RuntimeError):
     """Raised when the response scan blocks a model response AFTER the wrapped
     function has already run (``response_scan="block"``). The response is never
-    returned to the caller; a ``blocked`` audit event is emitted first, carrying
-    a REAL response commitment — unlike a prompt block, where the response hash
-    is the commitment of "" because no response ever existed.
+    returned to the caller; a ``response_blocked`` audit event is emitted first.
+
+    Its ``response_hash`` commits WHAT WAS DELIVERED, which is the honest
+    statement of egress rather than of what the model produced. On a
+    non-streamed block that is the whole response — a real commitment, unlike a
+    prompt block, where nothing was ever produced to commit. On a stream flagged
+    at its FIRST chunk it is the commitment of an empty list, because nothing
+    reached the caller; on a stream cut later it covers only the chunks that
+    did. (An earlier draft of this docstring claimed a real response commitment
+    in every case, which the first-chunk stream contradicts.)
 
     Deliberately NOT a subclass of :class:`FoxyPolicyBlocked`. Code that catches
     FoxyPolicyBlocked today is entitled to assume the wrapped function never
@@ -381,11 +395,24 @@ class FoxyClient:
         reason = plan["reason"] if plan else None
         if rdec is not None:
             rules = rules + list(rdec.rules)
-            if reason is None:
-                reason = rdec.reason
-            if terminal or decision not in _PROMPT_ENFORCED:
-                decision = outcome
-        if decision is None:
+            # Coverage ids are RECORDED but carry no meaning beyond themselves.
+            # They used to overwrite the prompt's decision and stamp
+            # blocked_reason="scan_coverage" — under the DEFAULT observe, on
+            # every call whose response is an opaque provider handle. "We could
+            # not read this" is not a decision about the interaction and not a
+            # reason anything was stopped. See response_policy.coverage_rule.
+            #
+            # ``outcome`` is therefore only consulted when rdec actually
+            # TRIGGERED, which is why the call sites pass the literal label. A
+            # helper that computed a different one for the coverage-only case
+            # used to live here; it was dead by construction, and a mutation
+            # proved it by changing its value with no test noticing.
+            if rdec.triggered:
+                if reason is None:
+                    reason = rdec.reason
+                if terminal or decision not in _PROMPT_ENFORCED:
+                    decision = outcome
+        if decision is None and not rules:
             return {}
         return {"decision": decision, "policy_rules": rules,
                 "signals": signals, "blocked_reason": reason}
@@ -411,9 +438,25 @@ class FoxyClient:
         with the backend, the Passport, the dashboard and the desktop ledger
         updated to match. Reusing ``blocked`` was wrong for a second reason
         beyond the stream: it asserts the host stopped the prompt before it left,
-        and on a response block the prompt DID reach the provider."""
+        and on a response block the prompt DID reach the provider.
+
+        ⚠ WHEN CHUNKS WERE DELIVERED, THE TYPE IS ``stream`` NO MATTER THE MODE.
+        The first version of this wrote ``(plan and plan["event_type"]) or
+        "stream"``, which under ``mode="redact"`` emitted ``redacted`` — also an
+        enforcement type. So the exact bug this method exists to prevent came
+        straight back through the other mode: counted as prevented egress in the
+        Passport, in /v1/stats and in the enforced-rule tally, terminal so the
+        judge never graded a response that HAD reached the caller, and reported
+        with a reason describing only the redaction.
+
+        The consequence is stated rather than hidden: a redacted prompt whose
+        stream is then cut is NOT counted in ``redacted_events``. One row carries
+        one terminal outcome, and this row's is truncation. The redaction stays
+        in the evidence — its ``phi.*``/``pii.*`` rule ids are in
+        ``policy_rules`` — it simply is not claimed as prevention on a row that
+        delivered content."""
         if delivered:
-            event_type = (plan and plan["event_type"]) or "stream"
+            event_type = "stream"
             outcome = "response_truncated"
         else:
             event_type = "response_blocked"
@@ -437,15 +480,6 @@ class FoxyClient:
                 self.cfg.udp_host, self.cfg.udp_port,
             )
         return delivery_failed
-
-    def _response_outcome(self, rdec) -> str:
-        """The ``decision`` label for a response finding that was NOT blocked.
-
-        Coverage-only decisions get their own label rather than borrowing
-        ``response_flagged``: "the scanner could not read this" and "the scanner
-        read this and found something" are different claims about the evidence,
-        and a row that conflates them overstates what was checked."""
-        return "response_flagged" if rdec.triggered else "response_scan_degraded"
 
     def _with_coverage(self, decision, coverage: str):
         """Fold a stream scanner's worst coverage into a decision's rule ids.
@@ -532,7 +566,7 @@ class FoxyClient:
                     await self._record_async(
                         hash_prompt, response, policy, agent, metadata=meta,
                         event_type=(plan and plan["event_type"]) or "interaction",
-                        **self._labels(plan, rdec, outcome=rdec and self._response_outcome(rdec)))
+                        **self._labels(plan, rdec, outcome="response_flagged"))
                     return response
                 return awrapper
 
@@ -590,7 +624,7 @@ class FoxyClient:
                     await self._record_async(
                         hash_prompt, chunks, policy, agent, metadata=_metadata(kwargs),
                         event_type=(plan and plan["event_type"]) or "stream",
-                        **self._labels(plan, rdec, outcome=rdec and self._response_outcome(rdec)))
+                        **self._labels(plan, rdec, outcome="response_flagged"))
                 return agen_wrapper
 
             @functools.wraps(fn)
@@ -646,7 +680,7 @@ class FoxyClient:
                             metadata=_metadata(kwargs),
                             event_type=event_override or "stream",
                             **self._labels(plan, rdec,
-                                           outcome=rdec and self._response_outcome(rdec)))
+                                           outcome="response_flagged"))
                     return generator()
                 meta = _metadata(kwargs, response)
                 rdec = self._scan_response(response, policy)
@@ -658,7 +692,7 @@ class FoxyClient:
                 self.log_interaction(hash_prompt, response, policy, agent, metadata=meta,
                                      event_type=event_override or "interaction",
                                      **self._labels(plan, rdec,
-                                                    outcome=rdec and self._response_outcome(rdec)))
+                                                    outcome="response_flagged"))
                 return response
             return wrapper
 
@@ -723,11 +757,16 @@ class FoxyClient:
             }
             if agent:
                 payload["agent"] = agent
-            if decision is not None:
+            if decision is not None or policy_rules:
                 # Thread the preflight decision into event_metadata without
-                # disturbing the observe path (decision is None there).
+                # disturbing the observe path (decision is None AND no rules
+                # there). Rules can arrive WITHOUT a decision: a response-scan
+                # coverage id records that a shape could not be read, which is
+                # evidence about the scan and not a decision about the
+                # interaction. It must still reach the ledger.
                 meta = dict(metadata) if metadata else {}
-                meta["decision"] = decision
+                if decision is not None:
+                    meta["decision"] = decision
                 meta["policy_rules"] = list(policy_rules or [])
                 if blocked_reason is not None:
                     meta["blocked_reason"] = blocked_reason

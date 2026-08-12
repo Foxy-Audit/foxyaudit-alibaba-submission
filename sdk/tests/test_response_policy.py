@@ -685,6 +685,85 @@ def test_a_cut_stream_is_NOT_recorded_as_prevented_egress(monkeypatch):
     assert "already reached your code" in str(excinfo.value)
 
 
+# The prompt differs per mode on purpose. Under mode="block" a PHI prompt never
+# reaches the response scan at all — the preflight guard raises first, which is
+# its own guard — so the block row here needs a clean prompt. Under redact the
+# prompt MUST trip, because plan["event_type"] == "redacted" is the value that
+# leaked into the emitted type.
+_MODE_PROMPTS = [("observe", CLEAN_PROMPT), ("block", CLEAN_PROMPT),
+                 ("redact", PHI_PROMPT)]
+
+
+@pytest.mark.parametrize("mode,prompt", _MODE_PROMPTS)
+def test_a_cut_stream_is_never_an_enforcement_type_IN_ANY_MODE(monkeypatch, mode, prompt):
+    """⚠ PER MODE, not once. The first fix wrote
+    ``(plan and plan["event_type"]) or "stream"``, which is correct for observe
+    and for block and emits ``redacted`` under redact — also an enforcement
+    type, so the exact bug came straight back through the other mode: counted as
+    prevented egress, terminal so the judge never graded a response that HAD
+    reached the caller. One parametrized guard, one boundary."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking(mode=mode)
+    received = []
+
+    @foxy.audit(policy="hipaa")
+    def ask(prompt: str):
+        yield openai_chunk("this chunk IS delivered")
+        yield openai_chunk(XSS_RESPONSE)
+
+    with pytest.raises(FoxyResponseBlocked):
+        for chunk in ask(prompt):
+            received.append(chunk)
+
+    assert len(received) == 1, "the premise: something WAS delivered"
+    assert captured[0]["event_type"] == "stream", (
+        f"mode={mode} emitted {captured[0]['event_type']!r} — an enforcement type "
+        "on a row that delivered content")
+    assert captured[0]["event_metadata"]["decision"] == "response_truncated"
+
+
+@pytest.mark.parametrize("mode,prompt", _MODE_PROMPTS)
+def test_a_fully_prevented_stream_IS_terminal_in_any_mode(monkeypatch, mode, prompt):
+    """The other side of the same boundary, also per mode: nothing delivered is
+    genuine prevention and must keep the terminal type in all three."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking(mode=mode)
+    received = []
+
+    @foxy.audit(policy="hipaa")
+    def ask(prompt: str):
+        yield openai_chunk(XSS_RESPONSE)
+        yield openai_chunk("never reached")
+
+    with pytest.raises(FoxyResponseBlocked):
+        for chunk in ask(prompt):
+            received.append(chunk)
+
+    assert received == []
+    assert captured[0]["event_type"] == "response_blocked", f"mode={mode}"
+    assert captured[0]["event_metadata"]["decision"] == "blocked_response"
+
+
+def test_a_cut_stream_under_redact_keeps_the_redaction_in_evidence(monkeypatch):
+    """The stated consequence of the fix, asserted so it stays true: the row is
+    no longer counted in redacted_events, and the redaction is still in the
+    record — as the rule ids that fired, in policy_rules."""
+    captured = _capture(monkeypatch)
+    foxy = _blocking(mode="redact")
+
+    @foxy.audit(policy="hipaa")
+    def ask(prompt: str):
+        yield openai_chunk("delivered")
+        yield openai_chunk(XSS_RESPONSE)
+
+    with pytest.raises(FoxyResponseBlocked):
+        list(ask(PHI_PROMPT))
+    rules = captured[0]["event_metadata"]["policy_rules"]
+    assert any(r.startswith("phi.") for r in rules), \
+        "the prompt redaction must survive somewhere in the evidence"
+    assert "response_markup.script_tag" in rules
+
+
 def test_a_stream_flagged_on_its_FIRST_chunk_delivered_nothing(monkeypatch):
     """The other side of the same line: nothing was yielded, so this genuinely
     IS prevention and takes the terminal type."""
@@ -833,8 +912,56 @@ def test_degraded_coverage_alone_never_blocks(monkeypatch):
 
     assert ask(CLEAN_PROMPT) is harmless          # not blocked
     md = captured[0]["event_metadata"]
-    assert md["decision"] == "response_scan_degraded"
     assert md["policy_rules"] == ["response_scan.degraded"]
+
+
+@pytest.mark.parametrize("mode", ["observe", "block", "redact"])
+def test_coverage_ids_never_become_a_decision_or_a_reason(monkeypatch, mode):
+    """A coverage id says what the SCAN could not read. It is not a decision
+    about the interaction and not a reason anything was stopped.
+
+    It used to be both: it overwrote the prompt's "allowed" and stamped
+    blocked_reason="scan_coverage" — under the DEFAULT observe, on every call
+    whose response is an opaque provider handle. The id itself still has to
+    reach the ledger, which is the last assertion."""
+    captured = _capture(monkeypatch)
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False, mode=mode)
+
+    class _Opaque:
+        def __repr__(self):
+            return "<_Opaque object at 0x1234567890>"
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        return _Opaque()
+
+    ask(CLEAN_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert md.get("blocked_reason") is None, f"mode={mode}"
+    assert md.get("decision") in (None, "allowed"), \
+        f"mode={mode} let a coverage id overwrite the decision: {md.get('decision')!r}"
+    assert "response_scan.unreadable" in md["policy_rules"]
+
+
+def test_a_coverage_id_reaches_the_ledger_without_any_decision(monkeypatch):
+    """Under plain observe there is no prompt decision at all, so the metadata
+    carries rules and nothing else. Before this, policy_rules only rode along
+    when a decision existed — so the coverage id was computed and dropped."""
+    captured = _capture(monkeypatch)
+    foxy = FoxyClient(api_key="foxy_sk_test", desktop_ping=False)
+
+    class _Opaque:
+        def __repr__(self):
+            return "<_Opaque object at 0x1234567890>"
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str):
+        return _Opaque()
+
+    ask(CLEAN_PROMPT)
+    md = captured[0]["event_metadata"]
+    assert "decision" not in md
+    assert md["policy_rules"] == ["response_scan.unreadable"]
 
 
 def test_an_unreadable_response_is_recorded_as_unread_not_as_clean(monkeypatch):
@@ -853,8 +980,11 @@ def test_an_unreadable_response_is_recorded_as_unread_not_as_clean(monkeypatch):
 
     ask(CLEAN_PROMPT)
     md = captured[0]["event_metadata"]
-    assert md["decision"] == "response_scan_degraded"
+    # Recorded as a rule id and nothing more — see
+    # test_coverage_ids_never_become_a_decision_or_a_reason for why it must not
+    # also become a decision.
     assert "response_scan.unreadable" in md["policy_rules"]
+    assert "decision" not in md
 
 
 def test_a_serialiser_that_RAISES_is_unreadable_not_a_repr():
@@ -1074,6 +1204,48 @@ def test_the_dispatcher_loop_survives_a_flush_that_raises(dispatcher, monkeypatc
     d._run()                            # must return, not propagate
     assert calls["n"] >= 3, \
         "the loop stopped at the first raise — a dead dispatcher delivers nothing"
+
+
+def test_the_atexit_flush_survives_a_flush_that_raises(dispatcher, monkeypatch):
+    """flush() is the SAME unwrapped call, one line over from the loop's. It is
+    the atexit handler, so a raise here surfaces during interpreter shutdown in
+    the customer's process, out of a library they did not call — and it cannot
+    help them, because the spool is durable and the events survive either way."""
+    from foxy_audit import org_policy
+    monkeypatch.setattr(org_policy, "tick", lambda *a, **k: None)
+    d = dispatcher()
+
+    def boom():
+        raise RuntimeError("flush exploded")
+
+    d._flush_spool = boom
+    d.flush()                                   # must return, not propagate
+
+
+def test_the_shared_dispatcher_does_not_hoard_dead_spool_paths():
+    """Every FoxyClient that resumes adds its spool path to the module-level
+    dispatcher and nothing ever removes it, so per-test tmp paths ACCUMULATED —
+    69 of them after 223 tests, each re-opened on every flush for the rest of
+    the session, against directories pytest had already deleted. Measured after
+    the fix: 0.
+
+    The rollback is exercised DIRECTLY. A test cannot observe its own teardown,
+    and a guard that instead waits to notice accumulation only fails when it
+    happens to run late enough in the session — under random ordering that is a
+    coin toss, which is not a guard."""
+    import conftest
+
+    paths = dispatch._DISPATCHER._paths
+    paths.add("kept-from-before")
+    before = conftest.snapshot_dispatcher_paths()
+    try:
+        paths.add("added-by-a-test")
+        conftest.rollback_dispatcher_paths(before)
+        assert "added-by-a-test" not in paths, "the teardown does not roll back"
+        assert "kept-from-before" in paths, "the teardown discards more than it added"
+    finally:
+        paths.discard("kept-from-before")
+        paths.discard("added-by-a-test")
 
 
 def test_the_prompt_guard_still_wins_over_the_response_scan():
