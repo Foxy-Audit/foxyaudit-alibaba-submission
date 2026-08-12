@@ -21,13 +21,13 @@ from foxy_audit import FoxyClient, FoxyPolicyBlocked
 foxy = FoxyClient()  # reads FOXY_API_KEY / FOXY_BACKEND_URL from the environment
 
 
-@foxy.audit(policy="hipaa_basic")
+@foxy.audit(policy="hipaa")
 def ask_model(prompt: str) -> str:
     """Local stand-in for a customer's model call."""
     return f"Clinical summary for: {prompt[:48]}"
 
 
-@foxy.audit(policy="hipaa_basic")
+@foxy.audit(policy="hipaa")
 def ask_model_anomalous(prompt: str) -> str:
     """Create a synthetic high-token event for deterministic policy testing."""
     return "x " * 50_000

@@ -9,7 +9,7 @@ Protocol
 The SDK sends a small JSON payload over UDP:
 
   Successful hash:
-    {"event": "hash_ok", "policy": "hipaa_basic", "ts": 1719300000}
+    {"event": "hash_ok", "policy": "hipaa", "ts": 1719300000}
 
   Gemini policy breach:
     {"event": "policy_breach", "reason": "Anomalous token count",

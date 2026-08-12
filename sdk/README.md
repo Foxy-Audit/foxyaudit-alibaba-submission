@@ -6,6 +6,56 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.6.0 — every policy tag now runs the baseline checks, and `hipaa_basic` is real
+
+**If you run `policy="hipaa"` or `policy="gdpr"` under `mode="block"` or
+`mode="redact"`, prompts that used to pass may now be blocked or rewritten. That is
+the fix, not a regression.**
+
+Two defects, one release, because fixing either alone makes the other worse.
+
+**The policy map replaced instead of adding.** `hipaa` ran the PHI sweep *instead of*
+the prompt-injection and secret-key checks — so the HIPAA workspace was the one
+workspace that did not notice an API key pasted into a prompt. The map is now
+additive: injection and secret detection run under **every** tag, and a domain tag
+adds its personal-data family on top.
+
+**`hipaa_basic` was not a tag at all.** It is the tag in this README's own quickstart,
+in the package docstring and in `demo/run_demo.py` — and it was not a key in the
+policy map, so it fell through to the default and ran **zero PHI detection**. The
+event still shipped tagged `hipaa_basic`, still entered the hash chain, and still
+appeared in the Compliance Passport, which groups its statistics by `policy_tag`. A
+customer following our own quickstart got a document attesting activity under a
+HIPAA-named policy that had never performed a HIPAA check. `hipaa_basic` and
+`gdpr_basic` are now aliases for `hipaa` and `gdpr`.
+
+Aliasing alone would have been the *other* half of the same bug — `hipaa_basic` would
+have gained PHI and lost injection and secrets. Only the additive baseline makes it
+safe, so both ship together.
+
+What this changes for you, by mode:
+
+| `mode` | What moves |
+|---|---|
+| `observe` *(default)* | **Nothing.** The preflight guard does not run in observe mode, so no new rule fires and no new signal is recorded. |
+| `block` | Under `hipaa`/`gdpr`, a prompt carrying an injection pattern or a credential now raises `FoxyPolicyBlocked` where it previously passed through. |
+| `redact` | Under `hipaa`/`gdpr`, injection and secret spans are now scrubbed from the prompt as well, so **the model receives different text than it did on 1.5.x**. |
+
+- **New `prompt_injection` / `secret_key` labels** appear in `pii_signals`, and new
+  `injection.*` / `secret.*` ids in `policy_rules`, on `hipaa`/`gdpr` rows.
+- **Your breach count does not rise from those labels.** The only rows that gain them
+  are blocked and redacted rows, and the backend grades those from their enforcement
+  labels via `policy_engine.evaluate_enforcement`, which never reads `pii_signals`.
+  One classification *does* move: under `hipaa`/`gdpr`, a prompt tripping only an
+  injection or secret rule now produces a terminal host-enforced row (`policy_breach`
+  false, risk 0) instead of a judge-graded one. A prevented egress is not a breach.
+- **An unrecognised tag now warns** instead of silently degrading in silence. It still
+  runs and it still ships — see *Policy tags* below.
+- **`policy_tag` on the wire is unchanged.** It is recorded exactly as you passed it:
+  `hipaa_basic` still reads `hipaa_basic` in the ledger and in the Passport. Only the
+  *checks* resolve through the alias, so the meaning of every historical row that used
+  the tag is untouched.
+
 ## 1.5.0 — `mode="redact"` now examines the response for PII
 
 **If you run `mode="redact"`, your rows will carry more `pii_signals` labels than
@@ -52,7 +102,7 @@ from foxy_audit import FoxyClient
 
 foxy = FoxyClient(api_key=os.getenv("FOXY_API_KEY"))   # or just rely on the env var
 
-@foxy.audit(policy="hipaa_basic")
+@foxy.audit(policy="hipaa")
 def ask_model(prompt: str) -> str:
     return llm_client.generate(prompt)     # your existing code — unchanged
 ```
@@ -67,6 +117,35 @@ from foxy_audit import audit
 def summarize(text: str) -> str:
     ...
 ```
+
+### Policy tags
+
+`policy` selects which local checks run before the model is called. The map is
+**additive** — the baseline runs under every tag, and a domain tag adds to it.
+
+| `policy` | Checks that run | Notes |
+|---|---|---|
+| `"default"` | prompt injection, secret/key detection | The baseline. |
+| `"soc2"` | prompt injection, secret/key detection | SOC 2 is a controls regime, not a personal-data one; it has no PHI/PII scope to add, and the baseline is exactly its subject matter. |
+| `"hipaa"` | baseline **+** PHI/PII sweep (`phi.*` rules) | `"hipaa_basic"` is an accepted alias. |
+| `"gdpr"` | baseline **+** PII sweep (`pii.*` rules) | `"gdpr_basic"` is an accepted alias. |
+
+**An unrecognised tag runs the baseline and warns.** `policy_tag` is a free string on
+the wire — the backend validates no vocabulary, and labelling rows in your own terms
+(`"claims_triage"`, `"internal_v2"`) is supported and normal. So a tag we do not know
+is not an error and will not raise: failing your production model call over a label
+would be a worse outcome than the label being unknown. But it is no longer *silent*,
+because that was the actual defect — a typo like `"hipa"` would quietly downgrade a
+workspace's compliance posture with nothing said anywhere:
+
+```
+UserWarning: foxy-audit: unrecognised policy tag 'hipa'. Running the baseline checks
+only (prompt-injection + secrets); NO PHI/PII check will run. Known tags: default,
+gdpr, gdpr_basic, hipaa, hipaa_basic, soc2.
+```
+
+The warning fires once per distinct tag per process. Whatever you pass is recorded on
+the wire verbatim, recognised or not.
 
 ### Attributing the model (`agent`)
 

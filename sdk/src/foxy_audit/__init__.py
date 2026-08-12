@@ -12,18 +12,41 @@ Quickstart
 
     foxy = FoxyClient(api_key="foxy_sk_...")     # or set $FOXY_API_KEY
 
-    @foxy.audit(policy="hipaa_basic")
+    @foxy.audit(policy="hipaa")
     def ask_model(prompt: str) -> str:
         return llm_client.generate(prompt)       # your code, unchanged
 
 The default decorator mode does not block the wrapped function and keeps
 telemetry errors out of your application. Set ``audit_required=True`` when
 the application must fail closed if evidence delivery cannot be confirmed.
+
+``policy`` selects the local checks, additively: prompt-injection and secret
+detection run under EVERY tag, and ``hipaa`` / ``gdpr`` add a PHI / PII sweep on
+top. ``hipaa_basic`` and ``gdpr_basic`` are accepted aliases. An unrecognised tag
+runs the baseline and emits a ``UserWarning`` — it is not an error, because
+``policy_tag`` is a free string customers label in their own terms, but it is no
+longer silent. See ``policy.KNOWN_POLICY_TAGS`` and the SDK README.
 """
 
 from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 
+# 1.6.0 — #166/#167. The policy map is ADDITIVE and hipaa_basic is a real tag.
+# Injection + secret checks now run under EVERY tag instead of being replaced by
+# the domain sweep, and hipaa_basic/gdpr_basic alias onto hipaa/gdpr. Before
+# this, our own quickstart tag was not in the map at all: it fell through to the
+# default and ran ZERO PHI detection, while the row it shipped was labelled
+# hipaa_basic and the Compliance Passport grouped its statistics by that label.
+#
+# MINOR, and it is a behaviour change on purpose: under block/redact a hipaa or
+# gdpr prompt carrying an injection pattern or a credential is now stopped or
+# scrubbed where it previously passed, so a redact-mode model call can receive
+# different text than it did on 1.5.x. observe mode is untouched — the preflight
+# guard never runs there. Breach counts do not rise from the new pii_signals
+# labels: only enforcement rows gain them, and evaluate_enforcement never reads
+# that field. policy_tag is recorded verbatim; only the CHECKS resolve through
+# the alias, so no historical row changes meaning.
+#
 # 1.5.0 — #158. mode="redact" now examines the RESPONSE for PII. A redact row's
 # pii_signals is the union of what fired on the prompt and what the full sweep
 # finds; before this the sweep was skipped on exactly those rows, so PII the
@@ -50,7 +73,7 @@ from .config import FoxyConfig
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
            "audit", "__version__"]
 

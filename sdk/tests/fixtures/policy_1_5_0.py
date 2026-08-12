@@ -6,33 +6,19 @@ returns a locally-redacted copy of the prompt. Both run in-process, alongside
 `pii.detect_pii` — the only place raw text is ever seen — and return SIGNAL
 LABELS / rule ids ONLY. Raw offending text never leaves this module.
 
-Policy map (which check families each policy tag runs). The map is ADDITIVE: a
-domain tag adds its personal-data family ON TOP of the baseline, it does not
-replace it.
+Policy map (which check families each policy tag runs):
 
-    every tag      -> prompt-injection + secret/key detection   (the baseline)
-    hipaa          -> ...plus PHI/PII (via pii.detect_pii, rules prefixed ``phi.``)
-    gdpr           -> ...plus PII     (via pii.detect_pii, rules prefixed ``pii.``)
-    default, soc2  -> the baseline alone
-
-Before 1.6.0 the map REPLACED rather than added: ``hipaa`` ran PHI *instead of*
-the baseline, so a HIPAA workspace was the one workspace that did not check for
-a leaked API key. Additive is the fix, and it is what makes the aliases below
-safe — aliasing ``hipaa_basic`` onto a replacing ``hipaa`` would only have
-traded a missing PHI check for a missing secrets check.
+    hipaa           -> PHI/PII   (via pii.detect_pii, rules prefixed ``phi.``)
+    gdpr            -> PII       (via pii.detect_pii, rules prefixed ``pii.``)
+    default / other -> prompt-injection + secret/key detection
 
 The rule id vocabulary (``<family>.<name>``) and the coarse signal labels are
 part of the frozen wire contract's ``policy_rules`` / ``pii_signals`` fields.
-``policy_tag`` itself is NOT resolved through the alias table on the wire: the
-customer tagged the event ``hipaa_basic`` and the ledger keeps saying
-``hipaa_basic``. Only the CHECKS resolve. Rewriting the recorded tag would
-change the meaning of every historical row that already used it.
 """
 
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass, field
 
 from . import hashing, pii
@@ -72,44 +58,11 @@ _SECRET_RULES = (
 )
 
 # ── policy → check families ───────────────────────────────────────────────────
-# The baseline every tag runs. Prompt injection and a leaked credential are not
-# a property of the compliance regime the workspace is under — they are wrong in
-# all of them — so no tag opts out of these.
-_BASELINE_CHECKS = ("injection", "secrets")
-
-# What a tag adds ON TOP of the baseline. An empty tuple is a real, deliberate
-# entry, not a placeholder: it says "this tag is recognised and the baseline is
-# all it needs", which is what keeps `resolve` from warning about it.
-#
-# soc2 -> (): SOC 2 is a controls regime (access, confidentiality, integrity),
-# not a personal-data one. It has no PHI/PII scope to add, and the baseline —
-# injection and credential leakage — is exactly its subject matter. Decided, not
-# left over: it was already reaching the baseline before 1.6.0, and it is listed
-# here so that stays true on purpose and so the vocabulary guard accepts it.
-_POLICY_EXTRA = {
-    "default": (),
-    "soc2": (),
+_POLICY_CHECKS = {
     "hipaa": ("phi",),   # PHI/PII via pii.detect_pii
     "gdpr": ("pii",),    # PII via pii.detect_pii
 }
-
-# Documented spellings that resolve to a real tag. `hipaa_basic` is the tag in
-# our own PyPI quickstart, so until 1.6.0 the copy-paste path ran NO PHI check
-# while the event it shipped — and the Compliance Passport that groups its
-# statistics by policy_tag — was labelled HIPAA.
-_POLICY_ALIASES = {
-    "hipaa_basic": "hipaa",
-    "gdpr_basic": "gdpr",
-}
-
-#: Every spelling the SDK recognises. The documentation-vocabulary guard reads
-#: this, so a README example using a tag absent here fails the build.
-KNOWN_POLICY_TAGS = frozenset(_POLICY_EXTRA) | frozenset(_POLICY_ALIASES)
-
-# One warning per distinct unknown tag per process — the tag sits inside the
-# hot path of a decorated call, and a warning per invocation would be noise a
-# customer learns to filter.
-_warned_tags: set[str] = set()
+_DEFAULT_CHECKS = ("injection", "secrets")
 
 # Priority order for the single "dominant" blocked_reason label.
 #
@@ -171,54 +124,8 @@ def _as_text(prompt) -> str:
         return str(prompt)
 
 
-def resolve_policy_tag(policy_tag: str) -> str | None:
-    """Canonical tag for ``policy_tag``, or ``None`` if it is not recognised.
-
-    Resolves aliases (``hipaa_basic`` -> ``hipaa``). This is the ONE place the
-    tag vocabulary is interpreted; :mod:`response_policy` calls it too, so the
-    prompt side and the response side can never disagree about what a tag means.
-    It does NOT warn — callers that act on the result do, so that merely asking
-    what a tag resolves to (the vocabulary guard, a test) stays silent.
-    """
-    tag = (policy_tag or "").strip().lower()
-    tag = _POLICY_ALIASES.get(tag, tag)
-    return tag if tag in _POLICY_EXTRA else None
-
-
-def _resolve_or_warn(policy_tag: str) -> str | None:
-    """:func:`resolve_policy_tag`, but an unrecognised tag is made LOUD.
-
-    Warn rather than refuse, deliberately. ``policy_tag`` is a free string on
-    the wire — the backend validates no vocabulary, and customers legitimately
-    label rows in their own terms (``claims_triage``, ``internal_v2``). Raising
-    would turn a label we happen not to know into a hard failure of the
-    customer's production model call, which is a worse outcome than the label
-    being unknown.
-
-    What is NOT acceptable is the old silence. An unrecognised tag still runs
-    the baseline and still ships a row carrying that tag, so a typo like
-    ``hipa_basic`` used to downgrade a workspace's compliance posture with
-    nothing said anywhere. The typo is not the defect; the silence was.
-    """
-    resolved = resolve_policy_tag(policy_tag)
-    if resolved is None:
-        tag = (policy_tag or "").strip().lower()
-        if tag not in _warned_tags:
-            _warned_tags.add(tag)
-            warnings.warn(
-                f"foxy-audit: unrecognised policy tag {policy_tag!r}. Running the "
-                f"baseline checks only (prompt-injection + secrets); NO PHI/PII "
-                f"check will run. Known tags: "
-                f"{', '.join(sorted(KNOWN_POLICY_TAGS))}.",
-                UserWarning, stacklevel=3,
-            )
-    return resolved
-
-
 def _checks_for(policy_tag: str) -> tuple[str, ...]:
-    """The check families for a tag: the baseline, plus whatever the tag adds."""
-    resolved = _resolve_or_warn(policy_tag)
-    return _BASELINE_CHECKS + _POLICY_EXTRA.get(resolved, ())
+    return _POLICY_CHECKS.get((policy_tag or "").strip().lower(), _DEFAULT_CHECKS)
 
 
 def evaluate(prompt_text, policy_tag: str = "default") -> PolicyDecision:

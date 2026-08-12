@@ -116,6 +116,12 @@ _SECRET_RULES = tuple(
 # which compliance regime the workspace runs under — so these run for every
 # policy tag. Personal data does depend on it, and follows the prompt side's map.
 _ALWAYS = _MARKUP_RULES + _SQL_RULES + _URL_RULES + _SECRET_RULES
+
+# Keyed by the CANONICAL tag and resolved through policy.resolve_policy_tag, so
+# an alias means the same thing on both sides. This map is why the alias fix is
+# not a one-line change to the prompt side: `hipaa_basic` resolving to PHI on
+# the prompt while this map still matched a literal `hipaa_basic` would leave
+# the response half of a HIPAA workspace with no personal-data scan at all.
 _POLICY_PERSONAL = {"hipaa": "response_phi", "gdpr": "response_pii"}
 
 # How much of the previous chunk a streaming scan carries forward. A rule can
@@ -124,7 +130,11 @@ CARRY_CHARS = 256
 
 
 def _personal_prefix(policy_tag: str) -> str | None:
-    return _POLICY_PERSONAL.get((policy_tag or "").strip().lower())
+    # `_resolve_or_warn`, not the silent `resolve_policy_tag`, so an unrecognised
+    # tag is still reported under mode="observe" — where the prompt guard never
+    # runs and this is the only side that resolves the tag at all. The warning
+    # dedupes per tag per process, so the two call sites cannot double-report.
+    return _POLICY_PERSONAL.get(policy._resolve_or_warn(policy_tag))
 
 
 def scan_source(value) -> tuple[str, str]:
