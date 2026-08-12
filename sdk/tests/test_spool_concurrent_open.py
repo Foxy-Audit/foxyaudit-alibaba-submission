@@ -36,7 +36,12 @@ import pytest
 from foxy_audit.spool import EventSpool
 
 THREADS = 8
-ROUNDS = 10
+#: 40, not a rounder-looking 10, because this is the guard for a defect
+#: that costs audit events. Measured against the REVERTED fix, 80 opens
+#: let a revert pass roughly one run in five; 320 opens is the number the
+#: docstring's own finding was measured at, and it caught the revert in
+#: 15 consecutive runs. It costs 1.4s over the smaller value.
+ROUNDS = 40
 
 
 def _open_concurrently(path: str, threads: int = THREADS) -> list[BaseException]:

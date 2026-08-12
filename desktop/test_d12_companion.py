@@ -176,11 +176,19 @@ def test_the_popup_caps_the_rule_list_like_the_ping_does():
 
 
 def test_the_popup_survives_a_junk_payload():
-    """A malformed UDP datagram must not take the incident popup with it."""
+    """A malformed UDP datagram must not take the incident popup with it.
+
+    None of these payloads carries a usable rule, so none may produce a Rules
+    line. This used to read ``"Rules:" not in detail or "r." in detail``, which
+    is a tautology over exactly these six inputs — the left side is true
+    whenever no line is emitted, so deleting the rules block from
+    ``breach_detail`` left it green.
+    """
     for junk in (None, "boom", 42, {}, {"rules": None}, {"rules": ["", "  "]}):
         detail = ce.breach_detail(junk)
         assert "POLICY BREACH DETECTED" in detail
-        assert "Rules:" not in detail or "r." in detail
+        assert "Risk Score" not in detail
+        assert "Rules:" not in detail, f"empty rules rendered a line: {detail!r}"
 
 
 def test_turning_breach_alerts_off_silences_the_whole_reaction():
