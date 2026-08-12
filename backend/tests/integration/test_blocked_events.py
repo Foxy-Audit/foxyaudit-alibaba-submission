@@ -474,6 +474,70 @@ def test_stats_and_ledger_filter_see_a_withheld_response(make_org, client):
     assert {r["event_type"] for r in both["items"]} == {"blocked", "response_blocked"}
 
 
+def test_a_redacted_rows_pii_signals_do_not_make_it_a_breach(make_org, client,
+                                                             monkeypatch,
+                                                             configure_judge):
+    """The blast radius of SDK #158, pinned end to end.
+
+    Non-empty `pii_signals` IS a deterministic breach — but only on the path
+    `policy_engine.evaluate` takes. A `redacted` row is in
+    ENFORCEMENT_EVENT_TYPES, so BOTH the ingest verdict (routers/logs.py) and
+    the worker's grade route to `evaluate_enforcement`, which never reads
+    pii_signals and always returns policy_breach False.
+
+    So SDK 1.5.0 folding response-side PII labels into redact rows cannot turn a
+    clean row into a breach. It changes which labels are displayed and what the
+    chain covers, not the breach count — and this test is what makes that a
+    measurement rather than a reading of the source."""
+    from app.schemas import Verdict
+    org = make_org()
+    configure_judge(org["org_id"])
+
+    # Same row twice, differing only in how much PII the SDK reported.
+    client.post("/v1/logs/batch", headers=org["auth"],
+                json=[_blocked_event(seed="r-quiet", event_type="redacted",
+                                     pii_signals=())])                       # seq 1
+    client.post("/v1/logs/batch", headers=org["auth"],
+                json=[_blocked_event(seed="r-loud", event_type="redacted",
+                                     pii_signals=("email", "ssn_pattern",
+                                                  "ip_address", "phone"))])  # seq 2
+    # An ordinary interaction with the same labels, for contrast: this one DOES
+    # become a breach, which is what proves the check is live at all.
+    client.post("/v1/logs/batch", headers=org["auth"], json=[{
+        "prompt_hash": _h("i"), "response_hash": _h("ir"),
+        "token_count": 10, "policy_tag": "chat",
+        "pii_signals": ["email"]}])                                          # seq 3
+
+    _grade_each(monkeypatch, lambda meta: Verdict(
+        policy_breach=False, reason="no issues found", risk_score=0, decision="clean"))
+
+    rows = {r["seq"]: r for r in client.get("/v1/logs", headers=org["auth"]).json()["items"]}
+
+    # BOTH verdicts, because they are produced by different code on different
+    # paths: local_verdict is the deterministic one computed at ingest and bound
+    # into the chain, gemini_verdict is the graded one every UI counts.
+    for seq in (1, 2):
+        assert rows[seq]["local_verdict"]["policy_breach"] is False, \
+            f"seq {seq}: the CHAINED verdict became a breach"
+        assert rows[seq]["gemini_verdict"]["policy_breach"] is False, \
+            f"seq {seq}: the GRADED verdict became a breach"
+        assert rows[seq]["gemini_verdict"]["decision"] == "redacted"
+    assert rows[2]["pii_signals"] == ["email", "ssn_pattern", "ip_address", "phone"], \
+        "the labels are still recorded; they simply do not drive the verdict"
+
+    # The control. The SAME kind of label on a NON-enforcement row does breach
+    # the deterministic verdict — so the check is live, and the two assertions
+    # above are about routing rather than about a dead rule.
+    assert rows[3]["local_verdict"]["policy_breach"] is True, \
+        "pii_signals is no longer a breach trigger anywhere; the premise moved"
+    assert "local_pii_signal" in rows[3]["local_verdict"]["rules"]
+
+    # The graded count is what the dashboard, the breach feed and the Passport
+    # all read, and no redacted row is in it.
+    stats = client.get("/v1/stats", headers=org["auth"]).json()
+    assert stats["breaches"] == 0, "a redacted row was counted as a breach"
+
+
 def test_coverage_ids_are_not_counted_as_enforced_rules(make_org, client, monkeypatch,
                                                         configure_judge):
     """response_scan.degraded / .unreadable record what the SDK's scan COULD NOT

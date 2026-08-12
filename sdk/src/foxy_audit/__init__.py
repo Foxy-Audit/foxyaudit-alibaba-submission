@@ -24,6 +24,18 @@ the application must fail closed if evidence delivery cannot be confirmed.
 from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 
+# 1.5.0 — #158. mode="redact" now examines the RESPONSE for PII. A redact row's
+# pii_signals is the union of what fired on the prompt and what the full sweep
+# finds; before this the sweep was skipped on exactly those rows, so PII the
+# model returned went unrecorded — in the one mode chosen because PII matters.
+#
+# MINOR because the emitted payload changes for a whole mode, and pii_signals is
+# chain material, so rows recorded from here on cover labels earlier ones did
+# not. NOT because breach counts move: they do not. A redacted row is graded by
+# policy_engine.evaluate_enforcement, which never reads pii_signals, on both the
+# chained local verdict and the graded one. Measured, not assumed — see
+# test_a_redacted_rows_pii_signals_do_not_make_it_a_breach.
+#
 # 1.4.0 — response scanning (OWASP LLM05). MINOR, not patch: there is new public
 # API (FoxyResponseBlocked, the response_scan setting, FOXY_RESPONSE_SCAN) and a
 # new exception type an application can now see. The DEFAULT is detect-only, so
@@ -38,7 +50,7 @@ from .config import FoxyConfig
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
            "audit", "__version__"]
 

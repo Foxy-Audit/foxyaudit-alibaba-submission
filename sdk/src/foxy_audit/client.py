@@ -751,9 +751,22 @@ class FoxyClient:
                 "response_hash": response_hash,
                 "token_count": hashing.estimate_tokens(prompt_s, response_s),
                 "policy_tag": policy,
-                # On the guard path pii_signals carries the exact signals that
-                # fired; otherwise the historical prompt+response detection.
-                "pii_signals": signals if signals is not None else pii.detect_pii(prompt_s, response_s),
+                # The UNION of what the preflight guard saw and what the full
+                # prompt+response sweep finds. #158: this used to be
+                # `signals if signals is not None else detect_pii(...)`, so a
+                # redact row — where `signals` carries the prompt's fired
+                # labels — skipped the sweep entirely and the RESPONSE was never
+                # examined for PII at all. Inverted in the worst direction:
+                # redact is the mode chosen BECAUSE the customer cares about
+                # PII, and it was the mode that looked at the response least.
+                #
+                # A union rather than a replacement, because the guard path's
+                # signals are exact and deliberate: a redact row still carries
+                # precisely what fired on the prompt. Deduped and sorted to
+                # match detect_pii's own output shape — this field is chain
+                # material (chain.py:68), so its ordering has to be stable.
+                "pii_signals": _merge_signals(signals,
+                                              pii.detect_pii(prompt_s, response_s)),
             }
             if agent:
                 payload["agent"] = agent
@@ -826,6 +839,37 @@ def _block_message(policy: str, plan: dict) -> str:
                  "Change it in Settings, or set FOXY_ORG_POLICY=off to ignore "
                  "workspace policy in this deployment.")
     return base
+
+
+def _merge_signals(guard_signals, swept):
+    """The wire's ``pii_signals``: the guard's labels ∪ the full sweep's.
+
+    ``guard_signals`` is None on the observe path, where the sweep alone has
+    always been the answer and stays byte-identical. On the guard path it is the
+    exact list that fired on the PROMPT, which must survive verbatim — an
+    auditor reading a redacted row is entitled to see what caused the redaction.
+
+    NOT NAMESPACED, and that is a decision rather than an omission. S1 gave the
+    response side a ``response_*`` vocabulary, but it lives in ``policy_rules``,
+    which is metadata. This field is different in three ways that all point the
+    same way:
+
+    * it is CHAINED (chain.py:68), so two labels for one finding depending on
+      the caller's mode would make cross-row analysis wrong for ever;
+    * the observe path has never distinguished sides — ``detect_pii`` merges
+      prompt and response into one list — so a namespace here would make a
+      redact row describe the same finding differently from an observe row;
+    * the question is already answerable without one. ``policy_rules`` carries
+      the prompt's fired ids (``phi.email``, ``pii.ip_address``), so anything in
+      ``pii_signals`` that those do not account for came from the response.
+
+    If a reader ever needs the split explicitly, the honest place to add it is a
+    new metadata key, not a second vocabulary inside chain material.
+    """
+    swept = list(swept or [])
+    if guard_signals is None:
+        return swept
+    return sorted(set(guard_signals) | set(swept))
 
 
 def _response_block_message(policy: str, decision, delivered: bool = False,

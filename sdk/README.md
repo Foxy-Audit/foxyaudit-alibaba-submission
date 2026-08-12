@@ -6,6 +6,36 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.5.0 — `mode="redact"` now examines the response for PII
+
+**If you run `mode="redact"`, your rows will carry more `pii_signals` labels than
+they did on 1.4.x, and you should expect that.**
+
+Until 1.5.0, a redact-mode call whose *prompt* tripped the policy reported only the
+labels that fired on the prompt. The prompt+response PII sweep was skipped entirely
+on those rows, so **PII the model returned in its response was never recorded** —
+in the one mode chosen specifically because the customer cares about PII. `observe`
+mode, which promises less, always got the full sweep.
+
+`pii_signals` is now the union: exactly what fired on the prompt, plus everything
+the sweep finds across prompt and response, deduplicated and sorted.
+
+What this changes for you:
+
+- **More labels on redact rows**, including PII kinds the prompt never contained.
+- **Your breach count does not move.** A redacted row is a terminal, host-decided
+  event, and the backend grades it from its enforcement labels — `pii_signals` is
+  not a breach trigger on that path, on either the chained verdict or the graded
+  one. (Measured, and pinned by
+  `backend/tests/integration/test_blocked_events.py::test_a_redacted_rows_pii_signals_do_not_make_it_a_breach`.)
+- **New rows hash differently from old ones.** `pii_signals` is chain material, so
+  a row recorded on 1.5.0 covers labels a 1.4.x row would not have. Existing rows
+  and their chain are untouched, and verification of both is unaffected.
+
+There is no flag to turn this off. On an audit product, an opt-out from correct
+detection is a setting whose only use is making the evidence say less than the
+system knows.
+
 ## Install
 
 ```bash
