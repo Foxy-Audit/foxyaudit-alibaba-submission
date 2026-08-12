@@ -13,6 +13,18 @@ foxyaudit.tech, www.foxyaudit.tech {
 		root * /srv/downloads
 		file_server
 	}
+	# RFC 9116. The canonical URL has to be /.well-known/security.txt, but the
+	# file is committed as foxy-sale-page/security.txt with no leading dot and
+	# rewritten here — so serving it does not depend on whether file_server
+	# hands out dotfiles, which is behaviour we would be relying on rather than
+	# stating. Content-Type is pinned because the RFC requires text/plain.
+	# Ahead of the catch-all handle below, which is ordered.
+	handle /.well-known/security.txt {
+		rewrite * /security.txt
+		root * /srv/sale
+		file_server
+		header Content-Type "text/plain; charset=utf-8"
+	}
 	handle {
 		root * /srv/sale
 		file_server

@@ -147,5 +147,9 @@ contrast is recomputed from token values in the test suites on both the dashboar
 and the admin console, and a **fill is measured against its background, not only
 its ink**.
 
-**Known gap:** no `@media (forced-colors)` support on the admin console, where the
-design language is shadow-based and several controls carry no border.
+**Known gap:** no `@media (forced-colors)` support on the customer **dashboard**,
+where the design language is shadow-based and several controls carry no border.
+The admin console does have it — one block, `foxy-adminpage/index.html:2190` —
+so this sentence named the wrong surface until #154; the gap is real and it is
+the dashboard's. The marketing site has none either, which matters less: it
+carries no controls whose state a High Contrast user has to read.

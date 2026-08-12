@@ -10,12 +10,54 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import random
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+RETRY_CAP_SECONDS = 300.0
+_MAX_DOUBLINGS = 8
+
+# Its OWN generator, deliberately not the `random` module's shared one. A host
+# application that calls random.seed() for its own reasons would otherwise make
+# every Foxy client on the fleet draw the SAME retry delays — which is precisely
+# the synchronisation this jitter exists to break. Unseeded, so it takes OS
+# entropy, and no test can make it deterministic without saying so.
+_jitter = random.Random()
+
+
+def retry_delay(attempts: int) -> float:
+    """Seconds to wait before retry number ``attempts``. EQUAL JITTER.
+
+    Capped exponential is right and was already here; what it lacked is spread.
+    The failure mode is not one client backing off — it is a BACKEND OUTAGE:
+    every client in the fleet fails at the same moment, follows the same
+    deterministic curve, and returns in lockstep, so the backend comes up and is
+    knocked straight over again by a synchronised herd, repeatedly.
+
+    Equal jitter — half the delay fixed, half uniformly random — rather than
+    full jitter (``uniform(0, d)``) or decorrelated:
+
+    * full jitter spreads widest but can draw a delay near zero, so a client
+      retries almost immediately into an outage that is still down. Here that
+      is not merely wasteful: ``attempts`` is what drives the curve, so a burnt
+      attempt makes the NEXT backoff longer than the outage warrants.
+    * decorrelated jitter needs the previous delay, and the spool persists only
+      ``attempts`` and ``next_attempt_at``. Storing another column would mean a
+      schema migration in a spool already deployed on customer machines.
+    * equal jitter keeps a guaranteed floor of half the intended wait and still
+      spreads uniformly over the other half, which decorrelates the fleet.
+
+    Stateless in ``attempts``, so a row's delay is drawn fresh each time from
+    the same distribution rather than accumulating — rescheduling cannot make a
+    row drift later and later on every pass. And the cap bounds the top, so no
+    row is starved however many times it fails.
+    """
+    ceiling = min(RETRY_CAP_SECONDS, 2.0 ** min(max(attempts, 0), _MAX_DOUBLINGS))
+    return ceiling / 2.0 + _jitter.uniform(0.0, ceiling / 2.0)
 
 
 def default_path() -> str:
@@ -161,7 +203,7 @@ class EventSpool:
         with self._connection() as conn:
             for row in rows:
                 attempts = int(row["attempts"]) + 1
-                delay = min(300.0, 2.0 ** min(attempts, 8))
+                delay = retry_delay(attempts)
                 conn.execute(
                     "UPDATE spool_events SET attempts = ?, next_attempt_at = ?, last_error = ? "
                     "WHERE event_id = ?",

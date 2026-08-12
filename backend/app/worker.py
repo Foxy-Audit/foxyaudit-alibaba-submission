@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import signal
 import threading
 import time
@@ -296,11 +297,45 @@ class CircuitBreaker:
         return self.opened_at is None or (now - self.opened_at) >= self.cooldown
 
 
-def backoff_delay(failures: int, base: float, cap: float) -> float:
-    """Capped exponential backoff: base, base, 2·base, 4·base … ≤ cap."""
+# The poller's own generator, not the shared `random` module one, so nothing
+# else in the process can seed away the spread. Unseeded → OS entropy.
+_jitter = random.Random()
+
+
+def backoff_ceiling(failures: int, base: float, cap: float) -> float:
+    """Capped exponential ceiling: base, base, 2·base, 4·base … ≤ cap.
+
+    The undithered curve, kept as its own function because it is the property
+    worth asserting — monotonic non-decreasing, and never above the cap."""
     if failures <= 0:
         return base
     return min(cap, base * (2 ** (failures - 1)))
+
+
+def backoff_delay(failures: int, base: float, cap: float) -> float:
+    """:func:`backoff_ceiling` with EQUAL JITTER — half fixed, half random.
+
+    ⚠ THE REASON HERE IS NOT THE ONE THAT APPLIES TO THE SDK. The SDK's spool
+    runs in every customer process, so an outage synchronises a whole fleet onto
+    one curve and the thundering herd is real. This poller is a SINGLE process:
+    deploy/docker-compose.prod.yml runs one `foxy-worker`, with a fixed
+    container_name and no `replicas`, so there is no fleet here to spread.
+
+    What jitter buys at this site is narrower, and worth stating rather than
+    borrowing the other argument:
+
+    * the poll cadence is otherwise perfectly periodic, so it can land in phase
+      with a downstream per-minute rate-limit window and stay there, retrying
+      into the same closed window every time;
+    * the container restarts on failure, and an undithered sequence replays
+      identically from zero each time it does;
+    * and it stops being a single process the day anyone sets `replicas: 2`, at
+      which point the fleet argument does apply and this is already right.
+
+    Same scheme as the SDK so there is one answer to explain, and the same
+    guaranteed floor: the poller never retries a downed judge immediately."""
+    ceiling = backoff_ceiling(failures, base, cap)
+    return ceiling / 2.0 + _jitter.uniform(0.0, ceiling / 2.0)
 
 
 def _interruptible_sleep(stopping: dict, seconds: float) -> None:

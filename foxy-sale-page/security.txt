@@ -1,0 +1,20 @@
+# Foxy Audit — security contact (RFC 9116)
+#
+# Served at https://foxyaudit.tech/.well-known/security.txt by the explicit
+# route in deploy/Caddyfile, which rewrites that URL to THIS file. It lives here
+# without the leading dot on purpose: the canonical URL is what RFC 9116
+# requires, and routing to an ordinary filename means serving it does not depend
+# on whether the static file server chooses to hand out dotfiles.
+#
+# Expires is checked by foxy-sale-page/test_security_txt.py, which fails CI a
+# month before the date below. That is the renewal mechanism — an expired
+# security.txt advertises a channel and says it is stale, which is worse than
+# not publishing one.
+
+Contact: https://github.com/fatimaatta-09/Foxy-Audit/security/advisories/new
+Contact: mailto:support@foxyaudit.tech
+Expires: 2027-08-12T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://foxyaudit.tech/.well-known/security.txt
+Canonical: https://foxyaudit.tech/security.txt
+Policy: https://github.com/fatimaatta-09/Foxy-Audit/blob/main/SECURITY.md
