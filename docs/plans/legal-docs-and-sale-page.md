@@ -268,7 +268,7 @@ purpose to prove it still bites.
 |---|---|---|
 | **#10** | Six sale pages don't load Poppins, so **the legal pages render in a different typeface** | **L1** — fix it where the pattern is set, and every later page inherits |
 | **#15** | A security disclosure may land in the sales inbox | **L4** |
-| **#161** | The security contact is published where tools look, and expires on a test | **L5** |
+| **#161** | ⚠ **REOPENED 🔴 2026-08-13** — the contact is *not* published where tools look. The serving half is **L0**; the contents half (`security@` as primary, `Policy:` → `report-abuse.html`) is **L5**. Its guard pinned the *Caddyfile*, which production does not read — **a guard that tests a copy is green from birth.** | **L0 + L5** |
 | **#8** | `docs.html` is a **placeholder** that `pyproject` advertises as `Documentation`. ⚠ It returns 200 — a status code is not evidence of content. I got this wrong in the original S7 brief. | **L5** |
 | **#11** | `foxy-sale-page/README.md` contradicts itself about paid CTAs | **L13** |
 
