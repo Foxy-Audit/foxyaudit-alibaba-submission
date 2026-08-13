@@ -1,3 +1,16 @@
+# ⚠ THIS FILE DOES NOT SERVE PRODUCTION. deploy/nginx-foxyaudit.conf does.
+# The `caddy` service in docker-compose.prod.yml sits behind `profiles: ["edge"]`
+# and is not started on the shared VM, which already runs its own nginx on
+# 80/443 (`Server: nginx/1.28.0`). This file is the dedicated-box path.
+#
+# It is kept BYTE-FOR-BEHAVIOUR in step with the nginx config anyway: when a
+# site changes it changes in both, or the two disagree about what is public and
+# whichever one you happen to read is a coin flip. That drift is not
+# hypothetical — this file's /.well-known/security.txt rewrite was written,
+# reviewed and marked delivered while the config production actually reads had
+# no such route at all, so RFC 9116 discovery was broken for the entire time it
+# was believed fixed.
+#
 # foxyaudit.tech — four sites, one backend. Caddy auto-provisions Let's Encrypt
 # certificates for every hostname below (DNS must already point at this VM).
 # Caddy ignores client-supplied X-Forwarded-For (no trusted_proxies configured),
@@ -27,6 +40,12 @@ foxyaudit.tech, www.foxyaudit.tech {
 	}
 	handle {
 		root * /srv/sale
+		# Extensionless URLs resolve to the flat *.html pages, matching
+		# `try_files $uri $uri.html $uri/ =404` on the nginx side. Caddy's
+		# file_server already 404s an unknown path — it has never had the SPA
+		# fallback to /index.html that nginx did — so only the .html step was
+		# missing for the two edges to behave alike.
+		try_files {path} {path}.html {path}/
 		file_server
 	}
 }
