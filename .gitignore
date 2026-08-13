@@ -49,3 +49,7 @@ foxy-checkout/config.js
 # live API key), sentinel prompts, screenshots, and the generated --live-judge
 # compose override. Everything here is per-run and some of it is secret.
 e2e/.artifacts/
+
+# demo/mock_llm.py --live keeps its own spool so it can never flush into the
+# offline `--scenario all` gate, whose claim is that nothing leaves the machine.
+demo/.demo-spool.sqlite3*

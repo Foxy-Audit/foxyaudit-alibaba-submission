@@ -1,26 +1,40 @@
 """Self-contained Foxy Audit sandbox — a Mock LLM behind the preflight guard.
 
-NO API key, NO network, NO real model. A deterministic ``MockLLM`` is wrapped by
-``@foxy.audit`` so judges can drive the whole host-side guard by hand:
-
     python demo/mock_llm.py                     # interactive: type a prompt
     python demo/mock_llm.py --scenario phi      # one canned scenario
     python demo/mock_llm.py --scenario all      # PASS/FAIL table (default)
+    python demo/mock_llm.py --live              # ALSO ship to a running backend
 
 Interactive mode auto-selects the policy that catches the prompt (hipaa for
 PHI/PII, default for injection/secrets) and prints, for each prompt: the
 decision, the rules/signals that fired, the prompt+response commitment hashes,
-and whether the wrapped LLM was actually called. CONTENT-BLINDNESS IS SACRED:
-only hashes and signal labels are ever shown as "leaving" the host.
+and whether the wrapped LLM was actually called.
+
+⚠ THE DEFAULT PATH TAKES NO API KEY AND OPENS NO SOCKET, AND MUST STAY THAT WAY.
+`--scenario all` is a merge gate and runs on machines with no stack and no
+network. `--live` is strictly additive: it is the only thing that constructs a
+keyed client, and every offline code path below is unchanged by it.
+
+CONTENT-BLINDNESS IS THE POINT, NOT A DISCLAIMER
+------------------------------------------------
+`--live` ships to a real backend and the events appear in the dashboard — but
+the prompt text does not, because it never leaves this process. What travels is
+a commitment hash, coarse signal labels, the rule ids that fired, and the
+ruleset version that judged them. ``--show-wire`` prints the exact bytes so a
+judge can read them rather than take our word for it: type a prompt containing a
+social security number, then look at what left the machine.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
+import time
 
 from foxy_audit import FoxyClient, FoxyPolicyBlocked
-from foxy_audit import hashing, policy
+from foxy_audit import dispatch, hashing, policy
 
 
 # ── the dependency-free Mock LLM ──────────────────────────────────────────────
@@ -45,8 +59,35 @@ class MockLLM:
 
 
 # One client, no API key -> HTTP disabled, guard still runs locally.
+#
+# ⚠ REBOUND BY --live AND ONLY BY --live. `enable_live()` replaces this module
+# global with a keyed client before any scenario runs. Every function below
+# reads `foxy` at call time rather than capturing it, so neither path needs to
+# know which one is active — and with no flag, this is the object it has always
+# been.
 foxy = FoxyClient(desktop_ping=False)
 mock = MockLLM()
+
+DEFAULT_ENDPOINT = "http://127.0.0.1:8000"
+_LIVE: dict = {}          # {"endpoint": str} once --live is on; empty otherwise
+
+
+def enable_live(api_key: str, endpoint: str, desktop_ping: bool) -> None:
+    """Point the demo at a real backend. Called only from --live.
+
+    ⚠ ITS OWN SPOOL, and that is not tidiness. The default spool is shared
+    (~/.foxy-audit), and it is DURABLE by design — so a --live run that leaves
+    anything undelivered gets flushed by the NEXT process to construct a client,
+    including `--scenario all`, whose whole claim is that nothing leaves the
+    machine. Observed: an offline run posted leftovers from a live one. A demo
+    must not be able to falsify the gate that guards it.
+    """
+    global foxy
+    spool = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         ".demo-spool.sqlite3")
+    foxy = FoxyClient(api_key=api_key, endpoint=endpoint,
+                      desktop_ping=desktop_ping, spool_path=spool)
+    _LIVE["endpoint"] = endpoint
 
 
 # ── policies the sandbox understands ──────────────────────────────────────────
@@ -132,6 +173,93 @@ def _print_result(prompt: str, result: dict) -> None:
         print(f"  model input   : {result['model_input'][:60]}  <- scrubbed locally")
     if result["decision"] != "blocked":
         print(f"  MockLLM said  : {result['response'][:60]}")
+    if _WIRE:
+        _print_wire(prompt)
+
+
+# ── what actually leaves the machine ──────────────────────────────────────────
+# Captured at dispatch.submit, which is the real boundary: everything above it
+# has the prompt, nothing below it does. Printing the captured payload is
+# therefore not a description of content-blindness, it is the evidence.
+_WIRE: list = []
+
+
+def _capture_wire() -> None:
+    """Tee dispatch.submit so --show-wire can print the real payload."""
+    original = dispatch.submit
+
+    def submit(cfg, payload, wait=False):
+        _WIRE.append(payload)
+        return original(cfg, payload, wait=wait)
+
+    dispatch.submit = submit
+
+
+def _print_wire(prompt: str) -> None:
+    """Show the prompt beside the bytes it produced, and prove the text is gone."""
+    if not _WIRE:
+        print("  (nothing shipped — no API key, so the guard ran locally only)")
+        return
+    payload = _WIRE[-1]
+    body = json.dumps(payload, indent=2, sort_keys=True)
+    print("\n  what you typed, on this machine:")
+    print(f"    {prompt}")
+    print("\n  what left this machine:")
+    for line in body.splitlines():
+        print(f"    {line}")
+    # The claim, checked rather than asserted. Short tokens would collide by
+    # chance, so only words long enough to be meaningful are searched.
+    leaked = [w for w in set(prompt.split()) if len(w) >= 6 and w in body]
+    print(f"\n  prompt text present in that payload: "
+          f"{'⚠ ' + str(leaked) if leaked else 'none — searched every word ≥6 chars'}")
+
+
+def _wait_for_delivery(count: int, timeout: float = 20.0) -> int:
+    """Flush the spool and poll the ledger until the events land. Returns how many."""
+    import requests                                   # only needed on the live path
+
+    # flush() is a method on the shared dispatcher, not a module function — the
+    # module exports submit/resume only.
+    dispatch._DISPATCHER.flush()
+    endpoint = _LIVE["endpoint"].rstrip("/")
+    headers = {"Authorization": f"Bearer {foxy.cfg.api_key}"}
+    deadline = time.time() + timeout
+    seen = 0
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"{endpoint}/v1/logs?limit=50", headers=headers, timeout=5)
+            if r.ok:
+                # /v1/logs answers {items, total, page, limit} — NOT {"logs": …}.
+                seen = int(r.json().get("total", 0))
+                if seen >= count:
+                    return seen
+        except Exception:                              # noqa: BLE001 — keep polling
+            pass
+        time.sleep(0.5)
+    return seen
+
+
+def _dashboard_url() -> str | None:
+    """A one-click link that signs the judge into the org these events landed in.
+
+    /v1/auth/handoff mints a short-lived single-use token from the SDK key — the
+    desktop app's path, and the only one that guarantees the browser opens the
+    SAME org the demo just wrote to rather than whatever session is cached.
+    """
+    import requests
+
+    endpoint = _LIVE["endpoint"].rstrip("/")
+    try:
+        r = requests.post(f"{endpoint}/v1/auth/handoff",
+                          headers={"Authorization": f"Bearer {foxy.cfg.api_key}"},
+                          timeout=10)
+        if r.ok:
+            token = r.json().get("token") or r.json().get("handoff_token")
+            if token:
+                return f"{endpoint}/?handoff={token}"
+    except Exception:                                  # noqa: BLE001
+        pass
+    return None
 
 
 # ── scenario table (mirrors demo/offline_demo.py PASS/FAIL style) ─────────────
@@ -157,7 +285,8 @@ def run_scenarios(names: list[str]) -> int:
 
 def interactive(mode: str) -> int:
     print("Foxy Audit mock LLM - interactive preflight-guard sandbox")
-    print(f"  mode={mode}  (no API key, no network)  -  Ctrl-D or 'quit' to exit")
+    where = f"shipping to {_LIVE['endpoint']}" if _LIVE else "no API key, no network"
+    print(f"  mode={mode}  ({where})  -  Ctrl-D or 'quit' to exit")
     print("  policy is auto-selected: hipaa for PHI/PII, default for injection/secrets")
     while True:
         try:
@@ -185,14 +314,98 @@ def main() -> int:
         "--mode", choices=("observe", "block", "redact"), default="block",
         help="preflight mode for the interactive CLI (default: block).",
     )
+    parser.add_argument(
+        "--live", action="store_true",
+        help="ALSO ship the events to a running backend so they appear in the dashboard. "
+             "Needs FOXY_API_KEY (or --api-key). Without this flag nothing leaves the process.",
+    )
+    parser.add_argument("--api-key", default=os.environ.get("FOXY_API_KEY", ""),
+                        help="API key for --live (default: $FOXY_API_KEY).")
+    parser.add_argument("--endpoint", default=os.environ.get("FOXY_ENDPOINT", DEFAULT_ENDPOINT),
+                        help=f"backend for --live (default: $FOXY_ENDPOINT or {DEFAULT_ENDPOINT}).")
+    parser.add_argument("--show-wire", action="store_true",
+                        help="print the exact payload that left the machine, beside the prompt.")
+    parser.add_argument("--desktop-ping", action="store_true",
+                        help="also fire the local UDP ping so the desktop fox reacts.")
     args = parser.parse_args()
 
+    if args.live:
+        if not args.api_key:
+            print("--live needs an API key. Start the stack and copy the seeded one:\n"
+                  "    cd backend && docker compose up -d\n"
+                  "    docker compose logs foxy-seed | findstr FOXY_API_KEY\n"
+                  "then  set FOXY_API_KEY=foxy_sk_...   (or pass --api-key)")
+            return 2
+        enable_live(args.api_key, args.endpoint, args.desktop_ping)
+        print(f"LIVE — shipping to {args.endpoint}")
+        print("  the prompt text stays here; only hashes and labels travel.")
+        _report_sdk_version()
+        print()
+    if args.show_wire:
+        _capture_wire()
+
     if args.scenario == "all":
-        return run_scenarios(list(SCENARIOS))
-    if args.scenario:
-        return run_scenarios([args.scenario])
-    # Interactive loop; reads a tty or piped stdin and exits cleanly on EOF.
-    return interactive(args.mode)
+        rc = run_scenarios(list(SCENARIOS))
+    elif args.scenario:
+        rc = run_scenarios([args.scenario])
+    else:
+        # Interactive loop; reads a tty or piped stdin and exits cleanly on EOF.
+        rc = interactive(args.mode)
+
+    if args.live:
+        rc = _report_live(rc)
+    return rc
+
+
+def _report_sdk_version() -> None:
+    """Say which SDK is actually imported, and shout if it is behind the repo.
+
+    ⚠ THIS EXISTS BECAUSE IT BIT. The first live run of this demo imported
+    foxy_audit 1.2.0 out of backend/.venv — five releases behind — so it showed
+    none of the response scanning, additive policy or ruleset provenance the
+    product now has, and nothing said so. A demo that silently runs an old build
+    misrepresents the thing it is demonstrating, which is the one failure a
+    hackathon demo cannot afford.
+    """
+    import foxy_audit
+    installed = getattr(foxy_audit, "__version__", "unknown")
+    print(f"  SDK {installed}  ({os.path.dirname(foxy_audit.__file__)})")
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(here, "..", "VERSION"), encoding="utf-8") as fh:
+            repo = fh.read().strip()
+    except OSError:
+        return
+    if repo and installed != repo:
+        print(f"  ⚠ this repo is at {repo}. You are demoing an OLDER SDK — it will")
+        print(f"    not show anything added after {installed}. Fix with:")
+        print("        pip install -e ./sdk")
+
+
+def _report_live(rc: int) -> int:
+    """Wait for delivery, then tell the judge exactly where to look.
+
+    Delivery is POLLED, never assumed: the spool is asynchronous by design, so
+    printing a dashboard link before the rows are queryable would send someone
+    to an empty page and make a working product look broken.
+    """
+    sent = len(_WIRE) if _WIRE else None
+    print("\n" + "=" * 68)
+    landed = _wait_for_delivery(sent or 1)
+    if landed:
+        print(f"  {landed} event(s) are in the ledger.")
+    else:
+        print("  ⚠ nothing visible in the ledger yet — the backend may still be "
+              "grading, or the key may belong to another org.")
+    url = _dashboard_url()
+    if url:
+        print("\n  Open the dashboard as the org these events landed in:")
+        print(f"    {url}")
+        print("  (single-use, ~2 minutes — rerun the demo for a fresh one)")
+    else:
+        print(f"\n  Dashboard: {_LIVE['endpoint']}  (sign in as admin@demo.test)")
+    print("=" * 68)
+    return rc
 
 
 if __name__ == "__main__":
