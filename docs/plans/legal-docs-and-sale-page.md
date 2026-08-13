@@ -241,6 +241,7 @@ reverts, and a bulk conversion hides which document introduced a defect.
 | **L11** | Master Service Agreement **v1.3** | `msa.html` (**new**) | |
 | **L12** | Order Form **v1.1** | **decide** | ⚠ a contract template, not a policy — may not belong on a public site at all |
 | **L13** | *(no document)* | `legal.html` + footer × 21 | **last**, once every page exists |
+| **L14** | *(no document)* | `README.md` · `sdk/LICENSE` · `acceptable-use.html` · `report-abuse.html` · `terms-of-use.html` · `privacy.html` | ⚠ **APPLIES THE OWNER DECISIONS OF 2026-08-13** — #193 licence, #194 AUP/disclosure conflict, #191 phone, #187 cap, #180 six-categories, #182 cancellation-vs-deletion. **Six deliberate divergences from the source .docx files.** Every one must be pinned by a test naming [[Owner-authorised divergences from the policy documents]], because a re-conversion would otherwise silently revert them. |
 
 **Why this order:** L1 first because it is the largest document and the most-read
 page, so it establishes the house pattern every later phase copies. L4 before L5
