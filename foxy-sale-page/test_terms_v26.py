@@ -30,6 +30,8 @@ import re
 
 import pytest
 
+from conftest import POSTAL_ADDRESS
+
 PAGE = "terms.html"
 VERSION = "2.6"
 
@@ -224,8 +226,14 @@ def test_the_disclaimer_stays_conspicuous(dom):
 
 
 def test_no_postal_address_is_invented(dom):
-    """The Privacy Policy states the company has no registered office yet."""
-    assert not re.search(r"\b\d{1,5}\s+\w+\s+(Street|Road|Avenue|Suite|Floor)\b", dom.text, re.I)
+    """The Privacy Policy states the company has no registered office yet.
+
+    ⚠ The pattern this carried assumed a two-token address and missed
+    "7 Blue Area Road" — measured on terms-of-use.html, where that exact string
+    was inserted into the page and the guard stayed green. Shared and widened in
+    conftest.POSTAL_ADDRESS; both pages use it now."""
+    hit = POSTAL_ADDRESS.search(dom.text)
+    assert not hit, f"a postal address was invented: {hit.group(0)!r}"
 
 
 # ── 5. navigation actually resolves ──────────────────────────────────────────

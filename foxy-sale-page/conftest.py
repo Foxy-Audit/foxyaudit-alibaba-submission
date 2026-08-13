@@ -39,6 +39,23 @@ HERE = pathlib.Path(__file__).resolve().parent
 #: `("<strong>Paddle</strong>")` stops comparing equal to `("Paddle")`.
 _INLINE = ("a", "strong", "em", "b", "i", "code", "span", "sup", "sub", "small")
 
+#: A street address none of these documents has. Foxy Audit operates with no
+#: registered office (Privacy Policy §1), so any of these on a legal page is
+#: invented.
+#:
+#: ⚠ THE OBVIOUS PATTERN IS TOO TIGHT, and was. `\d+\s+\w+\s+(Street|Road|…)`
+#: assumes a two-token address, so it misses "7 Blue Area Road" — measured: that
+#: exact string was inserted into a page and the guard stayed green. Real
+#: addresses run to several words, and the number can follow the keyword
+#: ("Suite 2") as well as precede it. Both shapes are covered now.
+POSTAL_ADDRESS = re.compile(
+    # \d{1,5}[A-Za-z]? — house numbers carry a letter ("221B Baker Street").
+    r"\b\d{1,5}[A-Za-z]?\s+(?:[\w'-]+\s+){0,4}"
+    r"(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Boulevard|Blvd\.|Lane|Ln\.|Drive|Dr\.|"
+    r"Suite|Ste\.|Floor|Plaza|Tower|Block)\b"
+    r"|\b(?:Suite|Ste\.|Floor|Apt\.?|Unit|Block|Tower|P\.?O\.? Box)\s+#?\d+\b",
+    re.I)
+
 
 class LegalDom(HTMLParser):
     """Enough of a DOM to ask what the browser would see."""
