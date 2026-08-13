@@ -148,6 +148,35 @@ There is no SSH to the prod VM from the planning machine
 ([[prod-vm-no-ssh-from-this-machine]]), so the nginx change ships as a repo edit
 plus a paste-ready command for the owner.
 
+#### ⚠⚠ INSTALLING AN NGINX CHANGE — read before writing any such instruction
+
+**L0's install took production HTTPS down on all four vhosts.** Register
+**#178**. The committed `deploy/nginx-foxyaudit.conf` is a **pre-certbot
+template** — `listen 80;` only, zero `ssl_certificate` — and its own line 10
+says so. The live file is certbot's *rewritten descendant* (8637 bytes live vs
+4320 in the last `.save`). A plain `cp` over it discards every TLS block.
+
+⚠ **`nginx -t` PASSES.** The result is valid nginx that no longer speaks HTTPS,
+and port 80 keeps answering 200 — so both the obvious gate and a naive health
+check report success. **Syntactic validity is not behavioural equivalence.**
+
+The correct sequence, every time:
+
+```bash
+sudo cp /etc/nginx/sites-available/foxyaudit.conf{,.bak-$(date +%F)}   # FIRST
+sudo cp deploy/nginx-foxyaudit.conf /etc/nginx/sites-available/foxyaudit.conf
+sudo certbot --nginx -d foxyaudit.tech -d www.foxyaudit.tech \
+     -d app.foxyaudit.tech -d admin.foxyaudit.tech -d checkout.foxyaudit.tech
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Then verify **HTTPS on every vhost**, not just the page that changed.
+
+⚠ **The recovery also revealed the certificate did not cover
+`checkout.foxyaudit.tech`** — the payment page. It does now. Whether it
+previously held a separate certificate or was serving a mismatched one is
+**TBD**.
+
 ---
 
 ## Owner decisions — settled 2026-08-13, do not reopen
@@ -271,6 +300,7 @@ purpose to prove it still bites.
 | **#161** | ⚠ **REOPENED 🔴 2026-08-13** — the contact is *not* published where tools look. The serving half is **L0**; the contents half (`security@` as primary, `Policy:` → `report-abuse.html`) is **L5**. Its guard pinned the *Caddyfile*, which production does not read — **a guard that tests a copy is green from birth.** | **L0 + L5** |
 | **#8** | `docs.html` is a **placeholder** that `pyproject` advertises as `Documentation`. ⚠ It returns 200 — a status code is not evidence of content. I got this wrong in the original S7 brief. | **L5** |
 | **#11** | `foxy-sale-page/README.md` contradicts itself about paid CTAs | **L13** |
+| **#178** | ⚠ the committed nginx config is a PRE-CERTBOT template; copying it over the live file killed TLS on all four vhosts. Needs a loud header + a mandatory backup step. **Same family as security.txt claiming the Caddyfile serves it — files that describe a deployment that is not the real one. This repo has three.** | **L5** |
 
 #### Gates — every L phase, without exception
 
