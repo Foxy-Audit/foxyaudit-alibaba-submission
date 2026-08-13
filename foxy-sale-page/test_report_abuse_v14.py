@@ -215,8 +215,21 @@ def test_the_page_states_the_version_it_was_converted_from(dom):
 
 
 def test_the_phone_number_is_the_owners(dom):
+    """⚠ RE-AIMED IN L14, NOT DELETED. This asserted the owner's number was
+    PRESENT — L4 had to check the superseded one had not been published instead.
+    #191 removed it from THIS PAGE ONLY: it is a personal mobile on a policy an
+    RFC 9116 file points machines at, and a disclosure by phone cannot carry a
+    proof-of-concept. It stays on the seven support pages, which
+    test_owner_divergences.py asserts as an exact set.
+
+    Both numbers are now pinned ABSENT, so neither the current nor the
+    superseded one can come back here."""
     assert SUPERSEDED_PHONE not in dom.src, "the superseded phone number was published"
-    assert PHONE in dom.text, f"the owner's number is missing: {PHONE}"
+    assert PHONE not in dom.src, (
+        f"the personal mobile {PHONE} is back on the security page — see "
+        "test_owner_divergences.py (#191)")
+    assert "security@foxyaudit.tech" in dom.text, \
+        "the page must still carry the channel that replaced the phone"
 
 
 def test_the_docx_page_chrome_was_not_pasted_in(dom):

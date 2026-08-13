@@ -7,8 +7,9 @@ the safe harbour, its four conditions, an in-scope list and five exclusions. Thi
 page's §3 and §1 also grant and withhold permission to test the platform — and
 they do not say the same thing. The divergence is RECORDED below, not silently
 edited away, because which of two published legal documents governs is an owner's
-decision and not a conversion one. See
-test_the_aup_and_the_disclosure_policy_still_disagree.
+decision and not a conversion one. The owner RESOLVED it on 2026-08-13; see
+test_the_aup_and_the_disclosure_policy_no_longer_disagree and
+test_owner_divergences.py (#194).
 
 #190: the live page published a personal Gmail address. It cannot again.
 
@@ -51,57 +52,65 @@ def disclosure(legal_dom):
 
 
 # ── 1. THE TWO PERMISSION GRANTS ─────────────────────────────────────────────
-def test_the_aup_and_the_disclosure_policy_still_disagree(dom, disclosure):
-    """⚠ THIS TEST RECORDS AN UNRESOLVED CONFLICT. IT IS MEANT TO.
+def test_the_aup_and_the_disclosure_policy_no_longer_disagree(dom, disclosure):
+    """RESOLVED 2026-08-13. THIS GUARD WAS BUILT TO FAIL ON THIS DAY.
 
-    Two published documents now tell a researcher what they may do, and on three
-    points the Acceptable Use Policy forbids conduct the disclosure policy
-    expressly permits:
+    L6 published the AUP as the .docx wrote it and recorded, rather than fixed,
+    three points where it forbade conduct the disclosure policy expressly
+    permits — because which of two published legal documents governs is an
+    owner's decision, not a conversion one. The docstring then said: "WHEN THE
+    OWNER RESOLVES IT, THIS TEST FAILS. That is the design."
+
+    It did fail, on the commit that resolved it. It is re-aimed rather than
+    deleted, because the three conflicts can come back one at a time and the
+    reasoning that found them is worth keeping attached to the assertions.
+
+    WHAT WAS RESOLVED, AND HOW (#194 — see test_owner_divergences.py):
 
       ACCESSING OTHERS' DATA
-        disclosure: "Only access the minimum data needed to demonstrate the
-                     issue — never view, modify, or exfiltrate other users' data."
-        AUP §3:     "Don't access data that isn't yours"
-        AUP §1:     "Don't attempt to access another organization's data"
-        → someone who reads one foreign record to prove a tenant-isolation break
-          is inside the safe harbour and in breach of the AUP.
-
+        was  AUP §1/§3: absolute prohibition
+        now  both defer: "except as expressly permitted by our Responsible
+             Disclosure Policy"
       AUTOMATED TOOLING
-        disclosure: "Do not run automated scanners against production WITHOUT
-                     PRIOR ARRANGEMENT."
-        AUP §3:     "run automated attacks against production" — no carve-out.
-
+        was  AUP §3: "run automated attacks against production", no carve-out
+        now  §3 defers to the policy, which permits scanners WITH PRIOR
+             ARRANGEMENT
       PROBING CONTROLS
-        disclosure: excludes only VOLUMETRIC denial of service and impact-free
-                    scanner output.
-        AUP §1:     "no attempts to overload, PROBE, or bypass rate limits,
-                     quotas, or security controls" — which is what in-scope
-                     research consists of.
+        was  AUP §1: "no attempts to overload, PROBE, or bypass rate limits,
+             quotas, or security controls" — which also caught a paying customer
+             testing their own workspace
+        now  narrowed to volumetric DoS and degradation of the service for other
+             people, with the customer's own limits expressly not a breach
 
-    The document was reproduced as written rather than harmonised: which of two
-    legal documents governs is not a conversion decision. Both sides are pinned
-    here so neither can drift while the conflict is open.
-
-    ⚠ WHEN THE OWNER RESOLVES IT, THIS TEST FAILS. That is the design — the fix
-    must be deliberate, and whoever makes it should read this first."""
+    The direction of the deferral is the whole point and is asserted below: the
+    AUP points AT the disclosure policy and never restates it. One undertaking,
+    in one place."""
     aup, dis = dom.text, disclosure.text
 
-    # the AUP's absolute prohibitions
-    assert "Don't access data that isn't yours" in aup
-    assert "Don't attempt to access another organization's data" in aup
-    assert "run automated attacks against production" in aup
-    assert "no attempts to overload, probe, or bypass rate limits" in aup
-
-    # the disclosure policy's narrower, conditional versions
+    # the disclosure policy is still the authoritative, narrower text
     assert "Only access the minimum data needed to demonstrate the issue" in dis
     assert "Do not run automated scanners against production without prior arrangement" in dis
 
-    # the conflict itself: the AUP grants no carve-out where the policy does
-    assert "without prior arrangement" not in aup, (
-        "the AUP now carries the disclosure policy's carve-out — if that was "
-        "deliberate the conflict is resolved and this guard should be rewritten")
+    # …and the AUP now yields to it in all three places
+    assert "except as expressly permitted by our Responsible Disclosure Policy" in aup, (
+        "the AUP's carve-outs are gone; a researcher inside the safe harbour is "
+        "in breach of the AUP again (#194)")
+    assert aup.count("except as expressly permitted by our Responsible Disclosure Policy") == 2, (
+        "one of AUP §1's two carve-outs was removed")
+    assert ("Where our Responsible Disclosure Policy expressly permits conduct this "
+            "section forbids, that policy governs") in aup, "AUP §3's deferral is gone"
+
+    # the old absolute forms must not return
+    assert "no attempts to overload, probe, or bypass rate limits" not in aup, (
+        "AUP §1 forbids probing any rate limit again, which covers ordinary "
+        "integration testing by a paying customer (#194)")
+
+    # the AUP DEFERS; it does not restate. One safe harbour, in one place.
     assert "minimum data needed" not in aup, (
-        "the AUP now permits minimum-necessary access — same as above")
+        "the AUP now restates the disclosure policy's permission instead of "
+        "pointing at it — there must be exactly one text to keep in step")
+    assert "without prior arrangement" not in aup, (
+        "same: the AUP is duplicating the policy rather than deferring to it")
 
 
 def test_the_aup_points_at_the_authoritative_policy(dom):

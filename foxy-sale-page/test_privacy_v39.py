@@ -178,11 +178,17 @@ def test_the_sub_processor_count_matches_the_list(dom):
     is exactly the failure a Google Fonts <link> would introduce silently."""
     s8 = _section(8)
     listed = len(re.findall(r"<li>", s8))
+    # ⚠ RE-AIMED IN L14, NOT DELETED. The claim was "Six NAMED PROVIDERS", and
+    # #180 changed it to "Six CATEGORIES of provider" because bullet one names
+    # two companies and Google appears in three roles — a regulator counting
+    # legal entities gets seven. The count-vs-bullets check is unchanged and is
+    # still the point; only the noun it reads moved.
     words = {"Four": 4, "Five": 5, "Six": 6, "Seven": 7, "Eight": 8}
-    claimed = re.search(r"In short:</strong>\s*(\w+) named providers", s8)
-    assert claimed, "Section 8 lost its count claim"
+    claimed = re.search(r"In short:</strong>\s*(\w+) categories of provider", s8)
+    assert claimed, ("Section 8 lost its count claim, or reverted to the .docx's "
+                     "\"named providers\" — see test_owner_divergences.py (#180)")
     assert words[claimed.group(1)] == listed, (
-        f"Section 8 claims {claimed.group(1)} named providers but lists {listed}")
+        f"Section 8 claims {claimed.group(1)} categories but lists {listed}")
 
 
 # ── 5. the em-dashes that were restored by hand ──────────────────────────────

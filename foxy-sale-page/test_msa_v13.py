@@ -324,11 +324,17 @@ def test_the_three_liability_caps_govern_three_different_relationships(legal_dom
     m = re.search(r"limited to the amounts you paid us for the Service in the "
                   r"twelve \((\d+)\) months preceding", terms)
     assert m and m.group(1) == "12", "terms.html's cap changed — re-compare the three"
+    # ⚠ RE-AIMED IN L14. This read "A NOMINAL SUM SUCH AS ONE HUNDRED..." because
+    # that is what the .docx says. #187 removed "such as": an illustrative cap does
+    # not state its own amount. The figure and the two-limb structure are still
+    # pinned; only the illustrative hedge is gone. See test_owner_divergences.py.
     m2 = re.search(r"GREATER OF \(A\) THE AMOUNT, IF ANY, YOU PAID US TO ACCESS "
-                   r"THE SITE ITSELF, OR \(B\) A NOMINAL SUM SUCH AS ONE HUNDRED "
+                   r"THE SITE ITSELF, OR \(B\) ONE HUNDRED "
                    r"U\.S\. DOLLARS \(USD \$(\d+)\)", tou)
     assert m2 and m2.group(1) == "100", \
-        "terms-of-use.html's cap changed — L14 owns that figure (#187); re-compare"
+        "terms-of-use.html's cap changed — #187 states it as a figure; re-compare"
+    assert "SUCH AS" not in tou.upper(), \
+        "the site cap is illustrative again (#187)"
     # the relationship each names is what keeps them from colliding
     assert "ORDER FORM" in dom.text, "the MSA cap stopped naming the Order Form"
     assert "you paid us for the Service" in terms, "the ToS cap stopped naming the Service"

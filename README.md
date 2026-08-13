@@ -284,6 +284,9 @@ time we cannot keep. [`SECURITY.md`](SECURITY.md) adds the repository-side view.
 
 ## 📜 License
 
-**All rights reserved.** This repository is source-available for evaluation, review, and hackathon
-judging purposes only. No license is granted to copy, modify, distribute, or use this code
-commercially without explicit written permission from the author.
+Foxy Audit is released under the **MIT License** — see [`LICENSE`](LICENSE). The
+Python SDK is published to PyPI as [`foxy-audit`](https://pypi.org/project/foxy-audit/)
+under the same licence, and ships [`sdk/LICENSE`](sdk/LICENSE) in the sdist.
+
+MIT permits commercial use, modification and redistribution, with the copyright
+notice retained. It is also irrevocable for every version already published.
