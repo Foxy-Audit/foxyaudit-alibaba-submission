@@ -229,6 +229,7 @@ reverts, and a bulk conversion hides which document introduced a defect.
 | **L0** | *(no document)* | `deploy/nginx-foxyaudit.conf` | ⚠ **GOES FIRST** — the catch-all, the missing 404, `/.well-known/security.txt`, `/docs`. Until this lands **no later phase can prove its page is live**, because every URL returns 200. |
 | **L1** | Privacy Policy **v3.9** | `privacy.html` (update) | ⚠ **Sets the pattern for all 11 that follow** |
 | **L2** | Terms of Service **v2.6** | `terms.html` (update) | merchant-of-record wording — Paddle-critical |
+| **L2b** | Terms of Use **v2.5** | `terms-of-use.html` (**new**) | ⚠ **MAIN MISSED THIS DOCUMENT ENTIRELY.** The zip holds **12** documents; the original table covered 11. Caught by L2’s executor noticing the ToS references a document nothing would ever build. Runs next because L2 has just created a dangling reference to it. |
 | **L3** | Refund Policy **v1.2** | `refund.html` (**new**) | Paddle explicitly wants this as its own page |
 | **L4** | Responsible Disclosure **v1.4** | `report-abuse.html` (update) | ⚠ **unblocks L5** |
 | **L5** | *(no document)* | `security.txt` · `SECURITY.md` · `sdk/README.md` · `sdk/pyproject.toml` | **the old S7** — depends on L4 |
