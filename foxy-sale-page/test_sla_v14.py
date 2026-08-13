@@ -284,10 +284,22 @@ def test_every_in_page_anchor_lands_on_something(dom):
 
 
 def test_it_links_only_documents_that_exist(dom):
-    """The MSA and the Order Form are named in prose and deliberately NOT linked
-    — L11 and L12. The reverse cross-link guard says when that changes."""
+    """⚠ RE-AIMED IN L11, NOT DELETED — the same move L9 made on L8's guard.
+
+    This pinned that the MSA and the Order Form were named in prose and NOT
+    linked, because neither page existed. msa.html now does (L11), so the
+    assertion is inverted rather than dropped: the incorporation statement must
+    LINK the agreement it incorporates. The Order Form half stays as it was and
+    still belongs to L12.
+
+    A guard whose subject ships is not finished — it is aimed somewhere new."""
     assert "Master Service Agreement" in dom.text
-    assert 'href="/msa.html"' not in dom.src, "linked an MSA page that does not exist yet"
+    assert 'href="/msa.html"' in dom.src, (
+        "sla.html states it is incorporated into the Master Service Agreement but "
+        "does not link it, and msa.html exists now")
+    assert (HERE / "msa.html").is_file(), "the MSA link has no target"
+    assert "Order Form" in dom.text and 'href="/order-form.html"' not in dom.src, \
+        "an Order Form page appears to exist now — that is L12; re-aim this half too"
     for href in {a["href"] for a in dom.links if a["href"].startswith("/")}:
         target = href.lstrip("/").split("#")[0] or "index.html"
         assert (HERE / target).is_file(), f"links to {href}, which does not exist"

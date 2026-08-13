@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Service Level Agreement · Foxy Audit</title>
-<meta name="description" content="The Foxy Audit SLA: availability commitment, service credits, scheduled maintenance and support response targets. Applies to customers with an active paid Order Form referencing it.">
+<title>Master Service Agreement · Foxy Audit</title>
+<meta name="description" content="The Foxy Audit MSA: structure and order of precedence, fees, term and renewal, confidentiality, indemnification, liability and governing law. Signed with an Order Form.">
 <style>
   /* Poppins 600/700, embedded rather than fetched from Google's font CDN. (That
      hostname is deliberately kept out of this file, so a grep for it across
@@ -32,20 +32,11 @@
   .lead{font-size:16px;color:var(--ink);}
   h2{font-family:var(--disp);font-weight:600;font-size:18px;margin:30px 0 8px;letter-spacing:-.01em;scroll-margin-top:16px;}
   h2:first-child{margin-top:0;}
-  h3{font-family:var(--disp);font-weight:600;font-size:15px;margin:20px 0 4px;color:var(--ink);}
+  h3{font-family:var(--disp);font-weight:600;font-size:15px;margin:22px 0 4px;color:var(--ink);}
   p{margin:9px 0;color:#e7ddd4;}
   ul{margin:9px 0;padding-left:20px;} li{margin:6px 0;color:#e7ddd4;}
   .muted{color:var(--muted);} strong{color:#fff;}
   code{font-family:var(--mono);font-size:12.5px;background:#000;padding:1px 6px;border-radius:5px;color:var(--fox2);}
-  /* Who this applies to decides whether any of the money below is owed, so it is
-     stated where nobody can scroll past it — not only in the details table. */
-  .scope{background:rgba(255,122,46,.09);border:1px solid rgba(255,122,46,.22);border-radius:10px;padding:10px 14px;margin:10px 0 4px;color:#f0e6dd;}
-  .scope strong{color:var(--fox2);}
-  .tbl-wrap{overflow-x:auto;margin:12px 0;border:2px solid var(--line);border-radius:12px;}
-  table{border-collapse:collapse;width:100%;min-width:460px;font-size:13px;}
-  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;color:#e7ddd4;}
-  th{background:#191310;color:#fff;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;}
-  tr:last-child td{border-bottom:none;}
   .toc{list-style:none;padding:0;margin:4px 0 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 22px;}
   .toc li{margin:0;counter-increment:toc;display:flex;gap:9px;align-items:baseline;}
   .toc li::before{content:counter(toc);font-family:var(--mono);font-size:11px;color:var(--muted);min-width:15px;text-align:right;flex:none;}
@@ -54,9 +45,15 @@
   .meta{list-style:none;padding:0;margin:0;font-family:var(--mono);font-size:12.5px;color:var(--muted);}
   .meta li{margin:3px 0;color:var(--muted);}
   .meta b{color:var(--ink);font-weight:400;}
+  .allcaps{font-size:13.5px;letter-spacing:.005em;}
+  .sig{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 30px;margin:10px 0 0;}
+  .sig ul{list-style:none;padding:0;margin:0;font-family:var(--mono);font-size:12.5px;}
+  .sig li{margin:9px 0;color:var(--muted);}
+  .sig h3{margin-top:0;}
+  .rule{border:0;border-top:1px solid var(--line);margin:26px 0 0;}
   .foot{margin-top:34px;color:var(--muted);font-size:12.5px;text-align:center;}
   .foot a{margin:0 8px;}
-  @media (max-width:640px){ .toc{grid-template-columns:1fr;} h1{font-size:28px;} }
+  @media (max-width:640px){ .toc{grid-template-columns:1fr;} .sig{grid-template-columns:1fr;} h1{font-size:28px;} }
   @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto;} }
 </style>
 </head>
@@ -67,94 +64,113 @@
     <a class="home" href="/">← Back to home</a>
   </header>
 
-  <h1>Service Level Agreement</h1>
-  <div class="updated">Last updated: 8 August 2026 · Version 1.4</div>
+  <h1>Master Service Agreement</h1>
+  <div class="updated">Version 1.3 · Last reviewed 8 August 2026</div>
 
   <div class="card">
-    <p class="scope"><strong>Applies to:</strong> Customers with an active paid Order Form referencing this SLA.</p>
-    <p class="lead">This Service Level Agreement is incorporated by reference into the <a href="/msa.html">Master Service Agreement</a> between Foxy Audit and Customer. It does not apply to free-tier, trial, or evaluation use of the Service.</p>
+    <p class="lead">This Master Service Agreement ("<strong>Agreement</strong>") is entered into between FOXY AUDIT, a company incorporated in the Islamic Republic of Pakistan ("<strong>Foxy Audit</strong>"), and the customer identified on the applicable Order Form ("<strong>Customer</strong>"), effective as of the date of the first Order Form referencing this Agreement ("<strong>Effective Date</strong>"). This Agreement governs Customer's use of the Foxy Audit Service and applies to each Order Form entered under it.</p>
   </div>
 
   <div class="card">
     <h2>Document details</h2>
     <ul class="meta">
-      <li><b>Document title</b> — Foxy Audit Service Level Agreement (SLA)</li>
-      <li><b>Version</b> — 1.4</li>
+      <li><b>Document title</b> — Foxy Audit Master Service Agreement (MSA)</li>
+      <li><b>Version</b> — 1.3</li>
       <li><b>Last reviewed</b> — 8 August 2026</li>
-      <li><b>Applies to</b> — Customers with an active paid Order Form referencing this SLA</li>
+      <li><b>Document owner</b> — Foxy Audit</li>
     </ul>
 
     <h2>Contents</h2>
     <ol class="toc">
-      <li><a href="#s1">Availability commitment</a></li>
-      <li><a href="#s2">Service credits</a></li>
-      <li><a href="#s3">Scheduled maintenance</a></li>
-      <li><a href="#s4">Excluded events</a></li>
-      <li><a href="#s5">Support</a></li>
-      <li><a href="#s6">Severity definitions</a></li>
-      <li><a href="#s7">Monitoring and reporting</a></li>
-      <li><a href="#s8">Changes to this SLA</a></li>
+      <li><a href="#s1">Structure</a></li>
+      <li><a href="#s2">The Service</a></li>
+      <li><a href="#s3">Fees and payment</a></li>
+      <li><a href="#s4">Term and renewal</a></li>
+      <li><a href="#s5">Customer responsibilities</a></li>
+      <li><a href="#s6">Data protection</a></li>
+      <li><a href="#s7">Availability and support</a></li>
+      <li><a href="#s8">Confidentiality</a></li>
+      <li><a href="#s9">Intellectual property</a></li>
+      <li><a href="#s10">Warranties</a></li>
+      <li><a href="#s11">Mutual indemnification</a></li>
+      <li><a href="#s12">Limitation of liability</a></li>
+      <li><a href="#s13">Term and termination</a></li>
+      <li><a href="#s14">General provisions</a></li>
     </ol>
   </div>
 
   <div class="card">
-    <h2 id="s1">1. Availability commitment</h2>
-    <p>Foxy Audit targets <strong>99.5% monthly uptime</strong> for the customer dashboard and API, measured as the percentage of total minutes in a calendar month during which the Service is "Available," excluding Scheduled Maintenance and Excluded Events (<a href="#s4">Section 4</a>). "Available" means the dashboard and API respond to requests without a server error and within normal latency; it does not require every feature to be fully functional if the core Service is reachable and usable.</p>
+    <h2 id="s1">1. Structure</h2>
+    <p>This Agreement consists of these general terms, together with: (a) each <strong>Order Form</strong> signed by the parties, specifying the subscribed plan, fees, and term; (b) the <strong><a href="/dpa.html">Data Processing Agreement (DPA)</a></strong>, incorporated by reference; and (c) the <strong><a href="/sla.html">Service Level Agreement (SLA)</a></strong>, incorporated by reference. In case of conflict, the order of precedence is: Order Form, then this Agreement, then the DPA/SLA, then the public <a href="/terms.html">Terms of Service</a> (which this Agreement supersedes for signing Customers).</p>
 
-    <h2 id="s2">2. Service credits</h2>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Monthly uptime</th><th>Service credit</th></tr></thead>
-        <tbody>
-          <tr><td>Below 99.5%, at or above 99.0%</td><td>5% of that month's fees</td></tr>
-          <tr><td>Below 99.0%, at or above 95.0%</td><td>10% of that month's fees</td></tr>
-          <tr><td>Below 95.0%</td><td>25% of that month's fees</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>To claim a credit, Customer must submit a request to <a href="mailto:support@foxyaudit.tech">support@foxyaudit.tech</a> or call <strong>+92 3398123944</strong> within <strong>30 days</strong> of the end of the affected month, including the dates and times of unavailability. Credits are applied to a future invoice and are Customer's <strong>sole and exclusive remedy</strong> for failure to meet the availability commitment. Total credits in any month will not exceed 25% of that month's fees.</p>
+    <h2 id="s2">2. The Service</h2>
+    <p>Foxy Audit will provide Customer access to the Service, as defined in the <a href="/terms.html#s2">Terms of Service Section 2</a> (the dashboard, API, SDK, and desktop application) which, for the avoidance of doubt, does not include Foxy Audit's internal staff administrative console during the term specified in the applicable Order Form, subject to timely payment of fees.</p>
 
-    <h2 id="s3">3. Scheduled maintenance</h2>
-    <p>Foxy Audit may perform scheduled maintenance that temporarily affects availability, with at least <strong>48 hours'</strong> advance notice by email or in-app notice to workspace administrators wherever reasonably possible. Scheduled maintenance does not count against the availability commitment in <a href="#s1">Section 1</a>.</p>
+    <h2 id="s3">3. Fees and payment</h2>
+    <p>Fees are as stated in the applicable Order Form. Unless otherwise stated, fees are invoiced monthly in advance, due within <strong>30 days</strong> of invoice date, and non-refundable except as expressly stated in this Agreement. Late payments may accrue interest at the lesser of <strong>1.5% per month</strong> or the maximum rate permitted by law, and Foxy Audit may suspend the Service on <strong>10 days'</strong> written notice of a payment more than 30 days overdue, provided Customer has not disputed the invoice in good faith.</p>
 
-    <h2 id="s4">4. Excluded events</h2>
-    <p>The availability commitment does not apply to unavailability caused by: (a) factors outside Foxy Audit's reasonable control, including a force majeure event or a failure of Customer's or a third party's infrastructure not controlled by Foxy Audit; (b) Customer's misuse of the Service in violation of the <a href="/acceptable-use.html">Acceptable Use Policy</a>; (c) Customer's own equipment, software, or network connectivity; or (d) a suspension permitted under the Master Service Agreement.</p>
+    <h2 id="s4">4. Term and renewal</h2>
+    <p>Each Order Form has the term stated on it. Unless otherwise stated, an Order Form renews automatically for successive periods equal to the initial term unless either party gives notice of non-renewal at least <strong>30 days</strong> before the then-current term ends.</p>
 
-    <h2 id="s5">5. Support</h2>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Plan</th><th>Channel</th></tr></thead>
-        <tbody>
-          <tr><td>Pro</td><td>Email</td></tr>
-          <tr><td>Max, Premium</td><td>Email + priority queue</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Support hours are <strong>Monday–Friday, 9am–6pm PKT, excluding public holidays</strong>. Response target refers to initial acknowledgment, not resolution; resolution time depends on issue severity (<a href="#s6">Section 6</a>) and complexity.</p>
-    <h3>Initial response targets by severity</h3>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Severity</th><th>Pro</th><th>Max / Premium</th></tr></thead>
-        <tbody>
-          <tr><td>Critical (Sev 1)</td><td>4 business hours</td><td>1 business hour</td></tr>
-          <tr><td>High (Sev 2)</td><td>1 business day</td><td>4 business hours</td></tr>
-          <tr><td>Normal (Sev 3)</td><td>2 business days</td><td>1 business day</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <h2 id="s5">5. Customer responsibilities</h2>
+    <p>Customer is responsible for: the accuracy of information it provides; maintaining the confidentiality of its account credentials and API keys; ensuring it has the rights and consents necessary for the AI activity it audits through the Service; and its users' compliance with this Agreement and the <a href="/acceptable-use.html">Acceptable Use Policy</a>.</p>
 
-    <h2 id="s6">6. Severity definitions</h2>
+    <h2 id="s6">6. Data protection</h2>
+    <p>The parties' obligations regarding personal data processed through the Service are governed by the <a href="/dpa.html">DPA</a>, incorporated into this Agreement by reference.</p>
+
+    <h2 id="s7">7. Availability and support</h2>
+    <p>Foxy Audit's availability commitment and support response targets are set out in the <a href="/sla.html">SLA</a>, incorporated into this Agreement by reference. Service credits, if any, are Customer's sole and exclusive remedy for a failure to meet the SLA's availability commitment.</p>
+
+    <h2 id="s8">8. Confidentiality</h2>
+    <p>Each party will protect the other's non-public information disclosed under this Agreement with at least the same degree of care it uses for its own confidential information of similar nature, and not less than reasonable care, and will use it only to perform this Agreement. This does not apply to information that is or becomes public through no fault of the receiving party, was already known to it, is independently developed, or is rightfully received from a third party without duty of confidentiality. A receiving party may disclose confidential information as required by law, provided it gives the disclosing party reasonable notice where legally permitted.</p>
+
+    <h2 id="s9">9. Intellectual property</h2>
+    <p>Foxy Audit retains all right, title, and interest in the Service, including the SDK's underlying non-open-source components, the dashboard, and all related technology. Customer retains all right, title, and interest in its own data. Customer grants Foxy Audit a limited license to process Customer's data solely to provide the Service, as described in the <a href="/dpa.html">DPA</a>. Nothing in this Agreement transfers ownership of either party's pre-existing intellectual property.</p>
+
+    <h2 id="s10">10. Warranties</h2>
+    <p>Each party warrants it has the authority to enter this Agreement. Foxy Audit warrants the Service will materially conform to its then-current documentation. <strong class="allcaps">EXCEPT AS EXPRESSLY STATED IN THIS AGREEMENT, THE SERVICE IS PROVIDED "AS IS," AND FOXY AUDIT DISCLAIMS ALL OTHER WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT, TO THE MAXIMUM EXTENT PERMITTED BY LAW.</strong></p>
+
+    <h2 id="s11">11. Mutual indemnification</h2>
+    <p><strong>By Foxy Audit:</strong> Foxy Audit will defend Customer against a third-party claim alleging the Service, as provided and used in accordance with this Agreement, infringes that third party's intellectual property rights, and will indemnify Customer for damages finally awarded, provided Customer promptly notifies Foxy Audit and gives it control of the defense. This obligation does not apply to claims arising from Customer's modification of the Service or use in combination with materials not provided by Foxy Audit.</p>
+    <p><strong>By Customer:</strong> Customer will defend and indemnify Foxy Audit against a third-party claim arising from Customer's data, Customer's use of the Service in violation of the <a href="/acceptable-use.html">Acceptable Use Policy</a>, or Customer's violation of applicable law, on the same procedural terms.</p>
+
+    <h2 id="s12">12. Limitation of liability</h2>
+    <p><strong class="allcaps">EXCEPT FOR (A) A PARTY'S INDEMNIFICATION OBLIGATIONS UNDER SECTION 11, (B) A BREACH OF SECTION 8 (CONFIDENTIALITY), OR (C) CUSTOMER'S PAYMENT OBLIGATIONS, NEITHER PARTY IS LIABLE FOR INDIRECT, INCIDENTAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, AND EACH PARTY'S TOTAL LIABILITY ARISING OUT OF THIS AGREEMENT IS LIMITED TO THE FEES PAID OR PAYABLE BY CUSTOMER UNDER THE APPLICABLE ORDER FORM IN THE 12 MONTHS PRECEDING THE CLAIM.</strong></p>
+
+    <h2 id="s13">13. Term and termination</h2>
+    <p>Either party may terminate this Agreement, or an Order Form, for the other's uncured material breach on <strong>30 days'</strong> written notice, if the breach remains uncured at the end of that period. On termination, Customer's data is handled per <a href="/dpa.html#s9">DPA Section 9</a>. Sections 8 (Confidentiality), 9 (IP), 12 (Liability), and 15 (Governing Law) survive termination.</p>
+
+    <h2 id="s14">14. General provisions</h2>
     <ul>
-      <li><strong>Critical (Sev 1):</strong> Service is unavailable or a core function (audit logging, authentication) is completely unusable for all users of a workspace.</li>
-      <li><strong>High (Sev 2):</strong> A major feature is degraded or unavailable for a subset of users, with no reasonable workaround.</li>
-      <li><strong>Normal (Sev 3):</strong> A minor feature issue exists with a reasonable workaround, or a general question.</li>
+      <li><strong>Governing law:</strong> this Agreement is governed by the laws of the Islamic Republic of Pakistan, without regard to conflict-of-laws principles, unless the Order Form states otherwise.</li>
+      <li><strong>Assignment:</strong> neither party may assign this Agreement without the other's written consent, except in connection with a merger, acquisition, or sale of substantially all assets.</li>
+      <li><strong>Force majeure:</strong> neither party is liable for delay or failure caused by circumstances beyond its reasonable control.</li>
+      <li><strong>Entire agreement:</strong> this Agreement, together with all Order Forms, the DPA, and the SLA, is the entire agreement between the parties regarding the Service and supersedes prior discussions regarding its subject matter.</li>
+      <li><strong>Amendment:</strong> this Agreement may be amended only by a writing signed by both parties, except that the DPA and SLA may be updated as described within each.</li>
     </ul>
 
-    <h2 id="s7">7. Monitoring and reporting</h2>
-    <p>Foxy Audit tracks Service availability and will provide Customer, on written request, with the data relevant to a specific credit claim under <a href="#s2">Section 2</a>, drawn from server logs and any monitoring tooling in place at the time of the claim.</p>
-
-    <h2 id="s8">8. Changes to this SLA</h2>
-    <p>Foxy Audit may update this SLA for future contract terms; changes will not reduce the availability commitment or support targets for the remainder of Customer's then-current Order Form term without Customer's written consent.</p>
+    <hr class="rule">
+    <h2 id="sig">Signatures</h2>
+    <div class="sig">
+      <div>
+        <h3>Foxy Audit</h3>
+        <ul>
+          <li>By: _________________________</li>
+          <li>Name:</li>
+          <li>Title:</li>
+          <li>Date:</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Customer</h3>
+        <ul>
+          <li>By: _________________________</li>
+          <li>Name:</li>
+          <li>Title:</li>
+          <li>Date:</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <div class="foot">
