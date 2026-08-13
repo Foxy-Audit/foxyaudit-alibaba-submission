@@ -51,7 +51,7 @@ button fast-forwards the carousel to whichever card has `isPricing: true` (order
 | `index.html` | Homepage — carousel, corner fox, cookie banner, lead/signup/contact modals. Self-contained (inline CSS/JS). |
 | `sdk.html`, `hash-chain.html`, `verify-page.html`, `passport.html`, `judge.html` | The 5 feature pages (one per feature card). |
 | `how-it-works.html` | The SDK → hash → grade → chain → verify pipeline. |
-| `pricing.html` | Free 7-day trial, Pro, Max, custom enterprise + FAQ. Paid CTAs open the existing checkout flow. |
+| `pricing.html` | Free, Pro, Max, custom enterprise + FAQ. No CTA reaches a payment flow: Pro/Max open the signup modal on the homepage via `/?plan=pro|max`, enterprise routes to Book a demo. |
 | `contact.html` | Support: email + Help Center + enterprise inquiries + per-plan SLA + note form. |
 | `desktop.html` | The desktop pet + **real download buttons** (Windows `.exe`, Linux AppImage). |
 | `about.html` | Mission + founders (Fatima Rehman, CEO; Ali Kamran, CTO). Names/roles only — no invented bios. |
@@ -157,7 +157,7 @@ the updated files immediately. **Hard-refresh** after a deploy to clear the cach
 - **`index.html` is self-contained**; the card pages use `/site.css`. Keep new card
   pages on `site.css`.
 - **No emojis as brand/UI marks** — use the logo or inline SVG line icons.
-- Paid CTAs route to **Book a demo** (payment integration is parked).
+- No paid CTA reaches a payment flow (payment integration is parked). Pro and Max link to `/?plan=pro|max`, which opens the **signup lead modal** on `index.html`; only the enterprise CTA routes to **Book a demo**.
 
 ---
 
