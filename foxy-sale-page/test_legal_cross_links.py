@@ -44,7 +44,11 @@ DOCUMENTS = {
     "Terms of Use": "terms-of-use.html",               # L2b
     "Privacy Policy": "privacy.html",                  # L1
     "Cookie Policy": "cookie-policy.html",             # L7 (exists, stale)
-    "Acceptable Use Policy": "acceptable-use.html",    # L6 (exists, stale)
+    "Acceptable Use Policy": "acceptable-use.html",    # L6
+    "Report Abuse": "report-abuse.html",               # L4/L5 — the
+    #   authoritative security policy. Any page that names it must link
+    #   it: it is where the safe harbour lives, and a reader who cannot
+    #   reach it cannot rely on it.
     "Refund Policy": "refund.html",                    # L3
     "Service Level Agreement": "sla.html",             # L9
     "Data Processing Agreement": "dpa.html",           # L10
@@ -113,6 +117,53 @@ def test_a_document_that_exists_is_linked_by_every_page_that_names_it(page, name
     assert f'href="/{target}"' in dom.src, (
         f"{page} names the {name} in prose but never links it, and {target} "
         f"exists now — add the anchor")
+
+
+def test_every_card_on_the_legal_index_links_the_document_it_names():
+    """⚠ THE REVERSE GUARD ABOVE IS FILE-SCOPED, AND THAT IS NOT ENOUGH HERE.
+
+    It asks whether the page links a document ANYWHERE. legal.html links most of
+    them from its footer as well as from a card, so re-pointing a card at the
+    wrong page leaves the file-level check green — measured: sending the "Report
+    Abuse" card to contact.html passed every guard in the suite, because the
+    footer still carried the link.
+
+    That is the #184 shape again: a guard satisfied by a neighbour. This one
+    slices each card and asks whether it links the document its OWN heading
+    names, which is the thing a reader clicks."""
+    src = (HERE / "legal.html").read_text(encoding="utf-8")
+    cards = re.findall(r'<a class="gcard" href="([^"]+)"(.*?)</a>', src, re.S)
+    assert len(cards) >= 6, f"legal.html should carry the policy cards, found {len(cards)}"
+
+    #: Card headings that are shorter than the document's own name.
+    ALIASES = {"Acceptable Use": "Acceptable Use Policy"}
+    #: Headings that are deliberately NOT a document. "Security" is a route into
+    #: the disclosure policy's section, guarded by name in test_report_abuse_v14.
+    NOT_DOCUMENTS = {"Security"}
+
+    checked, skipped = 0, []
+    for href, inner in cards:
+        heading = re.search(r"<h3>([^<]+)</h3>", inner)
+        assert heading, f"a card on legal.html has no heading: {href}"
+        name = heading.group(1).strip()
+        target = DOCUMENTS.get(ALIASES.get(name, name))
+        if target is None:
+            skipped.append(name)
+            continue
+        if not (HERE / target).is_file():
+            continue                      # a card for something not yet built
+        checked += 1
+        assert href.split("#")[0] == f"/{target}", (
+            f'the "{name}" card links {href} — it should link /{target}, which is '
+            "the document its own heading names")
+
+    # ⚠ A SKIP IS A PASS, so the skips are pinned. The "Acceptable Use" card was
+    # silently skipped on the first run because the map keys it as "Acceptable
+    # Use Policy" — measured: re-pointing that card at terms.html went unnoticed.
+    assert set(skipped) <= NOT_DOCUMENTS, (
+        f"card headings matched no document and were skipped without checking: "
+        f"{sorted(set(skipped) - NOT_DOCUMENTS)} — add them to DOCUMENTS or ALIASES")
+    assert checked >= 6, f"only {checked} cards were checked; the map has gone stale"
 
 
 def test_the_forward_and_reverse_guards_are_not_the_same_check():
