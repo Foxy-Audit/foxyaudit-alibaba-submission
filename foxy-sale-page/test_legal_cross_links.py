@@ -54,7 +54,8 @@ DOCUMENTS = {
 #: Pages that participate. Append as each phase lands.
 PAGES = [
     "privacy.html", "terms.html", "terms-of-use.html",
-    "cookie-policy.html", "acceptable-use.html", "report-abuse.html", "legal.html",
+    "refund.html", "cookie-policy.html", "acceptable-use.html",
+    "report-abuse.html", "legal.html",
 ]
 
 def _dom(page: str) -> LegalDom:
