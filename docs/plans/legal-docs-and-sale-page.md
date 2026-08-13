@@ -96,12 +96,57 @@ The unreachable route is listed first, so a researcher's tooling reads it as
 preferred. And `security.txt` says `support@` while the authoritative
 Responsible Disclosure Policy v1.4 says `security@` — the two contradict.
 
-### Already checked — do NOT chase these
+### ⚠⚠ THE SITE HAS NO 404, AND IT HAS BEEN HIDING TWO REAL DEFECTS
 
-- **"Help Center should lead to the docs" / "desktop pet → new website"**
-  (owner's note): `https://foxyaudit.tech/docs` returns **200** (Caddy serves
-  extensionless) and `desktop/settings_data.py:361` already points there.
-  **Not broken.**
+**Production does not run Caddy.** `deploy/docker-compose.prod.yml:213` says the
+shared VM "already runs nginx on 80/443", and the `caddy` service is optional.
+The live server confirms it: `Server: nginx/1.28.0 (Ubuntu)`.
+
+`deploy/nginx-foxyaudit.conf:39` ends the marketing block with:
+
+```nginx
+location / { try_files $uri $uri/ /index.html; }
+```
+
+**An SPA catch-all on a static multi-page site.** Every URL that does not resolve
+to a file returns **the homepage with `200 OK`**. There is no 404 anywhere on
+foxyaudit.tech.
+
+Verified by **body and Content-Type**, not status:
+
+| URL | What is actually served |
+|---|---|
+| `/security.txt` | ✅ `text/plain` — the real file |
+| **`/.well-known/security.txt`** | ❌ **the homepage**, `text/html` |
+| **`/docs`** | ❌ **the homepage** |
+| `/docs.html` | ✅ the real documentation page |
+| `/report-abuse.html` · `/privacy.html` | ✅ real |
+| `/this-page-cannot-exist-xyz` | ❌ the homepage, **200 OK** |
+
+**Consequence 1 — Q1's `security.txt` is not published.** RFC 9116 §3 requires
+the canonical `/.well-known/security.txt`. Tooling fetches that path, receives
+`text/html` and a marketing page, and concludes there is no security contact.
+Q1's careful rewrite **exists only in `deploy/Caddyfile`, which production does
+not use**. The file's own `Canonical:` field lists two URLs and one of them lies.
+⚠ This means **#161 was never actually delivered**, and L5 must fix the *nginx*
+config, not merely the file's contents.
+
+**Consequence 2 — the owner's "Help Center" note was correct.** `/docs` serves
+the homepage, so `desktop/settings_data.py:361` (`"Documentation" →
+https://foxyaudit.tech/docs`) sends users to the marketing page. Either add the
+route to nginx or point the desktop app at `/docs.html`.
+
+**Consequence 3 — no dead link on this site can ever be noticed**, by a human or
+a crawler, and every one of them is duplicate content at 200.
+
+⚠ **MAIN GOT THIS WRONG FIRST.** An earlier revision of this plan told the
+executor `/docs` was "not broken" on the strength of a 200. Three times in one
+session a status code was read as evidence of content. **On this domain a 200
+means nothing at all** — always compare the body or the `<title>`.
+
+There is no SSH to the prod VM from the planning machine
+([[prod-vm-no-ssh-from-this-machine]]), so the nginx change ships as a repo edit
+plus a paste-ready command for the owner.
 
 ---
 
@@ -152,6 +197,7 @@ reverts, and a bulk conversion hides which document introduced a defect.
 
 | # | Document | Target page | Notes |
 |---|---|---|---|
+| **L0** | *(no document)* | `deploy/nginx-foxyaudit.conf` | ⚠ **GOES FIRST** — the catch-all, the missing 404, `/.well-known/security.txt`, `/docs`. Until this lands **no later phase can prove its page is live**, because every URL returns 200. |
 | **L1** | Privacy Policy **v3.9** | `privacy.html` (update) | ⚠ **Sets the pattern for all 11 that follow** |
 | **L2** | Terms of Service **v2.6** | `terms.html` (update) | merchant-of-record wording — Paddle-critical |
 | **L3** | Refund Policy **v1.2** | `refund.html` (**new**) | Paddle explicitly wants this as its own page |
