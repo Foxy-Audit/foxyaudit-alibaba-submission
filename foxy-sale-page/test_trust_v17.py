@@ -16,18 +16,24 @@ WHAT HELD (verified, not assumed):
   · the OIDC client secret really IS stored in plaintext — an unusually candid
     disclosure that checks out (models.py: client_secret, String(512))
 
-WHAT DID NOT — see the two guards below:
-  · "an immutable staff audit trail" (§5) — admin_chain.py's own docstring says
-    every surface reporting that chain "must say 'sequence unbroken', never
-    'tamper-evident'". Immutable is stronger still. (#143/#144)
-  · "structurally read-only … an undisclosed edit is detectable" (§4) — true of
-    the customer ledger when anchoring is on; NOT true of the staff log, where
-    truncating the tail leaves nothing behind and deleting every chained row is
-    self-healing.
+WHAT DID NOT, and what was done about it (L8b, owner decision 2026-08-13):
 
-Both are RECORDED, not reworded. The only owner-authorised divergence from the
-document is the SOC 2 date; a factual claim about a security property is the
-owner's to settle, not a converter's.
+  · §5 said admin actions are recorded in an "immutable" staff audit trail.
+    admin_chain.py's own docstring says every surface reporting that chain must
+    say "sequence unbroken", never "tamper-evident" — because the chain is
+    UNANCHORED (#143) and a wholesale delete is self-healing (#144). The page now
+    says what admin_chain.py:314 actually returns.
+  · §4 named the ledger, the staff log and the anchor receipts in one sentence,
+    so the weakest member set the truth for all three. It now says what is true
+    of each.
+
+The owner has decided to ANCHOR the staff chain and then restore the stronger
+word. The guard below therefore READS THE CODE rather than banning a string: it
+permits "immutable" the moment anchoring exists, so nobody has to remember to
+delete a test. See _staff_chain_is_anchored.
+
+The only owner-authorised divergence from the source document remains the SOC 2
+date.
 
 Run:  pytest foxy-sale-page -q
 """
@@ -60,56 +66,118 @@ def _backend(rel: str) -> str:
 
 
 # ── 1. THE CLAIM THE CODE CONTRADICTS ────────────────────────────────────────
-def test_the_immutable_staff_trail_claim_still_overstates_the_code(dom):
-    """⚠ RECORDED, NOT RESOLVED — and this one is on the page a buyer reads.
+def _staff_chain_is_anchored() -> bool:
+    """Does the staff-action chain have an EXTERNAL witness today?
 
-    §5 says admin actions are "recorded in an immutable staff audit trail".
-    backend/app/admin_chain.py, in its own module docstring, says the opposite:
+    ⚠ THIS READS THE CODE, ON PURPOSE. The owner's decision (2026-08-13) is to
+    anchor the staff chain and then allow "immutable" again. A plain string ban
+    would have to be DELETED by whoever does that work — and a guard someone
+    must remember to delete protects nothing in the meantime and nothing after.
+    So the guard asks the codebase instead, and flips by itself.
 
-        "every surface that reports this chain must say 'sequence unbroken',
-         never 'tamper-evident'. The UI copy in foxy-adminpage is written to
-         that rule and guarded."
+    Two independent signals, either of which alone would be weak:
 
-    and lists why:
-      · REMOVING ENTRIES FROM THE END leaves nothing behind — "only an outside
-        witness who recorded the older head would notice" (#143: the staff chain
-        is not anchored, so there is no such witness)
-      · deleting EVERY chained row is SELF-HEALING — chain_head returns None and
-        the next write restarts at seq 1 against GENESIS (#144)
-      · rows written before the mechanism shipped have no hash at all
+      1. THE ANCHORING MODULE TOUCHES THE STAFF CHAIN. anchor.py is how the
+         customer ledger gets its witness: it reads ``AuditLog`` and records a
+         receipt in ``ChainAnchor``. Today it does not mention the staff chain
+         once — measured, the string "admin" appears zero times in it. Anchoring
+         the staff chain means that module (or an equivalent) has to name the
+         staff-action model.
 
-    "Immutable" is a stronger word than "tamper-evident", which the code already
-    forbids. The admin console obeys the rule and says "sequence unbroken"; this
-    page does not.
+      2. admin_chain.py HAS DROPPED ITS OWN "UNTIL IT EXISTS" RULE. That module
+         currently instructs every surface reporting this chain to say "sequence
+         unbroken", never "tamper-evident", and says so *because* anchoring does
+         not exist. Whoever implements anchoring must rewrite that paragraph or
+         leave a false instruction behind for the next reader.
 
-    ⚠ WHEN THE WORDING IS FIXED, THIS TEST FAILS. That is the design — see the
-    report for the suggested replacement."""
-    assert "immutable staff audit trail" in dom.text, (
-        "the claim changed — if it was corrected, rewrite this guard; the "
-        "suggested wording is 'a staff audit trail whose sequence is verifiable'")
+    BOTH are required. Signal 1 alone could fire on an unrelated mention; signal
+    2 alone could fire on a docstring tidy-up. Together they are what actually
+    shipping the feature looks like.
+    """
+    anchor = _backend("anchor.py")
     chain = _backend("admin_chain.py")
-    assert 'must say "sequence unbroken", never "tamper-evident"' in chain, \
-        "admin_chain.py no longer states the rule this page breaks"
+    # NB: word boundaries are spelled \b so that a stray backslash-b in an
+    # editor cannot turn them into literal backspace bytes. It did exactly
+    # that here once, and the detector then matched NOTHING, which meant this
+    # guard could never flip. Measured against the file, not a retyped copy.
+    touches_staff_chain = bool(re.search(r"\bAdminAction\b|admin_actions", anchor))
+    rule_lifted = 'never "tamper-evident"' not in chain
+    return touches_staff_chain and rule_lifted
+
+
+def test_the_page_claims_no_more_than_the_staff_chain_can_prove(dom):
+    """⚠ THE GUARD THIS PHASE EXISTS FOR, AND IT FLIPS WITHOUT BEING EDITED.
+
+    v1.7 said admin actions are "recorded in an immutable staff audit trail".
+    They are not, yet. admin_chain.py's own docstring says every surface
+    reporting this chain must say "sequence unbroken", never "tamper-evident" —
+    and lists why: removing entries from the END leaves nothing behind (#143 —
+    the chain is unanchored, so there is no outside witness), deleting EVERY
+    chained row is self-healing (#144), and rows predating the mechanism carry
+    no hash at all.
+
+    The owner has decided to ANCHOR the staff chain and then keep the strong
+    word. Until that ships, this fails on any wording stronger than the code can
+    support. When it ships, ``_staff_chain_is_anchored()`` goes true and this
+    permits the stronger word — nobody has to remember to come back and delete a
+    line.
+
+    ⚠ WORTH READING BEFORE THE UPGRADE: anchor.py's own framing caution says an
+    anchor makes tampering "externally detectable after the next anchor, not
+    impossible", and that the project's phrase is "tamper-evident, independently
+    verifiable". "Immutable" is stronger than that even with anchoring in place.
+    That is the owner's call, not this test's — but it should be a deliberate
+    one, so it is written down here."""
+    OVERCLAIM = (r"\bimmutable\b|\btamper[- ]?proof\b|\bunalterable\b|"
+                 r"\bcannot be (?:altered|changed|modified|edited)\b|"
+                 r"\bimpossible to (?:alter|change|tamper)\b")
+    found = sorted(set(m.lower() for m in re.findall(OVERCLAIM, dom.text, re.I)))
+
+    if _staff_chain_is_anchored():
+        # Anchoring shipped. The strong word is permitted — not required — and
+        # the weaker wording below is no longer mandatory.
+        return
+
+    assert not found, (
+        "trust.html claims the staff audit trail is immutable/tamper-proof while "
+        "the staff chain is still UNANCHORED. admin_chain.py:314 returns "
+        '"sequence unbroken"; that is the strongest thing that is true today. '
+        f"found: {found}")
+    # …and the honest wording must actually be there, so the sentence cannot be
+    # satisfied by deleting the claim rather than correcting it.
+    assert "whose sequence is verifiable" in dom.text,         "the staff audit trail sentence lost the wording that replaced 'immutable'"
+    assert "edited, removed from the middle, or re-ordered breaks the chain" in dom.text,         "the page no longer says WHAT the chain actually detects"
+
+
+def test_the_control_the_guard_depends_on(dom):
+    """If this is wrong, the test above is meaningless: it would silently permit
+    the strong word by wrongly believing anchoring exists.
+
+    Pins that the two signals are both FALSE right now, for the reasons stated —
+    so a green run above is a real assertion and not an accidental early exit."""
+    anchor = _backend("anchor.py")
+    chain = _backend("admin_chain.py")
+    assert "admin" not in anchor.lower(),         "anchor.py now mentions the admin/staff side — has staff anchoring landed?"
+    assert 'never "tamper-evident"' in chain,         "admin_chain.py dropped its 'until it exists' rule — has anchoring landed?"
+    assert not _staff_chain_is_anchored(), "the detector believes anchoring exists"
     assert "A wholesale delete is self-healing." in chain, "#144 no longer applies"
     assert "REMOVING ENTRIES FROM THE END leaves nothing behind" in chain, "#143 no longer applies"
-    # the console obeys the rule the trust page does not
-    admin = (HERE.parent / "foxy-adminpage" / "index.html").read_text(encoding="utf-8")
-    assert "sequence unbroken" in admin, \
-        "the admin console stopped using the careful wording, so the rule may have moved"
+    # the customer ledger DOES have the witness, which is why §4 scopes the
+    # strong statement to it
+    assert "ChainAnchor" in anchor and "AuditLog" in anchor
 
 
-def test_the_read_only_claim_is_broader_than_the_staff_log_supports(dom):
-    """§4 says the ledger, staff-action log AND anchor receipts are read-only
-    such that "an undisclosed edit by our own staff is detectable". For the
-    CUSTOMER ledger with anchoring enabled that is fair. For the staff log it is
-    not, for the same reasons as above — and the page names all three together.
-
-    Pinned so the over-broad sentence cannot drift while the owner decides."""
+def test_section_4_scopes_the_strong_claim_to_the_ledger_that_earns_it(dom):
+    """§4 named the ledger, the staff log and the anchor receipts together, and
+    the weakest member set the truth for all three. It now says what is true of
+    each: read-only everywhere, independently detectable for the anchored
+    customer ledger, chained-but-unwitnessed for the staff log."""
     t = dom.text
-    assert "The audit ledger, staff-action log, and blockchain-anchor receipts are " \
-           "structurally read-only" in t
-    assert "an undisclosed edit by our own staff is detectable" in t
-    assert "A wholesale delete is self-healing." in _backend("admin_chain.py")
+    assert "read-only within our own administrative tools — there is no edit path" in t
+    assert "Where anchoring is enabled, the customer audit ledger goes further" in t
+    assert "detectable by you, independently, rather than merely prohibited by our policy" in t
+    assert "The staff-action log is hash-chained but not yet anchored" in t
+    assert "verifiable without an external witness" in t
 
 
 # ── 2. THE OWNER-AUTHORISED DIVERGENCE ───────────────────────────────────────
@@ -169,6 +237,30 @@ def test_no_certification_auditor_or_uptime_figure_is_invented(dom):
     assert not re.search(r"\b(?:guarantee|guaranteed)\s+\d", t, re.I)
     hit = POSTAL_ADDRESS.search(t)
     assert not hit, f"a postal address was invented: {hit.group(0)!r}"
+
+
+def test_the_uptime_figure_is_pinned_for_L9(dom):
+    """⚠ L9 MUST TOUCH THIS DELIBERATELY. Three surfaces carry an availability
+    statement and they do not currently agree:
+
+      trust.html §8   "We target 99.5% monthly uptime"
+      terms.html §7   "the Service is provided without an uptime guarantee"
+                      unless a separate written SLA applies
+      sla.html        does not exist yet (L9)
+
+    Both existing statements are defensible on their own — a target is not a
+    guarantee — but a procurement reviewer reads 99.5% as a number to hold us
+    to, and the Terms say they cannot. The owner's decision is to reconcile all
+    three in L9 rather than patch two now and find a third number later.
+
+    So the figure is pinned HERE, exactly as it stands. L9 cannot change the
+    Trust Page's number without this failing and making the reconciliation
+    explicit."""
+    assert "We target 99.5% monthly uptime" in dom.text,         "the Trust Page's availability figure moved — L9 must reconcile all three surfaces"
+    assert "Current architecture runs on a single hosting provider." in dom.text,         "the honest single-provider caveat was dropped; it is what bounds the figure"
+    terms = (HERE / "terms.html").read_text(encoding="utf-8")
+    assert "without an uptime guarantee" in terms,         "terms.html changed its availability position — reconcile it with trust.html §8"
+    assert not (HERE / "sla.html").is_file(),         "sla.html exists now — L9 has landed, so reconcile the three statements and rewrite this"
 
 
 # ── 3. the claims that DO hold, checked against the code ────────────────────
@@ -264,7 +356,7 @@ def test_payoneer_not_paddle_is_the_one_that_never_touches_checkout(dom):
     "That is not a policy promise — our database has no column",
     "a known gap, not an oversight in this page — it's on our roadmap to close",
     "for tenant-scoped transactions — not application logic alone",
-    "administrative tools — an undisclosed edit by our own staff is detectable",
+    "administrative tools — there is no edit path",
     "independent chain — currently Sepolia by default, mainnet-configurable — so you",
     "revenue from Paddle — never touches customer checkout",
     "Responsible Disclosure Policy — good-faith reporters following that process",
