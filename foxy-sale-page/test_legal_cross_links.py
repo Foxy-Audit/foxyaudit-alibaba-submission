@@ -59,7 +59,8 @@ DOCUMENTS = {
 #: Pages that participate. Append as each phase lands.
 PAGES = [
     "privacy.html", "terms.html", "terms-of-use.html",
-    "refund.html", "trust.html", "cookie-policy.html", "acceptable-use.html",
+    "refund.html", "trust.html", "sla.html", "cookie-policy.html",
+    "acceptable-use.html",
     "report-abuse.html", "legal.html",
 ]
 

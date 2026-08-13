@@ -260,7 +260,18 @@ def test_the_uptime_figure_is_pinned_for_L9(dom):
     assert "Current architecture runs on a single hosting provider." in dom.text,         "the honest single-provider caveat was dropped; it is what bounds the figure"
     terms = (HERE / "terms.html").read_text(encoding="utf-8")
     assert "without an uptime guarantee" in terms,         "terms.html changed its availability position — reconcile it with trust.html §8"
-    assert not (HERE / "sla.html").is_file(),         "sla.html exists now — L9 has landed, so reconcile the three statements and rewrite this"
+    # ⚠ L9 HAS LANDED. This used to assert `not sla.html.is_file()`, and it fired
+    # the moment the page was created — which is exactly what forced the
+    # three-way reconciliation to be done rather than assumed. Re-aimed, not
+    # deleted: the surfaces must agree now, and it is the SLA's OWN scope
+    # sentence that makes terms.html §7's "separate written SLA" carve-out true.
+    sla = HERE / "sla.html"
+    assert sla.is_file(), "sla.html is gone; the three-way reconciliation is broken"
+    sla_text = sla.read_text(encoding="utf-8")
+    assert "99.5% monthly uptime" in sla_text, \
+        "the SLA's figure moved away from the Trust Page's 99.5%"
+    assert "active paid Order Form referencing this SLA" in sla_text, \
+        "the SLA lost its scope, so the Terms' 'separate written SLA' carve-out no longer holds"
 
 
 # ── 3. the claims that DO hold, checked against the code ────────────────────
@@ -407,7 +418,11 @@ def test_it_links_only_documents_that_exist(dom):
     """The SLA (L9) and the Order Form (L12) are named in prose and deliberately
     NOT linked — L2b's reverse cross-link guard will say when that changes."""
     assert "Service Level Agreement" in dom.text
-    assert 'href="/sla.html"' not in dom.src, "linked an SLA page that does not exist yet"
+    # Was: the SLA must NOT be linked, because it did not exist. It does now, so
+    # the assertion flips — the prose reference became a dead end the moment the
+    # page shipped, and L2b's reverse cross-link guard says so too.
+    assert 'href="/sla.html"' in dom.src, \
+        "sla.html exists but the Trust Page still only names it in prose"
     for href in {a["href"] for a in dom.links if a["href"].startswith("/")}:
         target = href.lstrip("/").split("#")[0] or "index.html"   # "/" is the home page
         assert (HERE / target).is_file(), f"links to {href}, which does not exist"
