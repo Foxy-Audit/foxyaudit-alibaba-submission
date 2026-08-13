@@ -43,7 +43,25 @@ class LogIngest(BaseModel):
                    # Host-side enforcement labels (blocked/redacted events). These
                    # are content-blind: an allowed|blocked|redacted decision, a short
                    # blocked_reason label, and the list of policy rule ids that fired.
-                   "decision", "blocked_reason", "policy_rules"}
+                   "decision", "blocked_reason", "policy_rules",
+                   # Ruleset provenance (SDK >= 1.7.0), sent only alongside
+                   # policy_rules. Two short strings naming WHICH FROZEN RULE
+                   # DEFINITIONS produced those ids, so an auditor can establish
+                   # what `injection.ignore_previous` meant on the day it matched
+                   # rather than taking our word for it. Content-blind by
+                   # construction: the hash is over the SDK's own rule
+                   # definitions and never over anything derived from a prompt.
+                   #
+                   # THIS LINE MUST BE DEPLOYED BEFORE ANY SDK SENDS IT. The
+                   # validator rejects the whole REQUEST — `payload: List[LogIngest]`
+                   # is validated as one unit — so an upgraded SDK talking to a
+                   # backend without it loses the ENTIRE BATCH to a 422, on
+                   # exactly the guarded events that matter most. The SDK
+                   # degrades on its side as well (it retries once without these
+                   # keys and records that it did), but that is a safety net for
+                   # self-hosted and lagging deployments, not a licence to ship
+                   # the two halves in the wrong order.
+                   "ruleset_version", "ruleset_hash"}
         unknown = set(value) - allowed
         if unknown:
             raise ValueError("event_metadata contains unsupported fields")

@@ -100,6 +100,24 @@ def ingest_batch(
             stored_metadata.pop("policy_snapshot", None)
             stored_metadata.pop("policy_snapshot_hash", None)
             requested_metadata = dict(item.event_metadata or {})
+            # Ruleset provenance is excluded from the identity comparison, on
+            # BOTH sides. It describes the RULES, not the interaction, so two
+            # posts of one event_id differing only here are the same event —
+            # the same reasoning that already excludes the three keys above.
+            #
+            # Popping it is also what stops the SDK's degrade path deadlocking a
+            # row. These keys are CLIENT-supplied, so unlike the server-injected
+            # three they persist in the stored row: a row stored WITH provenance
+            # whose spool entry outlives the POST (a crash before ack) is later
+            # resent to a backend that rejects provenance — a failed deploy, a
+            # mixed fleet mid-rollout, a downgrade, which is precisely the case
+            # that path exists for. The SDK strips the keys and retries; without
+            # this pop the resend could never match the stored row, so it would
+            # 409 forever and take the other nine events in its batch down with
+            # it on every retry.
+            for _provenance_key in ("ruleset_version", "ruleset_hash"):
+                stored_metadata.pop(_provenance_key, None)
+                requested_metadata.pop(_provenance_key, None)
             if existing and any((
                 existing.prompt_hash != item.prompt_hash,
                 existing.response_hash != item.response_hash,
