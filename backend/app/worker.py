@@ -40,7 +40,8 @@ from . import openai_judge
 from . import policy_engine
 from . import user_notifications
 from . import webhook_delivery
-from .anchor import _ANCHOR_ALERT_STATE, alert_on_anchor_problems, anchor_all_due
+from .anchor import (_ANCHOR_ALERT_STATE, alert_on_anchor_problems, anchor_admin,
+                     anchor_all_due)
 from .config import get_settings
 from .db import SessionLocal
 from .models import AuditEvent, OrgPolicy
@@ -359,6 +360,13 @@ def _anchor_loop(stopping: dict, s) -> None:
             n = anchor_all_due(db, s)
             if n:
                 log.info("anchored %s org(s)", n)
+            # A1: the STAFF chain rides the same thread. It is platform-wide,
+            # so one call, not a sweep — and it is here rather than on the
+            # staff-action write path, which is already platform-serialised.
+            staff_anchor = anchor_admin(db, s)
+            if staff_anchor is not None:
+                log.info("anchored staff chain @ seq %s (%s)",
+                         staff_anchor.last_seq, staff_anchor.status)
             # 7C: page someone if anchors are failing or the chain went stale.
             alert_on_anchor_problems(db, s, _ANCHOR_ALERT_STATE)
         except Exception as exc:               # noqa: BLE001 — a bad sweep must not kill the thread

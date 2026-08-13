@@ -119,34 +119,53 @@ def test_the_page_claims_no_more_than_the_staff_chain_can_prove(dom):
     assert OVERCLAIM.search("an immutable staff audit trail"), \
         "the shared OVERCLAIM pattern no longer matches the original v1.7 wording"
 
+    # ⚠ RE-AIMED IN A1 — AND THE EARLY RETURN IS GONE.
+    #
+    # This used to `return` once anchoring shipped, which would have left the
+    # page's own wording unasserted from that commit onward: the guard would
+    # still be green and checking nothing. A1 is the commit that flips the
+    # detector, so the vacuous branch would have arrived with it. Instead the
+    # positive assertion moves WITH the anchoring state — each branch requires
+    # the strongest wording that is true in it.
     if _staff_chain_is_anchored():
-        # Anchoring shipped. The strong word is permitted — not required — and
-        # the weaker wording below is no longer mandatory.
-        return
-
-    # The honest wording must actually be there.
-    assert "whose sequence is verifiable" in dom.text, \
-        "the staff audit trail sentence lost the wording that replaced 'immutable'"
-    assert "edited, removed from the middle, or re-ordered breaks the chain" in dom.text, \
-        "the page no longer says WHAT the chain actually detects"
+        assert "tamper-evident" in dom.text, \
+            "the staff chain is anchored but §5 still understates it"
+        assert "removed from the end" in dom.text, \
+            "§5 does not mention the #143 upgrade anchoring bought"
+        assert "before the chain existed are not covered" in dom.text, \
+            "§5 claims more than the anchor covers — the pre-0066 rows are outside it"
+    else:
+        assert "whose sequence is verifiable" in dom.text, \
+            "the staff audit trail sentence lost the wording that replaced 'immutable'"
+        assert "edited, removed from the middle, or re-ordered breaks the chain" in dom.text, \
+            "the page no longer says WHAT the chain actually detects"
 
 
 def test_the_control_the_guard_depends_on(dom):
-    """If this is wrong, the test above is meaningless: it would silently permit
-    the strong word by wrongly believing anchoring exists.
+    """⚠ RE-AIMED IN A1. This pinned that anchoring did NOT exist, so that a
+    green ban elsewhere was a real assertion rather than an accidental early
+    exit. A1 shipped the anchoring, so it now pins the opposite — and the
+    important part is that the ban on the strong word held ANYWAY, because A1
+    also removed the early exit it was guarding against.
 
-    Pins that the two signals are both FALSE right now, for the reasons stated —
-    so a green run above is a real assertion and not an accidental early exit."""
+    §5's wording may now be upgraded to the project's phrase; §4's split between
+    the two chains still stands, because the staff chain's pre-0066 rows are
+    outside any anchor."""
     anchor = _backend("anchor.py")
     chain = _backend("admin_chain.py")
-    assert "admin" not in anchor.lower(),         "anchor.py now mentions the admin/staff side — has staff anchoring landed?"
-    assert 'never "tamper-evident"' in chain,         "admin_chain.py dropped its 'until it exists' rule — has anchoring landed?"
-    assert not _staff_chain_is_anchored(), "the detector believes anchoring exists"
-    assert "A wholesale delete is self-healing." in chain, "#144 no longer applies"
-    assert "REMOVING ENTRIES FROM THE END leaves nothing behind" in chain, "#143 no longer applies"
-    # the customer ledger DOES have the witness, which is why §4 scopes the
-    # strong statement to it
+    assert re.search(r"\bAdminAction\b|admin_actions", anchor), \
+        "anchor.py no longer names the staff model — was A1 reverted?"
+    assert 'never "tamper-evident"' not in chain, \
+        "admin_chain.py carries its 'until it exists' rule again — was A1 reverted?"
+    assert _staff_chain_is_anchored(), "the detector no longer sees A1's anchoring"
+    # Both register entries are still DESCRIBED — anchoring ANSWERS them, it does
+    # not delete the statement of what the chain alone cannot do.
+    assert "A wholesale delete is self-healing." in chain, "#144's statement is gone"
+    assert "REMOVING ENTRIES FROM THE END leaves nothing behind" in chain, "#143's statement is gone"
+    assert "verify_admin_anchor" in chain, "the anchor check A1 added is gone"
+    # the customer ledger has its witness too — §4 still separates the two
     assert "ChainAnchor" in anchor and "AuditLog" in anchor
+    assert "AdminChainAnchor" in anchor, "the staff receipt table is not written"
 
 
 def test_section_4_scopes_the_strong_claim_to_the_ledger_that_earns_it(dom):
@@ -158,8 +177,13 @@ def test_section_4_scopes_the_strong_claim_to_the_ledger_that_earns_it(dom):
     assert "read-only within our own administrative tools — there is no edit path" in t
     assert "Where anchoring is enabled, the customer audit ledger goes further" in t
     assert "detectable by you, independently, rather than merely prohibited by our policy" in t
-    assert "The staff-action log is hash-chained but not yet anchored" in t
-    assert "verifiable without an external witness" in t
+    # ⚠ RE-AIMED IN A1 — see the Obsidian vault note "Owner-authorised
+    # divergences from the policy documents.md".
+    assert "The staff-action log is hash-chained and anchored the same way" in t
+    assert "neither is immune to change" in t, \
+        "§4 stopped stating what anchoring does not buy"
+    assert "rather than only by us" in t, \
+        "§4 stopped saying WHO can now detect a removed staff entry"
 
 
 # ── 2. THE OWNER-AUTHORISED DIVERGENCE ───────────────────────────────────────

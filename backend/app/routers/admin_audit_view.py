@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..admin_chain import admin_chain_coverage, verify_admin_chain
+from ..admin_chain import admin_chain_coverage, verify_admin_anchor, verify_admin_chain
 from ..auth import require_platform_role
 from ..db import get_db
 from ..models import AdminAction, Organization, StaffUser
@@ -38,12 +38,19 @@ def audit_chain(
     can never be painted as a clean one.
 
     Reports what it establishes and nothing more: the sequence of chained
-    entries is unbroken, or it breaks at a named entry. It is NOT the customer
-    chain's claim — nothing here is anchored outside Foxy's own database, so
-    entries removed from the END of the chain leave no trace. app/admin_chain.py
-    carries the full statement of the limits; the console copy is written to it.
+    entries is unbroken, or it breaks at a named entry.
+
+    ⚠ A1 ADDED THE SECOND HALF. The recompute alone returns ok=True on a chain
+    whose tail was removed, because seq 1..N-k genuinely is consistent (#143).
+    ``anchor`` is the check against the head published outside this database,
+    and it is reported SEPARATELY rather than folded in — an internally
+    consistent chain and a witnessed one are different claims, and merging them
+    would let the weaker one wear the stronger one's verdict.
+
+    app/admin_chain.py carries the full statement of what each establishes.
     """
-    return verify_admin_chain(db) if verify else admin_chain_coverage(db)
+    body = verify_admin_chain(db) if verify else admin_chain_coverage(db)
+    return {**body, "anchor": verify_admin_anchor(db)}
 
 
 def _parse_dt(value: str | None):

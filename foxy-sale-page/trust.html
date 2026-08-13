@@ -121,7 +121,7 @@
     <h2 id="s4">4. Audit integrity</h2>
     <ul>
       <li>Every logged interaction is chained into a tamper-evident hash ledger.</li>
-      <li>The audit ledger, staff-action log, and blockchain-anchor receipts are read-only within our own administrative tools — there is no edit path. Where anchoring is enabled, the customer audit ledger goes further: an undisclosed edit is detectable by <em>you</em>, independently, rather than merely prohibited by our policy. The staff-action log is hash-chained but not yet anchored, so its sequence is verifiable without an external witness.</li>
+      <li>The audit ledger, staff-action log, and blockchain-anchor receipts are read-only within our own administrative tools — there is no edit path. Where anchoring is enabled, the customer audit ledger goes further: an undisclosed edit is detectable by <em>you</em>, independently, rather than merely prohibited by our policy. The staff-action log is hash-chained and anchored the same way, so a removed entry is detectable by you rather than only by us. Both are tamper-evident and independently verifiable; neither is immune to change, because an anchor proves what a record looked like rather than preventing an edit.</li>
       <li><strong>Optional public blockchain anchoring:</strong> a periodic root-hash fingerprint (never content) can be published to a public, independent chain — currently Sepolia by default, mainnet-configurable — so you or an independent auditor can verify ledger integrity without relying on our word alone.</li>
     </ul>
 
@@ -129,7 +129,7 @@
     <ul>
       <li>Optional multi-factor authentication (emailed one-time passcode, single-use, 5-minute validity).</li>
       <li>Optional enterprise SSO via OpenID Connect, scoped to a verified email domain with just-in-time provisioning.</li>
-      <li>Internal admin access uses a separate signing secret from the customer dashboard, supports IP allow-listing, requires step-up authentication for sensitive actions, and is recorded in a staff audit trail whose sequence is verifiable: an entry that is edited, removed from the middle, or re-ordered breaks the chain.</li>
+      <li>Internal admin access uses a separate signing secret from the customer dashboard, supports IP allow-listing, requires step-up authentication for sensitive actions, and is recorded in a staff audit trail that is tamper-evident, independently verifiable: an entry that is edited, removed from the middle, or re-ordered breaks the chain, and because the chain's head is published to a public blockchain, so does an entry removed from the end. Entries recorded before the chain existed are not covered by it.</li>
     </ul>
 
     <h2 id="s6">6. Sub-processors</h2>

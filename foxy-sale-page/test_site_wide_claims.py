@@ -25,6 +25,7 @@ Run:  pytest foxy-sale-page -q
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -36,6 +37,33 @@ ROOT = HERE.parent
 
 def _backend(rel: str) -> str:
     return (ROOT / "backend" / "app" / rel).read_text(encoding="utf-8")
+
+
+def _staff_sentence(text: str) -> str:
+    """The sentence describing the STAFF audit trail, and nothing else.
+
+    ⚠ FOUND BY MUTATION. privacy.html says "tamper-evident audit ledger" twice
+    about the CUSTOMER ledger, so a page-level `"tamper-evident" in text` check
+    passed even after the staff sentence was reverted to its pre-anchor wording.
+    The two chains are different claims and must be measured separately.
+    """
+    i = text.find("staff audit trail")
+    if i < 0:
+        i = text.find("staff-action log")
+    assert i >= 0, "no staff-trail sentence on this page at all"
+    start = max(text.rfind(". ", 0, i) + 1, 0)
+    # ⚠ TWO SENTENCES, DELIBERATELY. The claim is one sentence and its LIMIT is
+    # the next one ("Entries recorded before the chain existed are not covered by
+    # it") — separated on purpose, because a limit buried in the same sentence as
+    # the claim reads as a qualifier rather than a boundary. Scoping to one
+    # sentence made the limit unassertable; scoping to the whole page let a
+    # neighbouring customer-ledger claim satisfy it. Two sentences is the span
+    # the claim actually occupies.
+    end = text.find(". ", i)
+    if end > 0:
+        end2 = text.find(". ", end + 2)
+        end = end2 if end2 > 0 else len(text)
+    return text[start:end if end > 0 else len(text)]
 
 
 def _page_text(path: pathlib.Path) -> str:
@@ -97,21 +125,38 @@ OVERCLAIM = re.compile(
 
 
 @pytest.mark.parametrize("page", sorted(p.name for p in HERE.glob("*.html")))
-def test_no_page_claims_more_than_the_staff_chain_can_prove(page):
-    """⚠ SITE-WIDE, AND IT FLIPS WITHOUT BEING EDITED.
+def test_no_page_claims_more_than_either_chain_can_prove(page):
+    """⚠ SITE-WIDE, AND — A1 — NO LONGER SWITCHED OFF BY ANCHORING.
 
-    While the staff chain is unanchored, no page may call any audit trail
-    immutable, tamper-proof or unalterable. When ``staff_chain_is_anchored()``
-    goes true, the strong word is permitted everywhere — nobody has to remember
-    to come back and delete a line.
+    THE DEFECT THIS REPLACES. L10 wrote this as:
 
-    ⚠ WORTH READING BEFORE THE UPGRADE: anchor.py's own framing caution says an
-    anchor makes tampering "externally detectable after the next anchor, not
-    impossible", and that the project's phrase is "tamper-evident, independently
-    verifiable". "Immutable" is stronger than that even with anchoring in place.
-    That is the owner's call, not this test's."""
-    if staff_chain_is_anchored():
-        return
+        if staff_chain_is_anchored():
+            return
+
+    …so the ban lifted entirely the moment anchoring shipped. That was written
+    on the owner's original decision ("anchor it, then say immutable"), and the
+    premise did not survive contact with the code. anchor.py states it plainly:
+    an anchor makes tampering "externally detectable after the next anchor, NOT
+    IMPOSSIBLE. We say 'tamper-evident, independently verifiable'." The word
+    "immutable" appears nowhere in backend/app/ or verifier/ — not about the
+    staff chain and NOT ABOUT THE FULLY-ANCHORED CUSTOMER LEDGER EITHER.
+
+    A1 ships the anchoring, which means A1 is the commit that would have tripped
+    the early exit. So the ban is now UNCONDITIONAL: "immutable", "tamper-proof"
+    and "unalterable" are forbidden on every page whatever the anchoring state,
+    because there is no anchoring state in which they are true. Three reasons,
+    all still live after A1:
+
+      · the window between anchors is real — a change made and reverted between
+        two anchors leaves no trace;
+      · rows predating migration 0066 carry no hash and are not covered at all;
+      · an anchor proves what a chain looked like, not that it cannot change.
+
+    WHAT THE DETECTOR STILL DOES. ``staff_chain_is_anchored()`` is kept, and
+    ``test_the_project_phrase_is_unlocked_by_anchoring`` uses it: the real
+    upgrade anchoring earns is from "sequence unbroken" to the project's own
+    phrase. That transition still needs no manual edit. Only the strong word
+    stopped being on the other end of it."""
     found = sorted(set(m.group(0).lower() for m in OVERCLAIM.finditer(_page_text(HERE / page))))
     if page in KNOWN_EXCEPTIONS:
         # ⚠ NOT pytest.skip. A skip is a pass (#195), and this is the one page
@@ -124,9 +169,11 @@ def test_no_page_claims_more_than_the_staff_chain_can_prove(page):
             f"are now {found} — the exemption does not cover this")
         return
     assert not found, (
-        f"{page} claims an audit trail is {found} while the staff chain is "
-        'UNANCHORED. admin_chain.py:314 returns "sequence unbroken"; that is the '
-        "strongest thing that is true today.")
+        f"{page} claims an audit trail is {found}. That is stronger than anything "
+        "this product can prove, ANCHORED OR NOT: anchor.py says an anchor makes "
+        "tampering 'externally detectable after the next anchor, not impossible', "
+        "and the word appears nowhere in backend/app/ or verifier/. The project's "
+        "phrase is 'tamper-evident, independently verifiable'.")
 
 
 def test_the_known_exceptions_are_exactly_these_and_still_say_what_we_think():
@@ -153,12 +200,35 @@ def test_the_three_pages_that_describe_the_staff_trail_agree():
     the other two still said "immutable", and the DPA cited privacy.html as its
     authority for the word. Pinned together so a correction to one is a
     correction to all three."""
-    WORDING = "whose sequence is verifiable"
-    DETAIL = "edited, removed from the middle, or re-ordered breaks the chain"
+    # ⚠ RE-AIMED IN A1. The three pages said "whose sequence is verifiable",
+    # which was the strongest thing true before the staff chain had a witness.
+    # It now has one, so all three move together to the project's own phrase —
+    # and the tie is the point: L10 found this claim on three pages with only
+    # one corrected.
+    WORDING = "tamper-evident"
+    # ⚠ SUBSTANCE, NOT ONE PAGE'S SENTENCE SHAPE. dpa.html §7 folds the four
+    # failure modes into a single list ("edited, removed from the middle,
+    # re-ordered, or removed from the end"), where trust and privacy use two
+    # clauses. Pinning one page's punctuation would force the other two to copy
+    # it, which is not what "these three must agree" means.
+    DETAIL = "edited, removed from the middle"
+    ENDS = "removed from the end"          # the #143 upgrade, on every page
+    LIMIT = "before the chain existed"     # what the anchor does NOT cover
     for page in ("privacy.html", "trust.html", "dpa.html"):
         text = _page_text(HERE / page)
-        assert WORDING in text, f"{page} no longer describes the staff trail honestly"
-        assert DETAIL in text, f"{page} no longer says WHAT the chain actually detects"
+        staff = _staff_sentence(text)
+        assert WORDING in staff, (
+            f"{page} no longer uses the project's phrase for the staff trail. "
+            "A1 anchored that chain, which earns 'tamper-evident, independently "
+            "verifiable' and nothing stronger — see the Obsidian vault note "
+            "'Owner-authorised divergences from the policy documents.md'.")
+        assert DETAIL in staff, f"{page} no longer says WHAT the chain detects"
+        assert ENDS in staff, (
+            f"{page} lost the #143 upgrade — an entry removed from the END is now "
+            "detectable, and that is the whole thing anchoring bought")
+        assert LIMIT in staff, (
+            f"{page} stopped stating that pre-chain entries are NOT covered; the "
+            "claim would then reach further than the anchor does")
 
 
 def test_no_legal_page_is_missing_from_the_shared_registries():
@@ -203,14 +273,85 @@ def test_the_control_the_site_wide_guard_depends_on():
     anchoring exists."""
     anchor = _backend("anchor.py")
     chain = _backend("admin_chain.py")
-    assert "admin" not in anchor.lower(), \
-        "anchor.py now mentions the admin/staff side — has staff anchoring landed?"
-    assert 'never "tamper-evident"' in chain, \
-        "admin_chain.py dropped its 'until it exists' rule — has anchoring landed?"
-    assert not staff_chain_is_anchored(), "the detector believes anchoring exists"
-    assert "A wholesale delete is self-healing." in chain, "#144 no longer applies"
-    assert "REMOVING ENTRIES FROM THE END leaves nothing behind" in chain, "#143 no longer applies"
-    # the word appears nowhere in the code it describes — the page invented it
+    # ⚠ RE-AIMED IN A1 — THIS CONTROL PINNED THE STATE A1 CHANGED.
+    # It asserted anchoring did NOT exist, so that a green ban above was a real
+    # assertion rather than an accidental early exit. A1 shipped the anchoring,
+    # so it now pins the opposite: both detector signals are TRUE, and the ban
+    # above holds anyway. That is the whole point of the re-aim — the ban no
+    # longer depends on this being false.
+    assert re.search(r"\bAdminAction\b|admin_actions", anchor), \
+        "anchor.py no longer names the staff model — was A1 reverted?"
+    assert 'never "tamper-evident"' not in chain, \
+        "admin_chain.py carries its 'until it exists' rule again — was A1 reverted?"
+    assert staff_chain_is_anchored(), "the detector no longer sees A1's anchoring"
+    # …and both register entries are still DESCRIBED. Anchoring ANSWERS them;
+    # it does not delete the statement of what the chain alone cannot do.
+    assert "A wholesale delete is self-healing." in chain, "#144's statement is gone"
+    assert "REMOVING ENTRIES FROM THE END leaves nothing behind" in chain, "#143's statement is gone"
+    assert "verify_admin_anchor" in chain, "the anchor check A1 added is gone"
+    # The word appears nowhere in the code these pages describe — the page
+    # invented it. Still true after A1, which is the point of the whole phase.
+    #
+    # ⚠ RUNTIME STRINGS, NOT PROSE. A plain substring check failed here the
+    # moment A1's docstrings started EXPLAINING the ban ("does not make anything
+    # immutable"). A guard satisfied by the sentence stating its own rule is the
+    # oldest failure in this stream — it took L0, L5, and the backend twin of
+    # this test. So the modules are parsed and only NON-DOCSTRING string
+    # constants are examined: those are what can reach a response, a log, or the
+    # console. Prose about the rule is exempt; a claim is not.
     for rel in ("anchor.py", "admin_chain.py", "admin_audit.py"):
-        assert "immutable" not in _backend(rel).lower(), \
-            f"{rel} now uses 'immutable' — check what changed"
+        tree = ast.parse(_backend(rel))
+        docs = {id(n.body[0].value) for n in ast.walk(tree)
+                if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                  ast.AsyncFunctionDef))
+                and getattr(n, "body", None)
+                and ast.get_docstring(n, clean=False) is not None}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in docs):
+                assert "immutable" not in node.value.lower(), (
+                    f"{rel}:{node.lineno} has a RUNTIME string containing "
+                    f"'immutable': {node.value[:70]!r} — the project's phrase is "
+                    "'tamper-evident, independently verifiable'")
+
+
+def test_the_project_phrase_is_unlocked_by_anchoring_and_the_strong_word_is_not():
+    """⚠ THE FLIP THAT SURVIVED, AND THE ONE THAT DID NOT — BOTH ASSERTED.
+
+    The detector is still worth having: anchoring genuinely upgrades what the
+    staff trail may claim, from "sequence unbroken" to the project's own phrase,
+    and nobody should have to remember to edit a test for that. What changed in
+    A1 is the other end of the flip.
+
+      anchored  -> "tamper-evident, independently verifiable" is PERMITTED
+      anchored  -> "immutable" / "tamper-proof" is STILL FORBIDDEN
+
+    Both halves are asserted against the live code, so this test states the
+    policy rather than restating the implementation."""
+    anchored = staff_chain_is_anchored()
+    chain = _backend("admin_chain.py")
+
+    # ⚠ WHITESPACE-NORMALISED. The phrase wraps across a line in the module
+    # docstring, and a literal substring search cannot see a phrase that wraps.
+    flat = " ".join(chain.split())
+    if anchored:
+        # the upgrade is real and the module says so
+        assert "tamper-evident, independently verifiable" in flat, (
+            "anchoring shipped but admin_chain.py never states the phrase it "
+            "unlocks — the surfaces have nothing to be written against")
+        pages = {p.name for p in HERE.glob("*.html")
+                 if "tamper-evident, independently verifiable" in _page_text(p)}
+        assert pages, ("anchoring shipped and no page uses the phrase it earns; "
+                       "the upgrade exists in the code and nowhere a reader can see")
+    else:
+        assert 'never "tamper-evident"' in flat, \
+            "unanchored, admin_chain.py must still hold its weaker rule"
+
+    # …and the strong word stays banned either way. Measured, not assumed.
+    for page in sorted(HERE.glob("*.html")):
+        if page.name in KNOWN_EXCEPTIONS:
+            continue
+        hits = OVERCLAIM.findall(_page_text(page))
+        assert not hits, (
+            f"{page.name} overclaims ({hits}) with anchoring={anchored}. There is "
+            "no anchoring state that permits it.")

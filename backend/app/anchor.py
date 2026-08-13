@@ -13,8 +13,30 @@ Provider is pluggable (config ``anchor_provider``):
   * ``evm``           — web3.py -> the AnchorRegistry contract on Sepolia (or any
                         EVM). Configure rpc/key/contract; see contracts/.
 
+TWO CHAINS, ONE PROVIDER (A1)
+-----------------------------
+This module anchors BOTH hash chains:
+
+  * the CUSTOMER ledger, per org — ``anchor_org`` over ``audit_logs``, receipts
+    in ``chain_anchors``;
+  * the STAFF audit trail, platform-wide — ``anchor_admin`` over
+    ``admin_actions``, receipts in ``admin_chain_anchors``.
+
+They share this file rather than living in a sibling module because the part
+that costs money and can leak secrets is the PROVIDER layer — the funded wallet
+floor check, the EIP-1559 pricing, and ``_redact``, which keeps an RPC URL's
+embedded API key out of a persisted receipt. Two copies of that is two places to
+get redaction wrong. The chain-specific halves are small and clearly separated
+below; the expensive half is written once.
+
 Framing caution: an anchor makes tampering *externally detectable after the next
 anchor*, not impossible. We say "tamper-evident, independently verifiable".
+
+⚠ THAT PHRASE IS THE CEILING, FOR BOTH CHAINS. Anchoring closes #143 (a
+truncated tail leaves no trace) and #144 (a wholesale delete self-heals). It
+does not make anything immutable, and the word appears nowhere in this codebase
+— not about the staff chain and not about the fully-anchored customer ledger.
+foxy-sale-page/test_site_wide_claims.py enforces that on every published page.
 """
 
 from __future__ import annotations
@@ -32,7 +54,7 @@ from sqlalchemy.orm import Session
 from . import email, email_templates as et
 from .chain import GENESIS_HASH, compute_chain_hash
 from .config import Settings, get_settings
-from .models import AuditLog, ChainAnchor, Organization
+from .models import AdminAction, AdminChainAnchor, AuditLog, ChainAnchor, Organization
 
 log = logging.getLogger("foxy.anchor")
 
@@ -395,3 +417,128 @@ def anchor_all_due(db: Session, settings: Settings | None = None) -> int:
             # never reach our logs.
             log.warning("anchor sweep skipped org %s (%s)", oid, type(exc).__name__)
     return anchored
+
+
+# ═════════════════════════ the STAFF chain (A1) ══════════════════════════════
+#
+# Everything above is per-org and RLS-scoped. Everything below is platform-wide:
+# admin_actions has no org_id, and neither does its receipt table. The provider
+# layer in the middle is shared, which is the reason these live together.
+
+
+def admin_head(db: Session) -> tuple[str | None, int, int, int]:
+    """(head_hash, last_seq, covers_from_seq, unchained_before) for the staff chain.
+
+    ``seq IS NOT NULL`` excludes the rows that predate migration 0066 — they are
+    real audit rows that are simply older than the mechanism, and they are
+    COUNTED rather than ignored so the receipt can state what it does not cover.
+    """
+    from sqlalchemy import func as _f
+    row = db.execute(
+        select(AdminAction.chain_hash, AdminAction.seq)
+        .where(AdminAction.seq.isnot(None))
+        .order_by(AdminAction.seq.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None, 0, 0, 0
+    first_seq = db.execute(
+        select(_f.min(AdminAction.seq)).where(AdminAction.seq.isnot(None))
+    ).scalar() or 1
+    unchained = db.execute(
+        select(_f.count()).select_from(AdminAction).where(AdminAction.seq.is_(None))
+    ).scalar() or 0
+    return row[0], row[1], int(first_seq), int(unchained)
+
+
+def latest_admin_anchor(db: Session) -> AdminChainAnchor | None:
+    """The most recent staff-chain anchor of any status."""
+    return db.execute(
+        select(AdminChainAnchor)
+        .order_by(AdminChainAnchor.anchored_at.desc(), AdminChainAnchor.id.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def latest_confirmed_admin_anchor(db: Session) -> AdminChainAnchor | None:
+    """The most recent CONFIRMED one — the only kind that is a witness.
+
+    A 'failed' receipt is a record that we tried, not a record that anything was
+    published. Verification must never treat one as evidence.
+    """
+    return db.execute(
+        select(AdminChainAnchor)
+        .where(AdminChainAnchor.status == "confirmed")
+        .order_by(AdminChainAnchor.anchored_at.desc(), AdminChainAnchor.id.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def anchor_admin(db: Session, settings: Settings | None = None,
+                 force: bool = False) -> AdminChainAnchor | None:
+    """Anchor the staff chain's current head. Mirrors ``anchor_org``.
+
+    Returns None when there is nothing chained, or (unless force) when the head
+    has not advanced since the last non-failed anchor. A provider failure is
+    PERSISTED as status='failed' with a redacted detail — a visible receipt,
+    never a silent drop — exactly as the customer path does.
+
+    ⚠ NOT ON THE STAFF-ACTION WRITE PATH. admin_chain.py records that the hot
+    path is already +3.99ms and platform-serialised on an advisory lock; adding
+    an RPC round trip to it would be indefensible. This runs in the worker's
+    anchor thread, off the grading loop, like anchor_all_due.
+    """
+    settings = settings or get_settings()
+    head_hash, last_seq, covers_from, unchained = admin_head(db)
+    if head_hash is None:
+        return None
+
+    if not force:
+        prev = latest_admin_anchor(db)
+        if prev is not None and prev.status != "failed" and prev.last_seq == last_seq:
+            return None
+
+    try:
+        receipt = run_validated_admin_provider(db, head_hash, last_seq, settings)
+    except Exception as exc:                        # noqa: BLE001 — record the failure
+        safe = _redact(str(exc), settings)
+        log.warning("staff-chain anchor failed: %s", safe)
+        receipt = AnchorReceipt(
+            chain=settings.anchor_evm_chain if settings.anchor_provider == "evm"
+            else settings.anchor_provider,
+            status="failed", detail=f"{type(exc).__name__}: {safe}"[:500])
+
+    row = AdminChainAnchor(
+        root_hash=head_hash, last_seq=last_seq, covers_from_seq=covers_from,
+        unchained_before=unchained, chain=receipt.chain, tx_hash=receipt.tx_hash,
+        block_number=receipt.block_number, status=receipt.status, detail=receipt.detail,
+        confirmed_at=datetime.now(timezone.utc) if receipt.status == "confirmed" else None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    log.info("anchored staff chain @ seq %s -> %s tx=%s status=%s",
+             last_seq, receipt.chain, receipt.tx_hash, receipt.status)
+    return row
+
+
+def run_validated_admin_provider(db: Session, root_hash: str, last_seq: int,
+                                 settings: Settings) -> AnchorReceipt:
+    """Refuse to publish a staff-chain root that does not recompute.
+
+    Publishing a root we cannot re-derive would put a number on a public chain
+    that proves nothing — worse than not anchoring, because the receipt looks
+    like evidence. Same posture as run_validated_provider.
+    """
+    from .admin_chain import verify_admin_chain
+    result = verify_admin_chain(db)
+    if result.get("ok") is not True or result.get("head_hash") != root_hash:
+        detail = result.get("detail") or "chain not verified"
+        if result.get("ok") is True:
+            detail = "stored head differs from recomputed head"
+        log.warning("staff-chain anchor refused: %s", detail)
+        return AnchorReceipt(
+            chain=settings.anchor_evm_chain if settings.anchor_provider == "evm"
+            else settings.anchor_provider,
+            status="failed", detail=f"chain integrity check failed: {detail}"[:500])
+    return run_provider(root_hash, settings)

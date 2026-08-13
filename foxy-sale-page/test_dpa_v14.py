@@ -163,8 +163,12 @@ def test_section_7_carries_the_L8_wording_not_the_documents(dom):
     §11, the section cited here. The site-wide ban lives in
     test_site_wide_claims.py; this pins the positive replacement on this page."""
     t = dom.text
-    assert "staff audit trail whose sequence is verifiable" in t
-    assert "edited, removed from the middle, or re-ordered breaks the chain" in t
+    # ⚠ RE-AIMED IN A1: the staff chain is anchored, so §7 states the project's
+    # phrase. Divergence recorded in the Obsidian vault note "Owner-authorised
+    # divergences from the policy documents.md" — the .docx says "immutable".
+    assert "staff audit trail that is tamper-evident and independently verifiable" in t
+    assert "removed from the end breaks the chain" in t
+    assert "not covered by it" in t, "§7 stopped stating the anchor's limit"
     assert "step-up authentication" in t, "the access control itself was dropped"
     assert "bound by confidentiality obligations" in t
 
@@ -175,8 +179,13 @@ def test_section_6_says_what_is_true_of_each_of_the_three_trails(dom):
     t = dom.text
     assert "read-only within Foxy Audit's administrative tools — there is no edit path" in t
     assert "Where anchoring is enabled, the customer audit ledger goes further" in t
-    assert "hash-chained but not yet anchored" in t, \
-        "§6 stopped distinguishing the staff log from the anchored customer ledger"
+    # ⚠ RE-AIMED IN A1. §6 split the three trails because the staff log had no
+    # witness. It has one now, so the split states a DIFFERENT true thing: both
+    # are anchored, and neither is immune to change.
+    assert "hash-chained and anchored the same way" in t, \
+        "§6 no longer says the staff log is anchored"
+    assert "rather than preventing an edit" in t, \
+        "§6 stopped saying what an anchor does NOT do"
     for measure in ("TLS in transit", "salted/peppered hashing",
                     "Fernet-encrypted", "row-level security",
                     "security-hardening HTTP headers"):

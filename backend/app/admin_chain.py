@@ -24,12 +24,30 @@ changes data without knowing the scheme. Two further limits, both real:
     means anything. They stay exactly as they are — real audit rows that predate
     the mechanism. See ``verify_admin_chain``'s ``unchained`` count.
 
-The customer-facing chain answers the first of those with ANCHORING (anchor.py
-publishes each org's head to a public chain). Doing the same here is a separate
-change with its own operational cost — a funded key, gas, and a failure mode
-when the chain is unreachable. Until it exists, every surface that reports this
-chain must say "sequence unbroken", never "tamper-evident". The UI copy in
-foxy-adminpage is written to that rule and guarded.
+ANCHORING (A1) — THE FIRST LIMIT NOW HAS AN ANSWER
+--------------------------------------------------
+``anchor.py`` publishes this chain's head to a public chain and records the
+receipt in ``admin_chain_anchors``, exactly as it already did for the customer
+ledger. That is the outside witness the first bullet asks for: once a head is
+published, seq 1..N-k no longer satisfies a receipt that says last_seq=N, and a
+wholesale delete cannot restart at seq 1 unnoticed (#143, #144).
+``verify_admin_anchor`` below is the check, and it is deliberately SEPARATE from
+``verify_admin_chain``: the internal recompute answers "is this chain
+self-consistent", the anchor answers "is it the same chain we published", and
+conflating them would let a truncated-but-consistent chain read as clean.
+
+⚠ WHAT THE SURFACES MAY NOW SAY, AND WHAT THEY STILL MAY NOT.
+The old rule here was "say 'sequence unbroken', never 'tamper-evident', UNTIL
+[anchoring] EXISTS". It exists, so a surface reporting a chain with a CONFIRMED
+anchor may now use the project's own phrase — "tamper-evident, independently
+verifiable" — which is the same thing said about the customer ledger.
+
+It may NOT say "immutable" or "tamper-proof". anchor.py:16: an anchor makes
+tampering "externally detectable after the next anchor, not impossible". The
+window between anchors is real, the pre-0066 rows are not covered at all, and
+neither word appears anywhere in this codebase about either chain.
+Unanchored, or anchored-but-unconfirmed, the old wording still applies:
+"sequence unbroken" and nothing more.
 
 CANONICAL FORM
 --------------
@@ -314,3 +332,112 @@ def verify_admin_chain(db: Session) -> dict:
     return {**base, "ok": True, "detail": "sequence unbroken",
             "head_seq": head_seq, "head_hash": head_hash,
             "started_at": started_at.isoformat() if started_at else None}
+
+
+def verify_admin_anchor(db: Session) -> dict:
+    """Check the staff chain against the last CONFIRMED anchor — the #143 check.
+
+    ``verify_admin_chain`` answers "is this chain self-consistent". It returns
+    ok=True on a truncated tail, because seq 1..N-k genuinely is consistent.
+    This answers the different question: "is it still the chain we published".
+
+    Verdicts, and the rule they follow — ok=None is ABSENCE, never success, the
+    same posture verify_admin_chain already takes:
+
+      ok=None   no confirmed anchor exists, so nothing has been witnessed. A
+                'failed' receipt is a record that we tried, not evidence.
+      ok=False  kind='truncated'      the head is now BEHIND the anchored seq —
+                                      entries were removed from the end, or the
+                                      whole chain was deleted and restarted.
+                kind='modified'       the anchored range no longer recomputes to
+                                      the anchored root.
+                kind='root_mismatch'  the recompute is clean but disagrees with
+                                      the published root (a re-genesis, or a
+                                      receipt from a different chain).
+      ok=True   the anchored root recomputes and the head is at or beyond it.
+
+    ⚠ HEAD BEYOND THE ANCHOR IS NORMAL. Actions recorded since the last anchor
+    are not yet witnessed — that is the "after the next anchor" in anchor.py's
+    framing caution, not a fault — so ``unwitnessed`` reports how many, rather
+    than the check failing on ordinary operation.
+    """
+    from .anchor import latest_admin_anchor, latest_confirmed_admin_anchor
+
+    cov = admin_chain_coverage(db)
+    anchor = latest_confirmed_admin_anchor(db)
+    coverage_note = (
+        f"the anchor covers entries {{}}..{{}}; {cov['unchained']} earlier "
+        "entries predate the chain and do not carry a hash")
+    base = {
+        "checked": True, "ok": None, "kind": None,
+        "anchored_seq": None, "anchored_root": None, "recomputed_root": None,
+        "head_seq": cov["head_seq"], "unchained_before": cov["unchained"],
+        "unwitnessed": None, "chain": None, "tx_hash": None, "anchored_at": None,
+        "coverage": coverage_note.format("-", "-"),
+    }
+    if anchor is None:
+        last = latest_admin_anchor(db)
+        detail = ("no anchor has been published for this chain yet"
+                  if last is None else
+                  f"no CONFIRMED anchor — the most recent attempt is '{last.status}'")
+        return {**base, "detail": detail}
+
+    base = {**base,
+            "anchored_seq": anchor.last_seq, "anchored_root": anchor.root_hash,
+            "chain": anchor.chain, "tx_hash": anchor.tx_hash,
+            "anchored_at": anchor.anchored_at.isoformat() if anchor.anchored_at else None,
+            "unchained_before": anchor.unchained_before,
+            "coverage": coverage_note.format(anchor.covers_from_seq, anchor.last_seq)}
+
+    head_seq = cov["head_seq"] or 0
+    if head_seq < anchor.last_seq:
+        return {**base, "ok": False, "kind": "truncated",
+                "detail": f"entry {anchor.last_seq} was published to {anchor.chain} but the "
+                          f"chain now ends at entry {head_seq} — entries were removed from "
+                          "the end, or the chain was deleted and restarted"}
+
+    recomputed = recompute_admin_head(db, anchor.last_seq)
+    result = {**base, "recomputed_root": recomputed,
+              "unwitnessed": head_seq - anchor.last_seq}
+    if recomputed is None:
+        return {**result, "ok": False, "kind": "modified",
+                "detail": f"the anchored range 1..{anchor.last_seq} no longer recomputes"}
+    if recomputed != anchor.root_hash:
+        internal = verify_admin_chain(db)
+        kind = "modified" if internal.get("ok") is False else "root_mismatch"
+        return {**result, "ok": False, "kind": kind,
+                "detail": f"the chain at entry {anchor.last_seq} no longer matches the root "
+                          f"published to {anchor.chain}"}
+    return {**result, "ok": True,
+            "detail": f"the chain matches the root published to {anchor.chain} at entry "
+                      f"{anchor.last_seq}; {result['unwitnessed']} later entr"
+                      f"{'y is' if result['unwitnessed'] == 1 else 'ies are'} not yet anchored"}
+
+
+def recompute_admin_head(db: Session, upto_seq: int) -> str | None:
+    """Independently re-derive the chain hash at ``upto_seq`` from genesis.
+
+    The anchor's counterpart to anchor.recompute_head. Returns None if the range
+    is not walkable — a gap, or a missing row — which the caller reports as a
+    break rather than as a clean recompute of a shorter chain.
+    """
+    rows = db.execute(
+        select(AdminAction)
+        .where(AdminAction.seq.isnot(None), AdminAction.seq <= upto_seq)
+        .order_by(AdminAction.seq.asc())
+    ).scalars().yield_per(1000)
+    prev = ADMIN_CHAIN_GENESIS
+    expected_seq = 1
+    last = None
+    for row in rows:
+        if row.seq != expected_seq:
+            return None
+        prev = compute_admin_chain_hash(
+            seq=row.seq, prev_hash=prev, staff_user_id=row.staff_user_id,
+            action=row.action, target_org_id=row.target_org_id,
+            target_type=row.target_type, target_id=row.target_id,
+            detail=row.detail, ip=row.ip, created_at=row.created_at,
+        )
+        last = prev
+        expected_seq += 1
+    return last if expected_seq - 1 == upto_seq else None

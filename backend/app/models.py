@@ -589,6 +589,45 @@ class AdminAction(Base):
     chain_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class AdminChainAnchor(Base):
+    """A public-chain anchor of the STAFF audit chain's head (A1 · #143, #144).
+
+    ``admin_actions`` is hash-chained, which catches an edited field or a removed
+    middle row. It cannot catch entries removed from the END — seq 1..N-k
+    recomputes perfectly — nor a wholesale delete, which restarts at seq 1. Both
+    need an outside witness. Each row here records that the chain head
+    (``root_hash`` at ``last_seq``) was published to a public chain, so a third
+    party holding the receipt can prove the trail existed in that state.
+
+    NOT chain_anchors: that table's org_id is NOT NULL and RLS-scoped, and this
+    chain is platform-wide. See migration 0067 for why that mattered.
+
+    ⚠ ``covers_from_seq``/``unchained_before`` are on the receipt on purpose. The
+    rows predating migration 0066 carry no hash and cannot be witnessed, so a
+    receipt states the range it covers rather than implying the whole table.
+
+    What this earns is the project's own phrase — "tamper-evident, independently
+    verifiable" — and nothing stronger. anchor.py:16 states why.
+    """
+    __tablename__ = "admin_chain_anchors"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    root_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    covers_from_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="1")
+    unchained_before: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    chain: Mapped[str] = mapped_column(String(32), nullable=False)
+    tx_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    block_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    anchored_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+
 class StaffNotification(Base):
     """A notification for a platform-staff member, generated from a REAL event (a broadcast, a
     staff action targeting them, or a system/org event) — never fabricated. Platform-only (no RLS

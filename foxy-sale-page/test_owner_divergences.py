@@ -305,3 +305,94 @@ def test_182_the_code_still_behaves_the_way_the_sentence_describes():
         "the delete path no longer soft-deletes via deleted_at"
     assert "cancel_at_period_end=True" in billing, \
         "the cancel path no longer cancels at period end"
+
+
+# ── A1 — THE STAFF CHAIN'S WORDING, AFTER ANCHORING ─────────────────────────
+#
+# ⚠ THE VAULT NOTE CONTAINS A SAME-DAY CORRECTION, AND A1 IMPLEMENTS IT.
+#
+# The owner's first decision was "anchor the staff chain, THEN say immutable".
+# MAIN then found anchor.py's own framing caution and recorded the correction in
+# the same note: an anchor makes tampering "externally detectable after the next
+# anchor, not impossible", the project's phrase is "tamper-evident, independently
+# verifiable", and the word "immutable" appears nowhere in backend/app/ or
+# verifier/ — not even about the fully-anchored customer ledger.
+#
+# So A1 ships the anchoring and the pages take the PROJECT PHRASE, not the
+# stronger word. These guards pin that outcome to the note, because the original
+# decision is the one a reader is more likely to remember.
+
+
+THREE_PAGES = ("trust.html", "privacy.html", "dpa.html")
+
+
+@pytest.mark.parametrize("page", THREE_PAGES)
+def test_a1_the_staff_trail_wording_matches_what_anchoring_actually_earns(legal_dom, page):
+    """All three describe the same mechanism, so all three move together — L10
+    found this claim on three pages with only one corrected."""
+    from test_site_wide_claims import _staff_sentence
+    # ⚠ THE STAFF SENTENCE, NOT THE PAGE. privacy.html says "tamper-evident audit
+    # ledger" twice about the CUSTOMER ledger, and a page-level check was
+    # satisfied by those while the staff sentence had been reverted. Found by
+    # mutation, not by reading.
+    t = _staff_sentence(legal_dom(page).text)
+    assert "tamper-evident" in t, _why(
+        "A1", f"{page} no longer uses the project's phrase for the staff audit "
+              "trail. Anchoring earns 'tamper-evident, independently verifiable'")
+    assert "removed from the end" in t, _why(
+        "A1", f"{page} lost the #143 upgrade — an entry removed from the END of the "
+              "staff chain is now detectable, and that is what anchoring bought")
+    assert "before the chain existed" in t, _why(
+        "A1", f"{page} stopped stating that entries predating the chain are NOT "
+              "covered by the anchor, so the claim now reaches further than the "
+              "mechanism does")
+
+
+@pytest.mark.parametrize("page", THREE_PAGES)
+def test_a1_no_page_took_the_word_the_correction_rejected(legal_dom, page):
+    """⚠ THE HALF THE ORIGINAL DECISION WOULD HAVE GOT WRONG. Anchoring is
+    shipped, so the first decision would now permit "immutable". The correction
+    says no, and the site-wide guard enforces it unconditionally — this states
+    the reason next to the note that records it."""
+    t = legal_dom(page).text.lower()
+    for word in ("immutable", "tamper-proof", "unalterable"):
+        assert word not in t, _why(
+            "A1", f"{page} says {word!r}. Anchoring does NOT earn that word: the "
+                  "window between anchors is real, pre-chain rows are not covered, "
+                  "and an anchor proves what a record looked like rather than "
+                  "preventing an edit")
+
+
+def test_a1_the_ban_does_not_depend_on_the_chain_being_unanchored():
+    """⚠ THE DEFECT A1 EXISTS TO FIX, ASSERTED AS SOURCE.
+
+    L10's guard read `if staff_chain_is_anchored(): return` — an early exit that
+    switched the ban off the moment anchoring shipped. A1 ships anchoring, so
+    that line would have fired on this very commit. It is gone, and this asserts
+    it stays gone: the ban must not be conditional on the thing that was supposed
+    to unlock it."""
+    # ⚠ PARSE THE CODE, DO NOT GREP THE TEXT. The first cut sliced the function
+    # out as a string and searched it — and matched the DOCSTRING, which quotes
+    # the very line it is checking is gone. That is the third time this phase
+    # that a guard was satisfied by prose explaining the guard. The AST sees
+    # statements; a docstring is not one of them.
+    import ast as _ast
+    guard = (HERE / "test_site_wide_claims.py").read_text(encoding="utf-8")
+    tree = _ast.parse(guard)
+    fn = next((n for n in tree.body
+               if isinstance(n, _ast.FunctionDef)
+               and n.name == "test_no_page_claims_more_than_either_chain_can_prove"), None)
+    assert fn is not None, _why("A1", "the site-wide overclaim ban is gone entirely")
+    stmts = fn.body[1:] if _ast.get_docstring(fn) is not None else fn.body
+    early_exit = any(
+        isinstance(node, _ast.If)
+        and isinstance(node.test, _ast.Call)
+        and getattr(node.test.func, "id", None) == "staff_chain_is_anchored"
+        for node in stmts)
+    assert not early_exit, _why(
+        "A1", "the site-wide overclaim ban is conditional on anchoring again. "
+              "Anchoring is shipped, so that condition switches the ban OFF")
+    assert "staff_chain_is_anchored" in guard, _why(
+        "A1", "the code-reading detector was deleted. It still has a job — the "
+              "weaker-to-project-phrase upgrade — even though it no longer "
+              "unlocks the strong word")
