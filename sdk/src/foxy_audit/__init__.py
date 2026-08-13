@@ -31,6 +31,38 @@ longer silent. See ``policy.KNOWN_POLICY_TAGS`` and the SDK README.
 from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 
+# 1.7.0 — S4. Ruleset provenance. A guarded row now carries ruleset_version
+# and ruleset_hash inside event_metadata, naming the FROZEN rule definitions that
+# produced its policy_rules ids — so an auditor can establish what
+# `injection.ignore_previous` meant on the day it matched instead of taking our
+# word for it. Frozen, not current: rulesets/ holds one never-edited module per
+# published version, and ruleset.drift() fails the suite if a rule is edited
+# without minting a new one.
+#
+# MINOR because the wire gains fields. It rides INSIDE event_metadata, which has
+# been chain-bound since V2, so it is tamper-evident with no new top-level field
+# and no chain_version bump; old rows are untouched and still verify (proven
+# through the standalone verifier against a mixed export, not asserted).
+#
+# ⚠ THE BACKEND HALF MUST BE DEPLOYED FIRST. event_metadata is validated against
+# a strict allowlist per REQUEST, so an SDK sending these keys to a backend that
+# does not know them loses the WHOLE BATCH to a 422. This SDK degrades rather
+# than fail — on that specific rejection it retries once without the keys and
+# records `foxy_degraded` on the spool receipt — but that is a safety net for
+# self-hosted and lagging deployments, not a substitute for the ordering.
+#
+# Clean observe rows are byte-for-byte unchanged: provenance rides only with the
+# policy_rules it explains.
+#
+# Ships ruleset 2026.08.2. 2026.08.1 could not explain the response_scan.*
+# coverage ids that rows stamped with it already carried — an id naming a
+# version that does not describe it is the failure the registry exists to
+# prevent, and it landed on the ids that report MISSING COVERAGE. Both versions
+# stay in the registry; frozen modules are never edited.
+#
+# ruleset_version/ruleset_hash are RESERVED in event_metadata: passing either is
+# warned once and dropped, so they always mean "the SDK computed this".
+#
 # 1.6.0 — #166/#167. The policy map is ADDITIVE and hipaa_basic is a real tag.
 # Injection + secret checks now run under EVERY tag instead of being replaced by
 # the domain sweep, and hipaa_basic/gdpr_basic alias onto hipaa/gdpr. Before
@@ -73,7 +105,7 @@ from .config import FoxyConfig
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 __all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
            "audit", "__version__"]
 

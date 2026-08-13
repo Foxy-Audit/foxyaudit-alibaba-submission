@@ -89,7 +89,8 @@ import logging
 import re
 import uuid
 
-from . import dispatch, hashing, org_policy, pii, response_policy, sidecar, udp
+from . import (dispatch, hashing, org_policy, pii, response_policy, ruleset,
+               sidecar, udp)
 from . import policy as policy_engine
 from .adapters import response_metadata
 from .config import FoxyConfig
@@ -777,15 +778,29 @@ class FoxyClient:
                 # coverage id records that a shape could not be read, which is
                 # evidence about the scan and not a decision about the
                 # interaction. It must still reach the ledger.
-                meta = dict(metadata) if metadata else {}
+                meta = _reserve_provenance(metadata) if metadata else {}
                 if decision is not None:
                     meta["decision"] = decision
                 meta["policy_rules"] = list(policy_rules or [])
                 if blocked_reason is not None:
                     meta["blocked_reason"] = blocked_reason
+                if meta["policy_rules"]:
+                    # Ruleset provenance rides ONLY with the rule ids it
+                    # explains. A rule id alone is "Foxy says so"; the two
+                    # together let an auditor read the pattern that actually
+                    # matched out of a frozen, versioned registry.
+                    #
+                    # Gated on the rules being NON-EMPTY rather than merely on
+                    # reaching this branch: a row can arrive here with a
+                    # decision and an empty list, and stamping a ruleset on that
+                    # would claim rules explained something when none fired. The
+                    # clean observe path does not enter this branch at all, so
+                    # its payload stays byte-for-byte what it was — the property
+                    # that makes observe a safe default.
+                    meta.update(ruleset.provenance())
                 payload["event_metadata"] = meta
             elif metadata:
-                payload["event_metadata"] = metadata
+                payload["event_metadata"] = _reserve_provenance(metadata)
             # raw text goes out of scope here — never stored or transmitted
 
             if self.cfg.desktop_ping:
@@ -839,6 +854,49 @@ def _block_message(policy: str, plan: dict) -> str:
                  "Change it in Settings, or set FOXY_ORG_POLICY=off to ignore "
                  "workspace policy in this deployment.")
     return base
+
+
+#: Reserved-key collisions already reported, so a hot loop reports once.
+_warned_reserved: set = set()
+
+
+def _reserve_provenance(metadata) -> dict:
+    """A copy of ``metadata`` with the ruleset-provenance keys removed.
+
+    ``ruleset_version`` / ``ruleset_hash`` must mean "the SDK computed this" on
+    EVERY path, or they mean nothing. Left alone, a caller's value passed
+    straight through on the plain-metadata path, and on the guarded path a ``{}``
+    from a degraded registry left a caller's value standing.
+
+    The threat model is not forgery — the SDK runs in the customer's own process
+    and a determined customer can always misdescribe their own trail. It is
+    COLLISION: a customer who happens to use ``ruleset_version`` in their own
+    metadata would silently overwrite the real one, and nothing downstream could
+    tell the difference.
+
+    The drop is WARNED, not silent, and once per process per key. Silently
+    discarding a key someone deliberately passed has its own failure mode — they
+    would look for their value and not find it — so the message names the key and
+    says it is reserved.
+
+    ``log.warning`` rather than ``warnings.warn`` (which policy.py uses for an
+    unrecognised tag) is deliberate here: this runs inside ``log_interaction``,
+    whose whole contract is that SDK bookkeeping never disturbs the host
+    application, and ``warnings.warn`` can be configured to raise under
+    ``-W error`` — turning a metadata collision into an application crash.
+    """
+    clean = dict(metadata)
+    for key in ruleset.PROVENANCE_KEYS:
+        if key in clean:
+            del clean[key]
+            if key not in _warned_reserved:
+                _warned_reserved.add(key)
+                log.warning(
+                    "foxy-audit: event_metadata[%r] is RESERVED for ruleset "
+                    "provenance and was dropped; the SDK sets it itself. Rename "
+                    "your field to keep its value. Reported once per process.",
+                    key)
+    return clean
 
 
 def _merge_signals(guard_signals, swept):

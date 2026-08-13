@@ -6,6 +6,78 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.7.0 — a rule id now says which ruleset it came from
+
+**Requires a backend that accepts the new keys. Deploy that first.** See the
+compatibility note at the end of this section.
+
+A blocked row already recorded WHICH rule fired, hash-chained so nobody can
+change it afterwards. It did not record WHAT THAT RULE WAS — so an auditor could
+not establish what `injection.ignore_previous` meant on the day it matched, and
+the proof chain ended at "Foxy says so". Guarded rows now carry two more
+content-blind strings inside `event_metadata`:
+
+```json
+{"decision": "blocked", "blocked_reason": "prompt_injection",
+ "policy_rules": ["injection.ignore_previous"],
+ "ruleset_version": "2026.08.2",
+ "ruleset_hash": "59888ec6…"}
+```
+
+`ruleset_version` names a **frozen** definition. The SDK ships one
+never-edited module per published version, so the rules a historical row names
+stay recomputable forever — a registry holding only "the current rules" would
+make every past row unverifiable the moment someone edited a regex. Editing a
+rule without minting a new version fails the SDK's own test suite.
+
+`ruleset_hash` is SHA-256 over canonical JSON of those definitions: every rule
+id, its coarse signal label, its regex **source text and flags**, the policy map
+and aliases, the response-scan families and their streaming window, and the
+reason table *with its priority order*. Rule ordering is deliberately excluded
+because `evaluate` sorts and dedupes its output, so reordering cannot change a
+verdict and would only mint versions that mean nothing.
+
+**Every id a row can carry resolves in the version it names.** That is checked
+in the SDK's own suite, from a list derived by walking the live rule tables
+rather than typed out — so a new rule family fails the build until someone
+decides what it means. `2026.08.2` exists because `2026.08.1` did not describe
+the `response_scan.degraded` / `.unreadable` coverage ids that rows stamped with
+it already carried; `2026.08.1` stays in the registry forever, because rows name
+it.
+
+**`ruleset_version` and `ruleset_hash` are reserved.** If you pass either in your
+own `event_metadata`, the SDK drops it (with a one-off warning naming the key)
+and sets its own. The concern is collision, not forgery — the SDK runs in your
+process — but these two keys have to mean "the SDK computed this" on every path
+or they mean nothing. Rename your field to keep its value.
+
+Optional Presidio signals are **not** covered — they are namespaced `presidio:*`,
+come from an external model whose version we do not pin, and are absent unless
+the `pii` extra is installed. The frozen definition states that boundary in its
+own `presidio_signals` field, so the exclusion travels with the evidence.
+
+What does *not* change:
+
+- **Clean `observe` rows are byte-for-byte identical.** Provenance rides only
+  alongside the `policy_rules` it explains — never on a row where nothing fired.
+- **Old rows keep verifying.** `event_metadata` has been chain-bound since chain
+  V2, so the new keys change the hash for NEW ROWS ONLY. There is no
+  `chain_version` bump, no migration, and no change to the standalone verifier —
+  a mixed export of old-style and new-style rows was driven through
+  `verifier/foxy_verify.py` unmodified.
+- **Nothing derived from a prompt is hashed.** The digest is over rule
+  definitions; two different prompts tripping the same rules produce identical
+  provenance.
+
+**Backend compatibility.** `event_metadata` is validated against a strict
+allowlist, and the ingest endpoint validates the whole request as one unit — so
+an SDK sending these keys to a backend that does not know them would lose the
+entire batch to a 422, not just one event. Against such a backend this SDK
+**degrades instead of failing**: it retries the batch once without the two keys
+and records `foxy_degraded` on the spool receipt, with a warning naming the
+endpoint. Your events and their rule ids arrive intact; only the provenance is
+missing until the backend is upgraded.
+
 ## 1.6.0 — every policy tag now runs the baseline checks, and `hipaa_basic` is real
 
 **If you run `policy="hipaa"` or `policy="gdpr"` under `mode="block"` or
