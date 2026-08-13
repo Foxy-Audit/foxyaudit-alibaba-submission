@@ -1,25 +1,24 @@
 """cookie-policy.html — Cookie Policy v1.5.
 
-⚠⚠ THIS PAGE IS PUBLISHED WITH KNOWN INACCURACIES, PENDING THE OWNER.
+⚠ THIS PAGE WAS PUBLISHED-BLOCKED UNTIL THE SITE MATCHED IT.
 
-A cookie policy is a list of facts about a website, so every claim in it was
-checked against the code. Most hold. Four do not, and they are pinned below
-rather than reworded — rewriting a policy to match the product is inventing a
-disclosure, and which way the mismatch gets fixed (change the page, or change
-the site) is an owner's decision. See test_the_policy_is_still_wrong_about_this_site.
+A cookie policy is a list of facts about a website, so every claim was checked
+against the code. Three did not hold, and rather than reword the policy — which
+is inventing a disclosure — the owner chose to change the site:
 
-The short version, all measured:
+  1. book-a-demo.html loaded Google reCAPTCHA **v3** unconditionally in <head>,
+     contacting three Google-controlled hosts on page load with no interaction
+     and no consent gate. REMOVED, whole mechanism, 2026-08-13. Measured before
+     and after: 7 third-party requests across 4 hosts -> 4 across 2, and 3
+     reCAPTCHA requests -> 0.
+  2. "We don't use any functional cookies yet" while localStorage remembered a
+     dismissed banner. The two storage keys are LISTED now and the claim is gone.
+  3. The Google sign-in script is disclosed and remains; Google Fonts is a
+     third-party request that sets no cookie, and its removal is deferred to the
+     W stream by owner decision.
 
-  1. book-a-demo.html loads Google reCAPTCHA **v3** unconditionally in <head>.
-     It fires on page load, with no interaction and no consent gate.
-  2. SEVENTEEN sale pages load fonts.googleapis.com — the same third-party
-     request L1 refused for the legal pages.
-  3. accounts.google.com/gsi/client is on index.html unconditionally, not
-     "only if you click Sign in with Google" as the policy says.
-  4. localStorage carries `foxy_onboard_dismissed` and `foxy_welcome`, which
-     remember interface state — while the policy says "We don't use any
-     functional cookies yet". The policy's own §1 uses "you dismissed a banner"
-     as its example of exactly this.
+The guards that recorded those defects were INVERTED rather than deleted — a
+guard that recorded a known defect becomes the guard that prevents its return.
 
 #190: the live page published a personal Gmail address. It cannot again.
 
@@ -56,56 +55,93 @@ def _sale_page(name: str) -> str:
 
 
 # ── 1. THE FOUR THINGS THE POLICY GETS WRONG ─────────────────────────────────
-def test_the_policy_is_still_wrong_about_this_site(dom):
-    """⚠ THIS TEST RECORDS UNRESOLVED INACCURACIES. IT IS MEANT TO.
+def test_no_page_loads_a_fingerprinting_or_risk_scoring_script(dom):
+    """⚠ INVERTED FROM A GUARD THAT RECORDED A DEFECT. It used to assert that
+    reCAPTCHA WAS on book-a-demo.html, so it would fire when the site was fixed
+    rather than only when the page was. The site is fixed, so it now asserts the
+    absence — a guard that recorded a known defect becomes the guard that
+    prevents its return.
 
-    The page claims: "The one third-party cookie on this site is Google's own,
-    set only if you choose 'Sign in with Google'". Measured, that is false four
-    times over — and the fix is either a disclosure the owner must word, or the
-    removal of a product feature. Neither is a conversion decision.
+    §4 of this policy says "No cross-site tracking or fingerprinting." That is a
+    claim about the SITE, not this page, so it is checked against every page.
+    reCAPTCHA v3 was the counter-example: its whole mechanism is behavioural
+    fingerprinting to produce a risk score, and it loaded unconditionally in
+    <head> for every visitor to the demo page.
 
-    ⚠ WHEN IT IS RESOLVED, THIS TEST FAILS. That is the design: the resolution
-    has to be deliberate, and whoever makes it should read this first.
+    ⚠ If a captcha is ever needed again, this test is where you will find out
+    that the Cookie Policy has to change in the SAME commit."""
+    offenders = {}
+    for page in sorted(HERE.glob("*.html")):
+        src = page.read_text(encoding="utf-8")
+        hits = re.findall(r"recaptcha|hcaptcha|turnstile|fingerprintjs|clarity\.ms|"
+                          r"datadome|perimeterx|akamai/sensor", src, re.I)
+        if hits:
+            offenders[page.name] = sorted(set(h.lower() for h in hits))
+    assert not offenders, f"a fingerprinting or risk-scoring script is loaded: {offenders}"
+    assert "No cross-site tracking or fingerprinting." in dom.text,         "the claim this guard defends was removed from the policy"
 
-    Each assertion below pins BOTH halves — what the policy says, and what the
-    site does — so neither can drift while the question is open."""
+
+def test_the_demo_form_still_posts_without_a_captcha_token(dom):
+    """The other half of the removal: the mechanism is gone COMPLETELY, not just
+    its script tag. An orphaned grecaptcha.execute() throws before the fetch, and
+    a dangling token field is how the whole thing gets resurrected.
+
+    Verified live as well as here — the real form was driven in a browser against
+    a running backend and POST /v1/leads returned 200. This pins the shape."""
+    demo = _sale_page("book-a-demo.html")
+    for token in ("grecaptcha", "recaptcha_token", "recaptcha", "policies.google.com"):
+        assert token not in demo.lower(), f"{token!r} survives in book-a-demo.html"
+    assert "/v1/leads" in demo, "the demo form no longer posts anywhere"
+    assert 'id="hp"' in demo, "the honeypot went with it — that was the other defence"
+
+
+def test_the_third_party_claim_now_holds_for_google_sign_in(dom):
+    """What the policy still says, and what is still true about it. The Google
+    Identity script remains on index.html; the policy discloses it as the one
+    third-party cookie, which — with reCAPTCHA gone — is now accurate for
+    cookies. Google Fonts is a third-party REQUEST but sets no cookie, and its
+    removal is deferred to the W stream by owner decision."""
     t = dom.text
     assert "The one third-party cookie on this site is Google's own" in t
-    assert "captcha" not in t.lower(), "the policy now mentions captcha — has it been disclosed?"
-
-    demo = _sale_page("book-a-demo.html")
-    assert "recaptcha/api.js?render=" in demo, (
-        "reCAPTCHA is gone from book-a-demo.html — if that was the fix, the "
-        "policy's 'one third-party cookie' claim may now be true; rewrite this")
-    assert "<script src=\"https://www.google.com/recaptcha/api.js?render=" in demo, \
-        "the reCAPTCHA loader is no longer an unconditional <head> script"
-
     index = _sale_page("index.html")
-    assert 'src="https://accounts.google.com/gsi/client"' in index, \
-        "the Google sign-in script is gone or gated — the policy may now be right"
-
-    fonts = [p.name for p in sorted(HERE.glob("*.html"))
-             if "fonts.googleapis.com" in p.read_text(encoding="utf-8")]
-    assert len(fonts) >= 10, (
-        f"only {len(fonts)} pages still load Google Fonts — if they were swept, "
-        "the policy's third-party claim needs revisiting")
-    assert PAGE not in fonts and "privacy.html" not in fonts, \
-        "a legal page started fetching a font from Google"
+    assert 'src="https://accounts.google.com/gsi/client"' in index,         "Google sign-in is gone — the policy's third-party section needs revisiting"
+    assert "<code>g_state</code>" in dom.src, "the disclosed Google cookie left the table"
 
 
-def test_the_functional_cookie_claim_is_still_contradicted(dom):
-    """"We don't use any functional cookies yet" — while localStorage remembers
-    a dismissed banner and a seen-welcome flag. The policy explicitly says it
-    calls local storage a "cookie" for the purposes of this document, and its own
-    §1 gives "that you dismissed a banner" as the example."""
-    assert "We don't use any functional cookies yet" in dom.text
-    assert 'We call all of these "cookies" below.' in dom.text
+def test_the_functional_storage_is_listed_now(dom):
+    """⚠ ALSO INVERTED. It used to assert the contradiction — that the policy
+    claimed no functional cookies while localStorage remembered a dismissed
+    banner. Both keys are disclosed now, so it asserts the disclosure.
+
+    foxy_welcome is listed as NECESSARY, not functional, because it is not a
+    preference: it carries the one-time API key from sign-up to the welcome page
+    and welcome.html deletes it the moment it reads it. Calling that an
+    interface preference would misdescribe a credential."""
+    assert "don't use any functional cookies yet" not in dom.text,         "the false empty-category claim came back"
     index = _sale_page("index.html")
-    for key in ("foxy_onboard_dismissed", "foxy_welcome"):
-        assert key in index, f"{key} is gone — if that was the fix, rewrite this guard"
-    for key in ("foxy_onboard_dismissed", "foxy_welcome"):
-        assert key not in dom.text, \
-            f"{key} is now disclosed — the contradiction may be resolved"
+    welcome = _sale_page("welcome.html")
+    assert "foxy_onboard_dismissed" in index and "foxy_welcome" in welcome
+    row = re.search(r"<tr><td><code>foxy_onboard_dismissed</code>.*?</tr>", dom.src, re.S)
+    assert row and "Functional" in row.group(0), "foxy_onboard_dismissed is not listed as Functional"
+    row = re.search(r"<tr><td><code>foxy_welcome</code>.*?</tr>", dom.src, re.S)
+    assert row and "Necessary" in row.group(0), "foxy_welcome is not listed as Necessary"
+    assert "API key" in row.group(0), "the row does not say what foxy_welcome actually carries"
+
+
+def test_every_storage_key_the_site_uses_is_in_the_table(dom):
+    """BOTH DIRECTIONS, and this is the direction that was wrong. The table was
+    complete for cookies and missing two storage keys, which is exactly the
+    failure this page exists to avoid: a policy that omits something the site
+    stores. Scanned from the source rather than from a list, so a new key added
+    tomorrow fails here instead of going unmentioned."""
+    keys = set()
+    for page in sorted(HERE.glob("*.html")):
+        src = page.read_text(encoding="utf-8")
+        keys |= set(re.findall(r"(?:local|session)Storage\.(?:set|get|remove)Item\(\s*['\"]([^'\"]+)", src))
+        keys |= set(re.findall(r"const\s+\w*KEY\w*\s*=\s*['\"]([^'\"]+)", src))
+    listed = set(re.findall(r"<code>([a-z_]+)</code>", dom.src))
+    missing = sorted(k for k in keys if k not in listed)
+    assert not missing, f"the site stores keys the Cookie Policy does not list: {missing}"
 
 
 # ── 2. WHAT THE POLICY GETS RIGHT — verified against the code ───────────────
@@ -172,7 +208,9 @@ def test_no_cookie_is_named_that_the_product_does_not_set(dom):
     breaks."""
     names = re.findall(r"<code>([a-z_]+)</code>", dom.src)
     assert set(names) == {"session", "foxy_staff_session", "foxy_csrf",
-                          "foxy_consent", "foxy_vid", "foxy_sid", "g_state"}, \
+                          "foxy_consent", "foxy_vid", "foxy_sid", "g_state",
+                          # added when the SITE was changed to match the policy:
+                          "foxy_onboard_dismissed", "foxy_welcome"}, \
         f"the cookie table changed: {sorted(set(names))}"
     main = (HERE.parent / "backend" / "app" / "main.py").read_text(encoding="utf-8")
     csrf = (HERE.parent / "backend" / "app" / "middleware" / "csrf.py").read_text(encoding="utf-8")
@@ -268,7 +306,9 @@ def test_the_cookie_table_can_scroll_without_moving_the_page(dom):
     its own container so the page body never scrolls sideways."""
     assert '<div class="tbl-wrap">' in dom.src
     assert "overflow-x:auto" in dom.src
-    assert dom.src.count("<tr>") == 8, "the table lost or gained a row"
+    # Header + 9 entries. Seven when L7 converted the document; nine since the
+    # two storage keys the site actually uses were added to make it complete.
+    assert dom.src.count("<tr>") == 10, "the table lost or gained a row"
 
 
 def test_no_external_url_is_reachable_from_the_markup(dom):

@@ -77,7 +77,7 @@
     <h3>Analytics — optional</h3>
     <p>Help us see which pages are used and whether anything is slow or broken. Ours are <strong>first-party and cookieless</strong>: we count page views on our own servers and, only with your permission, keep an anonymous visitor id locally. Nothing goes to a third party.</p>
     <h3>Functional — optional</h3>
-    <p>Would remember interface preferences (a dashboard layout, a time zone). We don't use any functional cookies yet; the category is listed so the choice exists if we add them.</p>
+    <p>Remember interface state so the site doesn't repeat itself — for example, that you closed the intro card on our home page. These live in your browser's local storage and never reach our servers.</p>
     <h3>Third-party — only if you use it</h3>
     <p>Loaded only if you click "Sign in with Google": Google's Identity Services script sets its own cookie in your browser to support that sign-in flow. This is not under our control and is governed by Google's own privacy policy, not this one. If you sign in with email and password instead, this script and cookie are never loaded.</p>
 
@@ -92,6 +92,8 @@
           <tr><td><code>foxy_consent</code></td><td>Necessary</td><td>Remembers your cookie choices</td><td>12 months</td><td>Secure · SameSite=Lax</td></tr>
           <tr><td><code>foxy_vid</code> <span class="muted">(local storage)</span></td><td>Analytics</td><td>Anonymous first-party visitor id</td><td>Until cleared</td><td>Set only with consent</td></tr>
           <tr><td><code>foxy_sid</code> <span class="muted">(session storage)</span></td><td>Analytics</td><td>Anonymous session id</td><td>Ends with the tab</td><td>Set only with consent</td></tr>
+          <tr><td><code>foxy_onboard_dismissed</code> <span class="muted">(local storage)</span></td><td>Functional</td><td>Remembers that you closed the intro card, so it is not shown again</td><td>Until cleared</td><td>First-party, never sent to us</td></tr>
+          <tr><td><code>foxy_welcome</code> <span class="muted">(session storage)</span></td><td>Necessary</td><td>Carries your new API key from sign-up to the welcome page, which shows it once</td><td>Deleted as soon as that page reads it</td><td>First-party, never sent to us</td></tr>
           <tr><td><code>g_state</code> <span class="muted">(third-party)</span></td><td>Third-party</td><td>Supports Google's "Sign in with Google" button</td><td>Set by Google, per their policy</td><td>Only loaded if you use Google sign-in</td></tr>
         </tbody>
       </table>

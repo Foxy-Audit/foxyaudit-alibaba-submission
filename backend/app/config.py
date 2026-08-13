@@ -68,9 +68,27 @@ class Settings(BaseSettings):
     # the idempotency control: `payment_events.provider_event_id` is UNIQUE, so a
     # replay inside the window is already a no-op.
     paddle_signature_tolerance_seconds: int = 300
-    # Google reCAPTCHA v2 — server-side verification of the demo form. Empty = skip
-    # (the frontend widget still gates UX; set RECAPTCHA_SECRET_KEY in the server env
-    # for real bot protection — the site key is public and lives in book-a-demo.html).
+    # ⚠ THERE IS NO CAPTCHA ON THE DEMO FORM ANY MORE. This setting is vestigial
+    # and is kept only so an existing RECAPTCHA_SECRET_KEY in a deployed env does
+    # not fail startup; nothing sends a token, so verification never runs.
+    #
+    # It was removed from foxy-sale-page/book-a-demo.html on 2026-08-13 (owner
+    # decision) because the Cookie Policy states "the one third-party cookie on
+    # this site is Google's own, set only if you choose Sign in with Google" —
+    # and the loader was an unconditional <head> script that contacted three
+    # Google-controlled hosts on page load, with no interaction and no consent
+    # gate. The policy is published; making it true was the cheaper half.
+    #
+    # ⚠ AND THIS COMMENT USED TO SAY "reCAPTCHA v2". IT WAS v3 — the loader was
+    # `api.js?render=<sitekey>` and the page called `grecaptcha.execute(...,
+    # {action:'book_demo'})`, both of which are v3-only. The distinction mattered:
+    # v2 renders a challenge on interaction, v3 scores every visitor silently on
+    # load, which is what made it a disclosure problem rather than a UX one.
+    # (Register #13.)
+    #
+    # The form still has its honeypot field. If bot volume makes real protection
+    # necessary again, prefer something that does not profile every visitor —
+    # and update the Cookie Policy in the same change, not after it.
     recaptcha_secret_key: str = ""
     # Google SSO — the OAuth 2.0 Web Client ID (public). Empty = "Sign in with
     # Google" disabled (POST /v1/auth/google returns 503). No client secret needed:

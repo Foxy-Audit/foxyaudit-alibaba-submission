@@ -9,7 +9,6 @@
 <link rel="icon" type="image/png" href="/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://www.google.com/recaptcha/api.js?render=6LfaFFctAAAAAMFaCIzraQ3PYWJGuXgtTNcBglsr"></script>
 <style>
   :root{
     --bg:#0e0c0a; --surf:#1c1815; --surf2:#221d18; --line:#322b23;
@@ -177,7 +176,6 @@
         </div>
         <input class="hp" id="hp" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" placeholder="Leave this empty">
         <p class="privacy">Foxy Audit needs your contact details to reach out about the demo and our product. You can unsubscribe anytime. See our <a href="/privacy.html">Privacy Policy</a>.</p>
-        <p style="font-size:10.5px;color:var(--muted);margin:0 0 16px;">Protected by reCAPTCHA — Google <a href="https://policies.google.com/privacy" target="_blank" rel="noopener" style="color:var(--fox);">Privacy</a> &amp; <a href="https://policies.google.com/terms" target="_blank" rel="noopener" style="color:var(--fox);">Terms</a> apply.</p>
         <button class="submit" id="go">Seal &amp; book my demo
           <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
         <div class="err" id="err"></div>
@@ -248,8 +246,6 @@
     if($('hp').value){ seal(); return; }                 // honeypot tripped — pretend success, drop silently
     err.textContent=''; $('go').disabled=true;
     try{
-      let token='';
-      if(typeof grecaptcha!=='undefined'){ token = await grecaptcha.execute('6LfaFFctAAAAAMFaCIzraQ3PYWJGuXgtTNcBglsr',{action:'book_demo'}); }
       // Premium is sold by conversation, so its enquiries come through this same
       // form rather than a second one. The subject is the only thing that
       // changes: a negotiated-tier enquiry and a generic demo request deserve
@@ -260,7 +256,7 @@
       const r = await fetch(FOXY_API + '/v1/leads', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ name:(fn+' '+ln).trim(), email:em, company:co, source:'demo',
           subject: premium ? 'Premium plan enquiry' : 'Demo request',
-          message:'Job title: '+jt+'\nAI governance stage: '+mt, recaptcha_token: token }) });
+          message:'Job title: '+jt+'\nAI governance stage: '+mt }) });
       if(!r.ok) throw 0;
       seal();
     }catch(_){ $('go').disabled=false; err.textContent="Couldn't send — please try again or email foxyaudit@gmail.com"; }
