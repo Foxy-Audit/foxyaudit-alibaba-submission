@@ -51,6 +51,9 @@ DOCUMENTS = {
     #   it: it is where the safe harbour lives, and a reader who cannot
     #   reach it cannot rely on it.
     "Refund Policy": "refund.html",                    # L3
+    "Data Processing Agreement": "dpa.html",           # L10 — the Article 28
+    #   agreement. Named in the Terms and cited by the Privacy Policy, so a
+    #   reader who cannot reach it cannot counter-sign it.
     "Service Level Agreement": "sla.html",             # L9
     "Data Processing Agreement": "dpa.html",           # L10
     "Master Service Agreement": "msa.html",            # L11
@@ -61,7 +64,7 @@ PAGES = [
     "privacy.html", "terms.html", "terms-of-use.html",
     "refund.html", "trust.html", "sla.html", "cookie-policy.html",
     "acceptable-use.html",
-    "report-abuse.html", "legal.html",
+    "report-abuse.html", "dpa.html", "legal.html",
 ]
 
 def _dom(page: str) -> LegalDom:

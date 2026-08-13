@@ -66,43 +66,20 @@ def _backend(rel: str) -> str:
 
 
 # ── 1. THE CLAIM THE CODE CONTRADICTS ────────────────────────────────────────
-def _staff_chain_is_anchored() -> bool:
-    """Does the staff-action chain have an EXTERNAL witness today?
-
-    ⚠ THIS READS THE CODE, ON PURPOSE. The owner's decision (2026-08-13) is to
-    anchor the staff chain and then allow "immutable" again. A plain string ban
-    would have to be DELETED by whoever does that work — and a guard someone
-    must remember to delete protects nothing in the meantime and nothing after.
-    So the guard asks the codebase instead, and flips by itself.
-
-    Two independent signals, either of which alone would be weak:
-
-      1. THE ANCHORING MODULE TOUCHES THE STAFF CHAIN. anchor.py is how the
-         customer ledger gets its witness: it reads ``AuditLog`` and records a
-         receipt in ``ChainAnchor``. Today it does not mention the staff chain
-         once — measured, the string "admin" appears zero times in it. Anchoring
-         the staff chain means that module (or an equivalent) has to name the
-         staff-action model.
-
-      2. admin_chain.py HAS DROPPED ITS OWN "UNTIL IT EXISTS" RULE. That module
-         currently instructs every surface reporting this chain to say "sequence
-         unbroken", never "tamper-evident", and says so *because* anchoring does
-         not exist. Whoever implements anchoring must rewrite that paragraph or
-         leave a false instruction behind for the next reader.
-
-    BOTH are required. Signal 1 alone could fire on an unrelated mention; signal
-    2 alone could fire on a docstring tidy-up. Together they are what actually
-    shipping the feature looks like.
-    """
-    anchor = _backend("anchor.py")
-    chain = _backend("admin_chain.py")
-    # NB: word boundaries are spelled \b so that a stray backslash-b in an
-    # editor cannot turn them into literal backspace bytes. It did exactly
-    # that here once, and the detector then matched NOTHING, which meant this
-    # guard could never flip. Measured against the file, not a retyped copy.
-    touches_staff_chain = bool(re.search(r"\bAdminAction\b|admin_actions", anchor))
-    rule_lifted = 'never "tamper-evident"' not in chain
-    return touches_staff_chain and rule_lifted
+# ⚠ RE-AIMED IN L10, NOT DELETED. The detector and the ban that used to live
+# here now live in test_site_wide_claims.py, because the identical claim was
+# also on privacy.html and about to appear on dpa.html, and a guard scoped to
+# ``PAGE = "trust.html"`` never saw either of them (#184, third occurrence).
+#
+# What stays here is what is genuinely trust-page-specific: the honest wording
+# on THIS page, and — importantly — proof that the site-wide sweep still covers
+# this page. A guard can also be defeated by moving its subject out of scope,
+# so the page asserts its own coverage rather than assuming it.
+from test_site_wide_claims import (  # noqa: E402
+    KNOWN_EXCEPTIONS,
+    OVERCLAIM,
+    staff_chain_is_anchored as _staff_chain_is_anchored,
+)
 
 
 def test_the_page_claims_no_more_than_the_staff_chain_can_prove(dom):
@@ -127,26 +104,31 @@ def test_the_page_claims_no_more_than_the_staff_chain_can_prove(dom):
     impossible", and that the project's phrase is "tamper-evident, independently
     verifiable". "Immutable" is stronger than that even with anchoring in place.
     That is the owner's call, not this test's — but it should be a deliberate
-    one, so it is written down here."""
-    OVERCLAIM = (r"\bimmutable\b|\btamper[- ]?proof\b|\bunalterable\b|"
-                 r"\bcannot be (?:altered|changed|modified|edited)\b|"
-                 r"\bimpossible to (?:alter|change|tamper)\b")
-    found = sorted(set(m.lower() for m in re.findall(OVERCLAIM, dom.text, re.I)))
+    one, so it is written down here.
+
+    ⚠ L10 SPLIT THIS IN TWO. The BAN is now site-wide
+    (test_site_wide_claims.py) because the same claim was also on privacy.html
+    and heading for dpa.html. What remains here is the part that is genuinely
+    about this page — that the replacement wording is present, so the sentence
+    cannot be "fixed" by deleting the claim instead of correcting it — plus a
+    check that trust.html is still inside the site-wide sweep. A ban can be
+    defeated by excusing its subject, so coverage is asserted, not assumed."""
+    assert PAGE not in KNOWN_EXCEPTIONS, (
+        f"{PAGE} has been added to the site-wide exception list — the page that "
+        "the whole guard was written for is no longer being checked")
+    assert OVERCLAIM.search("an immutable staff audit trail"), \
+        "the shared OVERCLAIM pattern no longer matches the original v1.7 wording"
 
     if _staff_chain_is_anchored():
         # Anchoring shipped. The strong word is permitted — not required — and
         # the weaker wording below is no longer mandatory.
         return
 
-    assert not found, (
-        "trust.html claims the staff audit trail is immutable/tamper-proof while "
-        "the staff chain is still UNANCHORED. admin_chain.py:314 returns "
-        '"sequence unbroken"; that is the strongest thing that is true today. '
-        f"found: {found}")
-    # …and the honest wording must actually be there, so the sentence cannot be
-    # satisfied by deleting the claim rather than correcting it.
-    assert "whose sequence is verifiable" in dom.text,         "the staff audit trail sentence lost the wording that replaced 'immutable'"
-    assert "edited, removed from the middle, or re-ordered breaks the chain" in dom.text,         "the page no longer says WHAT the chain actually detects"
+    # The honest wording must actually be there.
+    assert "whose sequence is verifiable" in dom.text, \
+        "the staff audit trail sentence lost the wording that replaced 'immutable'"
+    assert "edited, removed from the middle, or re-ordered breaks the chain" in dom.text, \
+        "the page no longer says WHAT the chain actually detects"
 
 
 def test_the_control_the_guard_depends_on(dom):
