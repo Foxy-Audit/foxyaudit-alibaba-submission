@@ -233,6 +233,18 @@ class FoxyClient:
             # and cannot fail into the caller (P4 §B2/§B3).
             org_policy.register(self.cfg)
 
+    def check(self, prompt, policy: str = "default"):
+        """Would this prompt trip anything, under ``policy``? LABELS ONLY.
+
+        A thin delegation to :func:`introspect.check` so the question can be
+        asked from a client you already have. It uses no client state at all —
+        no key, no network, no spool — which is why the module-level
+        ``foxy_audit.check`` exists too and is the one to reach for when you have
+        no client. CONTENT-BLIND: never returns, logs or raises the text.
+        """
+        from .introspect import check as _check
+        return _check(prompt, policy)
+
     @property
     def enabled(self) -> bool:
         return self.cfg.enabled

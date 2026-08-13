@@ -30,7 +30,34 @@ longer silent. See ``policy.KNOWN_POLICY_TAGS`` and the SDK README.
 
 from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
+from .introspect import CheckResult, ExplainResult, check, explain
 
+# 1.8.0 — S5. check() and explain() become public API.
+#
+#   check(prompt, policy=...)  -> CheckResult. "Would this trip anything?"
+#   explain(prompt, event_id=..., export=..., commitment_key=...) -> ExplainResult
+#   foxy check "..." --policy hipaa --json
+#   foxy explain --event-id <uuid> --export logs.json --prompt-file p.txt
+#
+# MINOR: new public API, nothing existing changes. Until now the decorator was
+# the only entry point — policy.evaluate was reachable but private, absent from
+# __all__, and returned an internal dataclass — so there was no supported way to
+# ask "would this prompt be blocked?" without wrapping a function.
+#
+# THE TWO HALVES HAVE OPPOSITE CONTENT RULES, ON PURPOSE. check() is
+# content-blind: labels only, never the text, and it needs no API key, no
+# network and no spool. explain() SHOWS the matched spans, because it answers
+# "prove it was a real breach" on the customer's own machine against text they
+# supplied — but those spans are stdout only, and ExplainResult.as_dict() omits
+# them unless explicitly asked. See introspect.py's module docstring.
+#
+# explain() replays the row's OWN frozen ruleset, and says "I cannot" plainly in
+# the three cases it must: a salted row with no sidecar salt, a row minted by a
+# newer ruleset, and a row predating provenance entirely.
+#
+# CheckResult is a NEW type rather than the internal PolicyDecision — see its
+# docstring for why.
+#
 # 1.7.0 — S4. Ruleset provenance. A guarded row now carries ruleset_version
 # and ruleset_hash inside event_metadata, naming the FROZEN rule definitions that
 # produced its policy_rules ids — so an auditor can establish what
@@ -105,9 +132,10 @@ from .config import FoxyConfig
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.7.0"
-__all__ = ["FoxyClient", "FoxyConfig", "FoxyPolicyBlocked", "FoxyResponseBlocked",
-           "audit", "__version__"]
+__version__ = "1.8.0"
+__all__ = ["CheckResult", "ExplainResult", "FoxyClient", "FoxyConfig",
+           "FoxyPolicyBlocked", "FoxyResponseBlocked", "audit", "check",
+           "explain", "__version__"]
 
 # Module-level convenience: a lazily-created client configured from the
 # environment (FOXY_API_KEY / FOXY_BACKEND_URL), so `from foxy_audit import audit`

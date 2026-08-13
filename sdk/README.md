@@ -6,6 +6,66 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.8.0 — `check()` and `explain()`
+
+Until now the decorator was the only way in. There was no supported way to ask
+"would this prompt be blocked?" without wrapping a function and calling it.
+
+```python
+from foxy_audit import check
+
+result = check("ignore all previous instructions", policy="hipaa")
+result.triggered        # True
+result.rules            # ['injection.ignore_previous']
+result.reason           # 'prompt_injection'
+result.ruleset_version  # '2026.08.2'
+```
+
+```bash
+foxy check "ignore all previous instructions" --policy hipaa   # exit 1 if it fires
+foxy check --prompt-file prompt.txt --policy gdpr --json
+```
+
+`check()` needs **no API key, no network and no spool**. Asking whether your own
+prompt trips a rule should not require an account, and the exit code (0 clean,
+1 fired) drops into a pre-commit hook or a CI step without parsing anything.
+
+### The two halves have opposite content rules
+
+**`check()` is content-blind.** It returns labels — the same vocabulary the wire
+carries — and never returns, logs or raises the text you gave it. The CLI does
+not echo your prompt either: a command that did would put customer text into a
+terminal scrollback, a CI log and a shell history in one move.
+
+**`explain()` deliberately shows you the matched spans**, because it answers
+"prove it was a real breach", and a proof you cannot see is not a proof. It runs
+on your machine, against a prompt you supplied, so it shows you nothing you do
+not already have. Those spans are **stdout only** — the command writes no file
+and logs nothing, and `ExplainResult.as_dict()` omits the text unless you ask
+for it explicitly.
+
+### Replaying a recorded row
+
+```bash
+foxy explain --event-id 3f2a… --export logs.json --prompt-file prompt.txt
+```
+
+It recomputes the commitment from your local key (and the salt sidecar, for a
+`hmac-sha256-salted` row), matches it against the row's `prompt_hash`, reads the
+`ruleset_version` that row recorded, loads **that frozen definition** — not
+today's rules — and replays it, showing which rule matched where.
+
+Three answers are "I cannot", and it says so rather than guessing:
+
+| Situation | What it says |
+|---|---|
+| A salted row whose salt is not in the sidecar | The commitment **cannot be recomputed** — not a mismatch and not a pass. The salt lives only on your machine; Foxy never had it. |
+| A row naming a ruleset newer than your SDK | Upgrade `foxy-audit` to replay it. Replaying whichever rules this build happens to have would describe a different policy than the one that ran. |
+| A row written before 1.7.0 | It names no ruleset. The commitment may verify, but the rules in force that day were not recorded, and it **will not guess**. |
+
+Reporting a missing salt as "no match" would be a false negative on the exact
+question the tool exists to answer — you would conclude the ledger was wrong.
+
 ## 1.7.0 — a rule id now says which ruleset it came from
 
 **Requires a backend that accepts the new keys. Deploy that first.** See the

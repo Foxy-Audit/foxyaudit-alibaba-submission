@@ -34,6 +34,42 @@ def new_salt() -> str:
     return secrets.token_hex(16)
 
 
+def read_salt(path: str, event_id: str) -> str | None:
+    """The salt recorded for ``event_id``, or None if there isn't one.
+
+    The counterpart to :func:`record_salt`, and a reason this file is JSON
+    Lines: the LAST entry for an id wins, so a re-run that appended again is
+    read the way it was written rather than the way it was first written.
+
+    Returns None — never raises — for a missing file, an unreadable one, or a
+    malformed line. But None is NOT "no match": a salted row whose salt is gone
+    cannot be recomputed AT ALL, which is a different answer from "this text is
+    wrong", and the caller has to say so. See :func:`introspect.explain`.
+
+    Never logs the salt, or the line it came from. This module's whole job is a
+    secret, and a debug log of "the line I could not parse" is the classic way
+    one escapes.
+    """
+    found = None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict) and str(entry.get("event_id")) == str(event_id):
+                    salt = entry.get("salt")
+                    if salt:
+                        found = str(salt)
+    except OSError:
+        return None
+    return found
+
+
 def record_salt(path: str, event_id: str) -> str | None:
     """Append a fresh salt for ``event_id``; return it, or None if it wasn't stored.
 
