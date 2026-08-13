@@ -8,7 +8,15 @@ reminder — CI turns red a month before the date, which is the only renewal
 mechanism this project actually has.
 
 And a file in the repo that no route serves is decoration. The route is asserted
-against the real deploy/Caddyfile, not described.
+against the real deploy/nginx-foxyaudit.conf, not described.
+
+⚠ A THIRD WAY, found the hard way: every field can be well-formed, served, and
+in date, and still be USELESS — because it points somewhere the reader cannot
+go. This file listed a GitHub advisory URL first and a private-repo blob as its
+Policy, and both 404 for everyone outside a repository that is private and
+staying private. RFC 9116 §2.5.3 makes multiple Contact fields an order of
+preference, so the dead route was the PREFERRED one. Reachability is now
+asserted too, across all four surfaces that state the address.
 
 Everything here reads the SHIPPED files. Run:  pytest foxy-sale-page -q
 """
@@ -27,6 +35,13 @@ _CADDY = _ROOT / "deploy" / "Caddyfile"
 _NGINX = _ROOT / "deploy" / "nginx-foxyaudit.conf"
 _README = _ROOT / "README.md"
 _POLICY = _ROOT / "SECURITY.md"
+#: The PUBLISHED policy — public, live, and what `Policy:` now cites. See
+#: test_the_published_policy_is_the_one_that_is_reachable.
+_PUBLIC_POLICY = _HERE / "report-abuse.html"
+
+#: The one mailbox all four surfaces must name. Four places to state one address
+#: is four places for it to drift.
+SECURITY_MAILBOX = "security@foxyaudit.tech"
 
 #: How long before Expires this suite starts failing. Long enough to notice and
 #: renew without a rush, short enough that the file is not red for most of its
@@ -77,24 +92,91 @@ def test_expires_is_not_further_out_than_a_year():
     assert expires - datetime.now(timezone.utc) < timedelta(days=366)
 
 
-def test_the_contacts_are_the_ones_the_README_already_publishes():
-    """No new channel is minted here. A contact that exists only in security.txt
-    is a mailbox nobody watches."""
-    readme = _README.read_text(encoding="utf-8")
+def test_all_four_surfaces_name_the_same_mailbox():
+    """The correspondence guard, re-aimed. It used to pin support@ plus a GitHub
+    advisory URL across security.txt and the README, and it passed the whole time
+    BOTH of those were unreachable to anyone outside a private repository.
+
+    ⚠ THE OLD VERSION WAS SATISFIED BY A DEAD CHANNEL. Pinning that two files
+    agree is worth nothing if what they agree on cannot be reached. So the set is
+    now four — and it includes the PUBLISHED page, which is the only one of them
+    a stranger can actually open."""
     contacts = _fields()["contact"]
-    assert "mailto:support@foxyaudit.tech" in contacts
-    assert "support@foxyaudit.tech" in readme, \
-        "the README no longer names this address — the two have drifted"
-    advisory = [c for c in contacts if "/security/advisories/new" in c]
-    assert advisory, "the private advisory channel the README points at is missing"
-    assert "security/advisories/new" in readme
+    assert contacts == [f"mailto:{SECURITY_MAILBOX}"], (
+        f"security.txt should name exactly one reachable contact, has: {contacts}")
+
+    readme = _README.read_text(encoding="utf-8")
+    policy_md = _POLICY.read_text(encoding="utf-8")
+    public = _PUBLIC_POLICY.read_text(encoding="utf-8")
+    for name, blob in (("README.md", readme), ("SECURITY.md", policy_md),
+                       ("report-abuse.html", public)):
+        assert SECURITY_MAILBOX in blob, \
+            f"{name} no longer names {SECURITY_MAILBOX} — the four have drifted"
+
+    # …and none of them may re-offer a route that only works inside the private
+    # repository. This is the specific regression, not a general tidiness rule.
+    for name, blob in (("security.txt", _TXT.read_text(encoding="utf-8")),
+                       ("README.md", readme),
+                       ("report-abuse.html", public)):
+        assert "security/advisories/new" not in blob, (
+            f"{name} offers a GitHub security advisory again — the repository is "
+            "private, so that URL 404s for every outside reporter")
 
 
-def test_the_policy_link_points_at_a_file_that_exists():
+def test_no_surface_publishes_a_url_into_the_private_repository():
+    """Any github.com/<owner>/Foxy-Audit link is unreachable to the public. The
+    SDK's own metadata carried two, under the WRONG owner besides, and they are
+    rendered on the PyPI page where strangers click them."""
+    for path in (_TXT, _README, _POLICY, _PUBLIC_POLICY,
+                 _ROOT / "sdk" / "pyproject.toml"):
+        blob = path.read_text(encoding="utf-8")
+        # Strip comments in the two files whose comments EXPLAIN the dead links —
+        # a note about a 404 is not a 404. Everything else is asserted as-is.
+        if path.suffix in (".toml", ".txt"):
+            blob = "\n".join(l.split("#", 1)[0] for l in blob.splitlines())
+        elif path.name == "SECURITY.md":
+            blob = blob.replace("> ", "")
+        bad = re.findall(r"https?://(?:www\.)?github\.com/[\w.-]+/Foxy-Audit\S*", blob)
+        assert not bad, f"{path.name} publishes a private-repo URL: {bad}"
+
+
+def test_the_policy_link_points_at_something_the_public_can_open():
+    """⚠ `Policy:` pointed at a SECURITY.md blob inside the private repo — a 404
+    for the researcher the field exists to serve. It now cites the published
+    page, and that page must actually be the disclosure policy rather than any
+    page that happens to exist."""
     policy = _fields().get("policy", [])
-    assert policy, "Policy should point at SECURITY.md"
-    assert policy[0].endswith("SECURITY.md")
-    assert _POLICY.is_file(), "SECURITY.md is missing, so Policy is a dead link"
+    assert policy, "Policy is missing"
+    assert policy == ["https://foxyaudit.tech/report-abuse.html"], \
+        f"Policy should cite the published disclosure policy, has: {policy}"
+    assert _PUBLIC_POLICY.is_file(), "report-abuse.html is missing, so Policy is a dead link"
+    published = _PUBLIC_POLICY.read_text(encoding="utf-8")
+    assert "we will not pursue legal action against you" in published, \
+        "Policy cites a page that no longer carries the safe-harbour undertaking"
+    assert "What is in scope" in published and "What is out of scope" in published, \
+        "Policy cites a page that does not state its scope"
+
+
+def test_the_repo_side_policy_defers_rather_than_restating():
+    """#191. Two copies of a policy is how they drift, so SECURITY.md points at
+    the public page and keeps only what needs repository access. If it ever grows
+    its own safe-harbour wording again, there are two of them."""
+    md = _POLICY.read_text(encoding="utf-8")
+    assert "https://foxyaudit.tech/report-abuse.html" in md, \
+        "SECURITY.md no longer points at the authoritative published policy"
+    assert "authoritative" in md.lower()
+    assert "we will not pursue legal action" not in md, \
+        "SECURITY.md restates the safe harbour instead of deferring to it"
+
+
+def test_the_honesty_survived_the_contacts_edit():
+    """⚠ A contacts change must not sand these into boilerplate. Each is a
+    deliberate absence with a stated reason, and each is the kind of line an
+    editor tidies away."""
+    md = _POLICY.read_text(encoding="utf-8")
+    assert "There is no bug bounty, and no guaranteed response time." in md
+    assert "worse for you than no promise at all" in md, "the REASON was removed"
+    assert "no published PGP key today rather than a stale one" in md
 
 
 def _block(text: str, opener: str) -> str:
@@ -200,6 +282,60 @@ def test_the_marketing_site_does_not_answer_a_missing_page_with_the_homepage():
     assert "$uri.html" in catch_all, (
         "extensionless URLs stop resolving — desktop/settings_data.py ships "
         "https://foxyaudit.tech/docs and would land on a 404")
+
+
+def test_the_nginx_template_warns_that_it_carries_no_tls():
+    """#178 — the config is a booby trap, and it already fired.
+
+    deploy/nginx-foxyaudit.conf is a PRE-CERTBOT template: every server block is
+    `listen 80;` with no ssl_certificate. The file in production is certbot's
+    rewritten descendant. Copying the template over it discards every TLS block,
+    which took HTTPS down on all four vhosts on 2026-08-13.
+
+    ⚠ `nginx -t` PASSES on the result — it is valid nginx that does not speak
+    HTTPS — and port 80 keeps answering 200, so the config test and a naive
+    health check both report success.
+
+    This guard pins the CORRESPONDENCE between the file's state and its own
+    warning, which is the only thing a repo-side test can honestly check:
+
+      * while the template has no TLS, the warning must be there and must name
+        the certbot step and the back-up-first step;
+      * if someone ever adds TLS blocks here, the warning becomes false and this
+        goes red so they rewrite it rather than leaving a lie at the top.
+
+    It cannot verify the live server. Only `curl -sI https://foxyaudit.tech`,
+    on the https scheme and from off the box, can do that."""
+    conf = _NGINX.read_text(encoding="utf-8")
+    header = conf[:conf.index("# ── Site 1")]
+    # ⚠ STRIP COMMENTS BEFORE ASKING WHETHER THE FILE HAS TLS. The header
+    # above WARNS that there is "NO ssl_certificate", so a raw-text search for
+    # that directive is answered by the warning about its absence and reports
+    # TLS present. Measured: this guard failed on its first run for exactly that
+    # reason. Ask what nginx would execute, never what the file says.
+    directives = "\n".join(l.split("#", 1)[0] for l in conf.splitlines())
+    has_tls = "ssl_certificate" in directives
+
+    if not has_tls:
+        assert "DOES NOT SPEAK HTTPS" in header,             "the template has no TLS and no longer says so at the top"
+        assert "certbot --nginx" in header,             "the header does not name the step that puts TLS back"
+        assert "cp /etc/nginx/sites-available/foxyaudit.conf" in header,             "the header does not tell you to back up the live file FIRST"
+        assert header.index("cp /etc/nginx/sites-available/foxyaudit.conf")                < header.index("cp deploy/nginx-foxyaudit.conf"),             "the backup step must come BEFORE the copy that overwrites the live file"
+        assert "nginx -t" in header and "https://" in header,             "the header must say that nginx -t is not sufficient and how to verify"
+    else:
+        assert "DOES NOT SPEAK HTTPS" not in header, (
+            "the template now carries TLS blocks, but its header still warns that "
+            "it does not — fix the header, it is the thing people act on")
+
+
+def test_the_dead_edge_config_says_it_is_dead():
+    """The Caddyfile describes the same four sites and serves none of them. It
+    says so at the top; this keeps it saying so, because the last time a file in
+    this repo described a deployment that was not the real one, the security.txt
+    header sent readers to the wrong config for months."""
+    caddy = _CADDY.read_text(encoding="utf-8")
+    assert "THIS FILE DOES NOT SERVE PRODUCTION" in caddy
+    assert "nginx-foxyaudit.conf" in caddy, "it does not name what DOES serve production"
 
 
 def test_the_served_directory_is_the_one_this_file_lives_in():

@@ -1,20 +1,34 @@
 # Foxy Audit — security contact (RFC 9116)
 #
 # Served at https://foxyaudit.tech/.well-known/security.txt by the explicit
-# route in deploy/Caddyfile, which rewrites that URL to THIS file. It lives here
-# without the leading dot on purpose: the canonical URL is what RFC 9116
-# requires, and routing to an ordinary filename means serving it does not depend
-# on whether the static file server chooses to hand out dotfiles.
+# `location = /.well-known/security.txt` route in deploy/nginx-foxyaudit.conf,
+# which aliases that URL to THIS file.
+#
+# ⚠ NOT the Caddyfile. This comment used to say deploy/Caddyfile, and that was
+# wrong: the shared VM runs its own nginx, the caddy service sits behind
+# `profiles: ["edge"]` and never starts. The Caddyfile carries an equivalent
+# route so the two edges agree, but it is not what serves you this file.
+#
+# It lives here without the leading dot on purpose: the canonical URL is what
+# RFC 9116 requires, and routing to an ordinary filename means serving it does
+# not depend on whether the static file server chooses to hand out dotfiles.
+#
+# ⚠ EVERY FIELD BELOW MUST BE REACHABLE BY SOMEONE WHO CANNOT SEE OUR REPO.
+# It is private, and stays private. This file previously listed a GitHub
+# security-advisory URL FIRST — and RFC 9116 §2.5.3 makes multiple Contact
+# fields an order of preference, so tooling read the one route that 404s for
+# every outsider as the preferred one. Policy: pointed into the same private
+# repo. Both now point at public pages that were fetched and read, not assumed
+# from a status code.
 #
 # Expires is checked by foxy-sale-page/test_security_txt.py, which fails CI a
 # month before the date below. That is the renewal mechanism — an expired
 # security.txt advertises a channel and says it is stale, which is worse than
 # not publishing one.
 
-Contact: https://github.com/fatimaatta-09/Foxy-Audit/security/advisories/new
-Contact: mailto:support@foxyaudit.tech
+Contact: mailto:security@foxyaudit.tech
 Expires: 2027-08-12T00:00:00.000Z
 Preferred-Languages: en
 Canonical: https://foxyaudit.tech/.well-known/security.txt
 Canonical: https://foxyaudit.tech/security.txt
-Policy: https://github.com/fatimaatta-09/Foxy-Audit/blob/main/SECURITY.md
+Policy: https://foxyaudit.tech/report-abuse.html

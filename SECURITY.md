@@ -1,15 +1,26 @@
 # Security Policy
 
+> **The published policy is <https://foxyaudit.tech/report-abuse.html>.**
+> That page is public, it is what `/.well-known/security.txt` cites under
+> `Policy:`, and it carries the safe-harbour undertaking, the scope, and the
+> reporting route. **It is authoritative.** This file is the contributor-facing
+> companion: it adds what only someone with access to this repository can use,
+> and deliberately does not restate the policy — two copies of a policy is how
+> they drift.
+
 ## Reporting a vulnerability
 
-Please don't open a public issue. Instead:
+Please don't open a public issue. **Email <security@foxyaudit.tech>.**
 
-- open a private [security advisory](https://github.com/fatimaatta-09/Foxy-Audit/security/advisories/new), or
-- email **support@foxyaudit.tech**.
+That is the same single channel the published policy and `security.txt` name.
 
-Those are the same two channels the [README](README.md#-security) names; this file
-exists so GitHub surfaces them in the Security tab and in the "Report a
-vulnerability" flow, not to open a third one.
+> ⚠ **This repository is private, so a GitHub security advisory is not a route
+> anyone outside it can take.** This file used to offer one, `security.txt`
+> listed it *first* — and RFC 9116 §2.5.3 makes multiple `Contact:` fields an
+> order of preference, so tooling read a URL that 404s for every outsider as the
+> preferred way to reach us. Both now name the mailbox. If the repository is
+> ever made public, the advisory flow can come back as a *second* channel; it
+> must not come back as the first, and it must not be the only one.
 
 **There is no bug bounty, and no guaranteed response time.** This is a small
 project and the honest answer is that reports are read and acted on as fast as a
@@ -19,7 +30,15 @@ which is worse for you than no promise at all.
 If you want to encrypt, say so in your first message and we'll arrange a key —
 there is no published PGP key today rather than a stale one.
 
-## What is in scope
+## Scope
+
+The published policy states scope in terms an outside researcher can act on:
+the four deployed hostnames and the released SDK on PyPI. See
+[What is in scope](https://foxyaudit.tech/report-abuse.html#s4) and
+[What is out of scope](https://foxyaudit.tech/report-abuse.html#s5).
+
+What follows is the repository-side view of the same surfaces — useful only if
+you can read this tree, which is why it lives here and not on the public page.
 
 | Area | Path |
 |---|---|
@@ -34,25 +53,8 @@ there is no published PGP key today rather than a stale one.
 | Desktop companion app | `desktop/` |
 | Deployment and CI configuration | `deploy/`, `.github/workflows/` |
 
-Deployed: `foxyaudit.tech`, `app.foxyaudit.tech`, `admin.foxyaudit.tech`,
-`checkout.foxyaudit.tech`.
-
 Reports are welcome against the current `main` and the most recent published SDK
 release. Older tags are not maintained.
-
-## What is out of scope
-
-- Third-party services the product integrates with rather than operates —
-  Paddle, Brevo, Google OAuth, the model providers, GitHub itself. Report those
-  to them; tell us too if our integration is what makes the issue reachable.
-- Volumetric denial of service, and any testing that degrades the service for
-  other people.
-- Social engineering, physical access, and attacks on the operator's own
-  machines or accounts.
-- Automated scanner output with no demonstrated impact, including missing
-  hardening headers on static pages where you cannot show what they enable.
-- Self-XSS, and issues that need a victim to paste attacker-supplied content
-  into their own developer console.
 
 ## What an attacker does not get from our servers
 
@@ -85,6 +87,9 @@ What that does **not** mean:
 ## Machine-readable
 
 `https://foxyaudit.tech/.well-known/security.txt` ([RFC 9116](https://www.rfc-editor.org/rfc/rfc9116)),
-served from `foxy-sale-page/security.txt`. It carries an `Expires` date, and
+served from `foxy-sale-page/security.txt` by the explicit route in
+`deploy/nginx-foxyaudit.conf`. It carries an `Expires` date, and
 `foxy-sale-page/test_security_txt.py` turns CI red a month before that date so it
-gets renewed rather than quietly rotting.
+gets renewed rather than quietly rotting. The same suite pins that this file,
+`README.md`, `security.txt` and the published policy all name the same mailbox,
+because four places to state one address is four places for it to drift.

@@ -30,11 +30,32 @@ classifiers = [
 # consumer's environment. (Phase 5 · 5F)
 dependencies = ["requests>=2.31,<3"]
 
+# ⚠ EVERY URL HERE IS RENDERED ON THE PyPI PAGE AND CLICKED BY STRANGERS. A link
+# that 404s is worse than an absent field: it reads as a maintained project that
+# has rotted. All four of the previous entries were checked against the live web
+# and three were dead —
+#
+#   Documentation -> foxyaudit.tech/docs.html   200, and titled "Documentation —
+#     Foxy Audit", but its entire body is "Docs are on the way." / "Full docs
+#     coming soon". The status code AND the title both looked fine; only reading
+#     it showed there was nothing there. Dropped: this README, rendered on the
+#     PyPI page itself, IS the SDK's documentation, so a field pointing away from
+#     it at a placeholder was worse than none.
+#   Source / Issues -> github.com/alikamran21/...   404, and the wrong owner
+#     besides. The repository is `fatimaatta-09` and is PRIVATE, so no GitHub URL
+#     can be a public route. Issues is dropped for the same reason: there is no
+#     public issue tracker to point at, and inventing one would be worse.
+#
+# Source now points at the PyPI files listing, which is a real, public route to
+# the MIT-licensed code: the release workflow publishes an sdist
+# (`foxy_audit-<version>.tar.gz`) alongside the wheel, verified present on the
+# live index. This matters beyond tidiness — the Privacy Policy §16 invites
+# readers to review this SDK's source to check its data-minimisation claims for
+# themselves, and until now that invitation had nowhere to land.
 [project.urls]
 Homepage = "https://foxyaudit.tech"
-Documentation = "https://foxyaudit.tech/docs.html"
-Source = "https://github.com/alikamran21/Foxy-Audit"
-Issues = "https://github.com/alikamran21/Foxy-Audit/issues"
+Source = "https://pypi.org/project/foxy-audit/#files"
+Security = "https://foxyaudit.tech/report-abuse.html"
 
 [project.scripts]
 foxy = "foxy_audit.cli:main"

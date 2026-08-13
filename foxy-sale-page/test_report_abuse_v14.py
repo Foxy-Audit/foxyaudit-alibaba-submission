@@ -271,5 +271,60 @@ def test_every_in_page_anchor_lands_on_something(dom):
     frags = {a["href"].split("#")[1] for a in dom.links if "#" in a["href"]}
     missing = sorted(frags - set(dom.ids))
     assert not missing, f"anchors point at ids that do not exist: {missing}"
-    assert len([i for i in dom.ids if re.fullmatch(r"s\d+", i)]) == 4, \
-        "the page no longer has its four sections"
+    # Four when L4 converted the v1.4 document; six since L5 moved the scope here
+    # from SECURITY.md, where no outside researcher could read it.
+    assert len([i for i in dom.ids if re.fullmatch(r"s\d+", i)]) == 6, \
+        "the page no longer has its six sections"
+
+
+# ── 7. the scope, moved here by L5 so the safe harbour is actionable ─────────
+def test_the_safe_harbour_states_what_it_covers(dom):
+    """⚠ THE MOST CONSEQUENTIAL GAP IN THE v1.4 DOCUMENT. A researcher relying on
+    "we will not pursue legal action against you" could not tell whether testing
+    admin.foxyaudit.tech was covered — the scope existed only in SECURITY.md,
+    inside a private repository they cannot open, and security.txt now cites THIS
+    page as the policy.
+
+    ⚠ TRANSLATED, NOT PORTED. SECURITY.md states scope as a table of repo paths
+    (`sdk/`, `backend/`…), meaningless without repo access. The public form names
+    the deployed hostnames and the released package. Nothing was added: every
+    surface below is one SECURITY.md already listed."""
+    t = dom.text
+    assert "What is in scope" in t and "What is out of scope" in t
+    for host in ("foxyaudit.tech", "app.foxyaudit.tech",
+                 "admin.foxyaudit.tech", "checkout.foxyaudit.tech"):
+        assert host in t, f"{host} is deployed but not named in scope"
+    assert "Python SDK on PyPI" in t and "source distribution" in t, \
+        "the published SDK is not named in scope"
+    assert "most recent published SDK release" in t and "not maintained" in t, \
+        "the version policy was dropped — scope with no version boundary is unbounded"
+
+
+def test_the_scope_names_no_surface_that_is_not_deployed(dom):
+    """The other direction: scope must not invent a system. These four hostnames
+    and the PyPI package are what exists — a fifth would be a safe-harbour
+    promise over something nobody operates."""
+    hosts = set(re.findall(r"\b([a-z]+\.)?foxyaudit\.tech\b", dom.text))
+    assert hosts <= {"", "app.", "admin.", "checkout."}, \
+        f"scope names a hostname that is not deployed: {sorted(hosts)}"
+
+
+@pytest.mark.parametrize("exclusion", [
+    "Paddle, Brevo, Google sign-in, and the AI model providers",
+    "Volumetric denial of service",
+    "Social engineering, physical access",
+    "Automated scanner output with no demonstrated impact",
+    "Self-XSS",
+])
+def test_each_out_of_scope_exclusion_survives(dom, exclusion):
+    """Exclusions are what stop the safe harbour reading as open season. All five
+    came from SECURITY.md; dropping one quietly widens the undertaking."""
+    assert exclusion in dom.text, f"an out-of-scope exclusion was lost: {exclusion[:44]!r}…"
+
+
+def test_the_scope_did_not_smuggle_in_a_response_time_or_bounty(dom):
+    """The scope sections are new text on a page whose whole discipline is that
+    it promises nothing it cannot keep."""
+    scope = dom.section(4) + dom.section(5)
+    assert not re.search(r"\b\d+\s*(?:hour|day|business[- ]day)s?\b", scope, re.I)
+    assert not re.search(r"\b(?:bounty|reward|payout)\b", scope, re.I)

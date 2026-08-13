@@ -92,7 +92,24 @@
       <li>Do not run automated scanners against production without prior arrangement.</li>
     </ul>
 
-    <h2 id="s4">What happens next</h2>
+    <h2 id="s4">What is in scope</h2>
+    <p>The safe harbour above applies to the systems we run:</p>
+    <ul>
+      <li>Our four deployed sites — <code>foxyaudit.tech</code>, <code>app.foxyaudit.tech</code>, <code>admin.foxyaudit.tech</code>, and <code>checkout.foxyaudit.tech</code>.</li>
+      <li>The published <strong>foxy-audit</strong> Python SDK on PyPI, including its source distribution.</li>
+    </ul>
+    <p>Reports are welcome against what is deployed now and the most recent published SDK release. Older releases are not maintained.</p>
+
+    <h2 id="s5">What is out of scope</h2>
+    <ul>
+      <li>Third-party services we integrate with rather than operate — Paddle, Brevo, Google sign-in, and the AI model providers. Report those to them; tell us too if our integration is what makes the issue reachable.</li>
+      <li>Volumetric denial of service, and any testing that degrades the service for other people.</li>
+      <li>Social engineering, physical access, and attacks on our people's own machines or accounts.</li>
+      <li>Automated scanner output with no demonstrated impact, including missing hardening headers on static pages where you cannot show what they enable.</li>
+      <li>Self-XSS, and issues that need a victim to paste attacker-supplied content into their own developer console.</li>
+    </ul>
+
+    <h2 id="s6">What happens next</h2>
     <p>We aim to acknowledge reports quickly, keep you updated as we investigate, and fix confirmed issues as fast as we responsibly can. For confirmed vulnerabilities, we're glad to credit reporters who want recognition.</p>
   </div>
 

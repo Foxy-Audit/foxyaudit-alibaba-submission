@@ -273,8 +273,12 @@ propose an approach before generating code, and reviewing every diff before acce
 
 ## 🔒 Security
 
-Found a vulnerability? Please don't open a public issue — open a private
-[security advisory](../../security/advisories/new), or email **support@foxyaudit.tech**.
+Found a vulnerability? Please don't open a public issue — email
+**security@foxyaudit.tech**.
+
+The published policy is <https://foxyaudit.tech/report-abuse.html>: safe harbour
+for good-faith research, what is in and out of scope, and no bounty or response
+time we cannot keep. [`SECURITY.md`](SECURITY.md) adds the repository-side view.
 
 <br>
 
