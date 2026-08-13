@@ -45,6 +45,7 @@ DOCUMENTS = {
     "Privacy Policy": "privacy.html",                  # L1
     "Cookie Policy": "cookie-policy.html",             # L7 (exists, stale)
     "Acceptable Use Policy": "acceptable-use.html",    # L6
+    "Trust Center": "trust.html",                     # L8
     "Report Abuse": "report-abuse.html",               # L4/L5 — the
     #   authoritative security policy. Any page that names it must link
     #   it: it is where the safe harbour lives, and a reader who cannot
@@ -58,7 +59,7 @@ DOCUMENTS = {
 #: Pages that participate. Append as each phase lands.
 PAGES = [
     "privacy.html", "terms.html", "terms-of-use.html",
-    "refund.html", "cookie-policy.html", "acceptable-use.html",
+    "refund.html", "trust.html", "cookie-policy.html", "acceptable-use.html",
     "report-abuse.html", "legal.html",
 ]
 

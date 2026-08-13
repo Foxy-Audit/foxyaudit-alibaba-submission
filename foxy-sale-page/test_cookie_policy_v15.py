@@ -73,8 +73,19 @@ def test_no_page_loads_a_fingerprinting_or_risk_scoring_script(dom):
     offenders = {}
     for page in sorted(HERE.glob("*.html")):
         src = page.read_text(encoding="utf-8")
-        hits = re.findall(r"recaptcha|hcaptcha|turnstile|fingerprintjs|clarity\.ms|"
-                          r"datadome|perimeterx|akamai/sensor", src, re.I)
+        # ⚠ MATCH THE HOSTS THESE THINGS ACTUALLY SHIP FROM, not their product
+        # names. The first version of this pattern matched the literal
+        # "fingerprintjs" — but FingerprintJS Pro loads from fpjscdn.net and
+        # fpnpmcdn.net, neither of which contains that string. The real vendor
+        # URL was planted at the L7 gate and SURVIVED (#196). A guard written
+        # from the NAME of a thing catches only what was going to be caught
+        # anyway; the host is what a page has to name to load it.
+        hits = re.findall(
+            r"recaptcha|hcaptcha|turnstile|challenges\.cloudflare\.com|"
+            r"fingerprintjs|fpjscdn\.net|fpnpmcdn\.net|openfpcdn\.io|"
+            r"clarity\.ms|datadome|perimeterx|px-cdn\.net|akamai/sensor|"
+            r"castle\.io|arkoselabs|funcaptcha|geetest",
+            src, re.I)
         if hits:
             offenders[page.name] = sorted(set(h.lower() for h in hits))
     assert not offenders, f"a fingerprinting or risk-scoring script is loaded: {offenders}"
