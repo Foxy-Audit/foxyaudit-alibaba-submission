@@ -289,8 +289,7 @@ def test_it_links_only_documents_that_exist(dom):
     This pinned that the MSA and the Order Form were named in prose and NOT
     linked, because neither page existed. msa.html now does (L11), so the
     assertion is inverted rather than dropped: the incorporation statement must
-    LINK the agreement it incorporates. The Order Form half stays as it was and
-    still belongs to L12.
+    LINK the agreement it incorporates.
 
     A guard whose subject ships is not finished — it is aimed somewhere new."""
     assert "Master Service Agreement" in dom.text
@@ -298,8 +297,24 @@ def test_it_links_only_documents_that_exist(dom):
         "sla.html states it is incorporated into the Master Service Agreement but "
         "does not link it, and msa.html exists now")
     assert (HERE / "msa.html").is_file(), "the MSA link has no target"
-    assert "Order Form" in dom.text and 'href="/order-form.html"' not in dom.src, \
-        "an Order Form page appears to exist now — that is L12; re-aim this half too"
+
+    # ⚠ THE ORDER FORM HALF, RESOLVED IN L12 RATHER THAN LEFT DANGLING.
+    #
+    # L12 decided NOT to publish the Order Form. It is a blank contract template
+    # — eleven unfilled brackets and two signature lines — and a page reading
+    # "Fee: [$ amount]" above a blank signature line is indistinguishable from an
+    # unfinished page. So this half is no longer "waiting for a page": the
+    # absence is a decision, and what must exist instead is the EXPLANATION in
+    # msa.html. Both halves are asserted, so publishing the form later trips this
+    # deliberately, and deleting the explanation trips it too.
+    assert "Order Form" in dom.text
+    assert 'href="/order-form.html"' not in dom.src, (
+        "an Order Form page appears to exist now — L12 decided against publishing "
+        "the blank template; if that was overturned, re-aim this and add the card")
+    assert not (HERE / "order-form.html").is_file(), "an order-form.html appeared"
+    assert 'id="order-form"' in (HERE / "msa.html").read_text(encoding="utf-8"), (
+        "msa.html lost the section explaining what an Order Form is — this page's "
+        "own scope sentence then depends on a term nothing on the site defines")
     for href in {a["href"] for a in dom.links if a["href"].startswith("/")}:
         target = href.lstrip("/").split("#")[0] or "index.html"
         assert (HERE / target).is_file(), f"links to {href}, which does not exist"
