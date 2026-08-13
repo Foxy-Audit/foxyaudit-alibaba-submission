@@ -49,7 +49,7 @@ _HERE = pathlib.Path(__file__).resolve().parent
 #:   L1 privacy.html · L2 terms.html · L3 refund.html · L4 report-abuse.html
 #:   L6 acceptable-use.html · L7 cookie-policy.html · L8 trust.html
 #:   L9 sla.html · L10 dpa.html · L11 msa.html
-PAGES = ["privacy.html"]
+PAGES = ["privacy.html", "terms.html"]
 
 _CHROME = (os.environ.get("CHROME_BIN")
            or shutil.which("chrome") or shutil.which("google-chrome")
