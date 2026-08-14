@@ -244,8 +244,8 @@ def test_the_w_stream_surfaces_are_untouched():
     gmail = {p.name for p in pages if "foxyaudit@gmail.com" in p.read_text(encoding="utf-8")}
     assert not gmail, f"the Gmail address is back on {sorted(gmail)} (#190)"
     fox = {p.name for p in pages if "\U0001f98a" in p.read_text(encoding="utf-8")}
-    assert len(fox) == 11 and fox == set(rendered.PAGES), \
-        f"the fox emoji should survive only on the 11 legal documents " \
-        f"(their header micro-phase is still open): {sorted(fox)}"
+    assert not fox, \
+        f"a fox emoji is back on {sorted(fox)} - W5 closed #12 (owner: the " \
+        f"logo or nothing); the count across every sale page is ZERO, forever"
     fonts = {p.name for p in pages if "fonts.googleapis.com" in p.read_text(encoding="utf-8")}
     assert not fonts, f"a page fetches fonts from Google again: {sorted(fonts)} (#10)"

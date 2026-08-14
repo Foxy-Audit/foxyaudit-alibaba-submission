@@ -128,6 +128,12 @@ def test_no_page_fetches_fonts_from_a_cdn():
 
 
 def test_the_embedded_faces_are_the_same_bytes_everywhere():
+    """W5 (#212) re-aimed this: the three carriers now embed a THIRD face —
+    the true Poppins 800 for display headings (fetched once at build time;
+    runtime stays zero-external). The legal pages keep their settled pair
+    (their headings ask for 600/700 and nothing heavier), so the invariant is:
+    carriers = the legal pair + exactly one 800, all byte-equal across
+    carriers."""
     reference = _font_faces(_read("privacy.html"))
     assert len(reference) == 2, (
         f"privacy.html (the settled model) should embed exactly two faces, "
@@ -135,12 +141,22 @@ def test_the_embedded_faces_are_the_same_bytes_everywhere():
     weights = sorted(re.search(r"font-weight:(\d+)", f).group(1)
                      for f in reference)
     assert weights == ["600", "700"], f"the model's weights moved: {weights}"
-    for carrier in ("site.css", "index.html", "book-a-demo.html"):
-        got = _font_faces(_read(carrier))
-        assert got == reference, (
-            f"{carrier}'s embedded faces differ from the legal pages' — "
-            f"{len(got)} face(s), matching={sum(g in reference for g in got)}. "
-            f"One surface, one pair of font files")
+    carrier_faces = {c: _font_faces(_read(c))
+                     for c in ("site.css", "index.html", "book-a-demo.html")}
+    for carrier, got in carrier_faces.items():
+        assert len(got) == 3, (
+            f"{carrier} embeds {len(got)} faces, not 3 (the legal pair + the "
+            f"true 800)")
+        assert all(r in got for r in reference), (
+            f"{carrier} dropped one of the legal pages' settled faces")
+        eight = [g for g in got if "font-weight:800" in g]
+        assert len(eight) == 1, (
+            f"{carrier} carries {len(eight)} weight-800 faces, not one")
+    eights = {c: [g for g in fs if "font-weight:800" in g][0]
+              for c, fs in carrier_faces.items()}
+    assert len(set(eights.values())) == 1, (
+        "the 800 face differs between carriers — one surface, one font file; "
+        "a re-subset on one carrier is a different font on one page")
 
 
 # ── 3 · the gmail is gone, forever ───────────────────────────────────────────
@@ -165,11 +181,11 @@ def test_the_replacement_address_is_the_support_mailbox():
 
 # ── 4 · the fox emoji is a logo now ──────────────────────────────────────────
 
-def test_no_fox_emoji_outside_the_legal_documents():
-    """#12, owner: "logo or nothing". The legal pages' 🦊 headers are a later
-    micro-phase and stay; everywhere else the mark is /logo.png or absent."""
-    offenders = [p for p in ALL_HTML
-                 if p not in LEGAL_DOCS and "\U0001f98a" in _read(p)]
+def test_no_fox_emoji_anywhere():
+    """#12, owner: "logo or nothing" — CLOSED by W5: the legal headers were
+    the last carriers, and their mark became /logo.png. Zero, everywhere,
+    forever."""
+    offenders = [p for p in ALL_HTML if "\U0001f98a" in _read(p)]
     assert not offenders, f"the fox emoji is back on {offenders}"
 
 

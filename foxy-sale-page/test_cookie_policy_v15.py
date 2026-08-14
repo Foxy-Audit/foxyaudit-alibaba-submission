@@ -301,7 +301,7 @@ def test_the_docx_page_chrome_was_not_pasted_in(dom):
     assert dom.src.count('class="foot"') == 1, "a second footer was pasted in"
     assert dom.src.count("Cryptographic compliance, not a promise") == 1
     assert dom.text.count("Back to home") == 1
-    assert dom.src.count("\U0001f98a") == 1, "the document's fox emoji was added on top"
+    assert dom.src.count("\U0001f98a") == 0, "a fox emoji is back - W5 closed #12: the mark is /logo.png, everywhere"
 
 
 # ── 5. navigation, table shape, and the network guarantee ────────────────────
