@@ -12,12 +12,13 @@ import socket
 
 import pytest
 
-from foxy_testbed.core import Assistant
+from foxy_testbed.core import Assistant, Turn
 from foxy_testbed.providers import Provider, ProviderError
 from foxy_testbed.scoreboard import (OUTCOME_ASSISTED, OUTCOME_CAUGHT,
                                      OUTCOME_ERROR, OUTCOME_GAP_CLOSED,
                                      OUTCOME_GAP_OPEN, OUTCOME_MISSED,
-                                     OUTCOME_OVER_BLOCKED, classify, run_probes)
+                                     OUTCOME_OVER_BLOCKED, SectorMismatch,
+                                     classify, run_probes)
 from foxy_testbed.sectors import (EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, Probe,
                                   Sector, get_sector)
 
@@ -42,6 +43,51 @@ def test_each_sector_scores_exactly_what_it_should(sector_name):
     assert board.errors == 0
     assert board.gaps_closed == 0
     assert board.ok is True
+
+
+@pytest.mark.parametrize("sector_name", sorted(EXPECTED))
+def test_redact_mode_scores_exactly_what_block_mode_does(sector_name):
+    """A scrubbed prompt is enforcement, not a miss.
+
+    THE GUARD THAT WAS MISSING. Every scoreboard test ran the default mode, so
+    ``--mode redact`` -- where all five healthcare enforcement probes come back
+    ``redacted`` with their spans replaced before the model saw them -- printed
+    ``FAIL | enforcement 0/5`` and exited 1. The testbed reported the SDK's own
+    correct behaviour as broken, and nothing measured the mode it happened in.
+    """
+    caught, enf_total, assisted, asst_total, gaps = EXPECTED[sector_name]
+    board = run_probes(sector_name, mode="redact")
+
+    assert (board.caught, board.missed) == (caught, 0)
+    assert (board.assisted, board.over_blocked) == (assisted, 0)
+    assert board.gaps_open == gaps
+    assert board.ok is True
+
+    # ...and it really is the redact path, not block wearing its name.
+    enforced = [r.turn.decision for r in board.results if r.probe.expect == EXPECT_BLOCK]
+    assert set(enforced) == {"redacted"}, enforced
+    assert all(r.turn.reached_provider for r in board.results
+               if r.probe.expect == EXPECT_BLOCK), (
+        "redact does not prevent the call -- it scrubs what the call carries")
+
+
+@pytest.mark.parametrize("sector_name", sorted(EXPECTED))
+def test_observe_mode_reports_zero_enforcement_and_says_why(sector_name):
+    """Observe prevents nothing, and the scoreboard says so rather than passing.
+
+    Not a special case: observe genuinely enforces nothing, so 0/N is the true
+    number and the run is not a pass. What it must not do is leave a reader to
+    guess whether the guard broke, so the enforcement section names the mode as
+    the cause.
+    """
+    caught, enf_total, _assisted, _asst_total, _gaps = EXPECTED[sector_name]
+    board = run_probes(sector_name, mode="observe")
+
+    assert board.caught == 0
+    assert board.missed == enf_total
+    assert board.ok is False
+    text = _flat(board.render())
+    assert "mode=observe records but never prevents" in text
 
 
 @pytest.mark.parametrize("sector_name", sorted(EXPECTED))
@@ -88,30 +134,77 @@ def test_the_scoreboard_states_the_presets_limits_and_the_fixture_disclaimer(sec
 
 
 # ── classify: every branch, with a literal outcome ────────────────────────────
-class _Turn:
-    """The three fields ``classify`` reads, and nothing else."""
+def _turn(decision, answered, reached):
+    """A REAL Turn, not a stub.
 
-    def __init__(self, decision="allowed", blocked=False, answered=True):
-        self.decision = decision
-        self.blocked = blocked
-        self.answered = answered
+    A hand-rolled double used to stand in here, exposing the three attributes
+    ``classify`` happened to read. It passed while the property it faked was
+    being removed from the real class, which is the whole failure mode of a
+    stub: it tests the double's idea of the record. Building the frozen
+    dataclass costs nothing and means ``prompt_enforced`` here is the same
+    property production computes.
+    """
+    return Turn(sector="s", policy_tag="t", mode="block", provider="mock",
+                model="m", decision=decision, answered=answered,
+                reached_provider=reached)
+
+
+BLOCKED = _turn("blocked", answered=False, reached=False)
+REDACTED = _turn("redacted", answered=True, reached=True)
+ALLOWED = _turn("allowed", answered=True, reached=True)
+FLAGGED = _turn("flagged", answered=True, reached=True)
+WITHHELD = _turn("blocked_response", answered=False, reached=True)
+ERRORED = _turn("error", answered=False, reached=True)
 
 
 @pytest.mark.parametrize("expect,turn,outcome", [
-    (EXPECT_BLOCK, _Turn("blocked", blocked=True, answered=False), OUTCOME_CAUGHT),
-    (EXPECT_BLOCK, _Turn("allowed"), OUTCOME_MISSED),
-    (EXPECT_ASSIST, _Turn("allowed"), OUTCOME_ASSISTED),
-    (EXPECT_ASSIST, _Turn("blocked", blocked=True, answered=False), OUTCOME_OVER_BLOCKED),
-    (KNOWN_GAP, _Turn("allowed"), OUTCOME_GAP_OPEN),
-    (KNOWN_GAP, _Turn("blocked", blocked=True, answered=False), OUTCOME_GAP_CLOSED),
-    (EXPECT_BLOCK, _Turn("error", answered=False), OUTCOME_ERROR),
-    (EXPECT_ASSIST, _Turn("error", answered=False), OUTCOME_ERROR),
-    (KNOWN_GAP, _Turn("error", answered=False), OUTCOME_ERROR),
+    # Prompt enforcement: prevented OR scrubbed. Both stopped the offending
+    # span from reaching the model, which is what the probe asks about.
+    (EXPECT_BLOCK, BLOCKED, OUTCOME_CAUGHT),
+    (EXPECT_BLOCK, REDACTED, OUTCOME_CAUGHT),
+    (EXPECT_BLOCK, ALLOWED, OUTCOME_MISSED),
+    (EXPECT_BLOCK, FLAGGED, OUTCOME_MISSED),
+    # A withheld RESPONSE is not prompt enforcement -- the prompt reached the
+    # provider, so this column must not claim it.
+    (EXPECT_BLOCK, WITHHELD, OUTCOME_MISSED),
+
+    (EXPECT_ASSIST, ALLOWED, OUTCOME_ASSISTED),
+    (EXPECT_ASSIST, FLAGGED, OUTCOME_ASSISTED),
+    (EXPECT_ASSIST, BLOCKED, OUTCOME_OVER_BLOCKED),
+    # ...but from the USER's seat a withheld reply IS an over-block: they got
+    # nothing back. Different question, different property, deliberately.
+    (EXPECT_ASSIST, WITHHELD, OUTCOME_OVER_BLOCKED),
+
+    (KNOWN_GAP, ALLOWED, OUTCOME_GAP_OPEN),
+    (KNOWN_GAP, BLOCKED, OUTCOME_GAP_CLOSED),
+    # A gap closing under redact closes by being SCRUBBED.
+    (KNOWN_GAP, REDACTED, OUTCOME_GAP_CLOSED),
+
+    (EXPECT_BLOCK, ERRORED, OUTCOME_ERROR),
+    (EXPECT_ASSIST, ERRORED, OUTCOME_ERROR),
+    (KNOWN_GAP, ERRORED, OUTCOME_ERROR),
 ])
 def test_classify_maps_each_expectation_and_outcome(expect, turn, outcome):
     assert classify(Probe(id="p", expect=expect, prompt="x", intent="y",
                           gap_reason="z" if expect == KNOWN_GAP else ""),
                     turn) == outcome
+
+
+def test_the_turn_vocabulary_keeps_prevention_and_evidence_apart():
+    """The distinction defect T0b-2 collapsed, asserted directly on the record."""
+    assert BLOCKED.prevented and not BLOCKED.response_withheld
+    assert WITHHELD.response_withheld and not WITHHELD.prevented
+
+    # Prompt enforcement covers exactly the two prompt-side outcomes.
+    assert BLOCKED.prompt_enforced and REDACTED.prompt_enforced
+    assert not WITHHELD.prompt_enforced, (
+        "a withheld reply does not mean the prompt was enforced -- it reached "
+        "the provider")
+    assert not ALLOWED.prompt_enforced and not FLAGGED.prompt_enforced
+
+    # `enforced` is the broader "the guard did something at all".
+    assert WITHHELD.enforced and BLOCKED.enforced and REDACTED.enforced
+    assert not ALLOWED.enforced and not FLAGGED.enforced
 
 
 # ── the failures the board must actually report ───────────────────────────────
@@ -183,6 +276,98 @@ def test_a_provider_error_fails_the_run_rather_than_scoring_it():
     text = board.render()
     assert "ERRORED" in text
     assert "HTTP 503" in text
+
+
+# ── the scoreboard must describe the assistant that produced it ───────────────
+def test_a_sector_that_disagrees_with_its_assistant_is_refused():
+    """The mislabelling defect, refused at the door.
+
+    Reading ``sector`` for the probes and the rendered note while ``assistant``
+    supplied the verdicts let a finance scoreboard -- "cardholder data is NOT
+    blocked here" -- report both finance gaps CLOSED because ``hipaa`` had
+    judged them. One preset's limits over another's verdicts is exactly the
+    ``hipaa_basic`` shape.
+    """
+    healthcare = Assistant(get_sector("healthcare"))
+
+    with pytest.raises(SectorMismatch) as excinfo:
+        run_probes("finance", assistant=healthcare)
+
+    message = str(excinfo.value)
+    # It names BOTH sides, so the caller can see which one they got wrong.
+    for token in ("finance", "default", "healthcare", "hipaa"):
+        assert token in message
+
+
+def test_the_mismatch_is_refused_rather_than_silently_resolved():
+    """Neither side wins by default. Picking one would hide the caller's bug."""
+    with pytest.raises(SectorMismatch):
+        run_probes(get_sector("legal"), assistant=Assistant(get_sector("finance")))
+
+
+def test_an_assistant_alone_needs_no_sector_argument():
+    board = run_probes(None, assistant=Assistant(get_sector("finance")))
+    assert board.sector_name == "finance"
+    assert board.gaps_open == 2 and board.ok
+
+
+def test_a_matching_sector_is_accepted():
+    sector = get_sector("legal")
+    board = run_probes(sector, assistant=Assistant(sector))
+    assert board.sector_name == "legal"
+
+    # By VALUE, not identity: an equal preset rebuilt elsewhere is the same
+    # preset, and rejecting it would be a false alarm.
+    twin = Sector(name=sector.name, title=sector.title, policy_tag=sector.policy_tag,
+                  system_prompt=sector.system_prompt, policy_note=sector.policy_note,
+                  probes=sector.probes)
+    assert run_probes(twin, assistant=Assistant(sector)).ok
+
+
+def test_everything_rendered_comes_from_the_assistant_not_the_argument():
+    """Structural, not incidental: the report cannot name a preset that did not run."""
+    finance = get_sector("finance")
+    board = run_probes(finance, assistant=Assistant(finance))
+    assert board.policy_tag == "default"
+    assert _flat(finance.policy_note) in _flat(board.render())
+
+
+# ── the provenance sentence must follow the provider ──────────────────────────
+class _LiveProvider(Provider):
+    """A provider that reports itself live. ``Provider.is_live`` defaults True."""
+
+    name = "openai"
+
+    def __init__(self):
+        super().__init__("gpt-5.6")
+
+    def complete(self, system, prompt):
+        return "a reply that did not come from a fixture"
+
+    @property
+    def note(self):
+        return "live provider -- this prompt is sent to OpenAI under YOUR key."
+
+
+def test_a_live_run_does_not_call_its_replies_fixtures():
+    """Two contradictory provenance claims about the same replies, in an audit
+    product's own demo, is the failure this closes."""
+    sector = get_sector("legal")
+    board = run_probes(sector, assistant=Assistant(sector, provider=_LiveProvider()))
+    text = _flat(board.render())
+
+    assert "fixtures" not in text, (
+        "a live run must not describe real model output as fixtures")
+    assert "under your own key" in text
+    assert "openai (gpt-5.6)" in text
+    # The half that is true either way survives.
+    assert "nothing here reads the content of a reply" in text
+
+
+def test_a_mock_run_still_says_its_replies_are_fixtures():
+    text = _flat(run_probes("legal").render())
+    assert "The replies are fixtures, not model output." in text
+    assert "under your own key" not in text
 
 
 # ── offline, and provably so ──────────────────────────────────────────────────

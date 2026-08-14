@@ -67,10 +67,19 @@ test = ["httpx>=0.27", "pytest>=8"]
 pii = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 
 [tool.hatch.build.targets.wheel]
-# foxy_testbed ships in the SAME wheel so that `pip install foxy-audit` is all a
-# prospect needs to run `python -m foxy_testbed`. It adds NO dependency: the mock
-# provider is stdlib-only and the two live providers import `requests` lazily,
-# which is already the single entry above.
+# foxy_testbed ships in the SAME wheel so that `pip install foxy-audit` becomes
+# all a prospect needs to run `python -m foxy_testbed`. It adds NO dependency:
+# the mock provider is stdlib-only and the two live providers import `requests`
+# lazily, which is already the single entry above.
+#
+# ⚠ FROM THE NEXT RELEASE, NOT TODAY. The version below is 1.8.0, which is
+# already tagged and published, so the wheel on PyPI right now does NOT contain
+# this package and a re-upload of 1.8.0 would be rejected. That is fine and
+# nothing here is broken: merging to main does not publish anything —
+# release.yml runs on a tag — so this line simply takes effect at the next
+# version bump. The bump belongs to a later testbed phase, and it is FOUR
+# strings: this file's `version`, foxy_audit/__init__.py's `__version__` and its
+# changelog block, and the repository-root VERSION file (the forgotten one).
 #
 # The dependency arrow points one way only. foxy_testbed imports foxy_audit's
 # PUBLIC api (FoxyClient.audit, check, the two block exceptions); nothing in

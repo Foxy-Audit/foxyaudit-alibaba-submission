@@ -68,15 +68,33 @@ class ProbeResult:
 
 
 def classify(probe, turn: Turn) -> str:
-    """The outcome for one probe, given what actually happened to it."""
+    """The outcome for one probe, given what actually happened to it.
+
+    ``prompt_enforced``, NOT "was it blocked". The two differ in both modes that
+    matter and the difference is not cosmetic:
+
+    * under ``--mode redact`` every enforcement probe comes back ``redacted``
+      with its offending span replaced before the model saw it. That is the
+      guard working exactly as documented, and scoring it on blocked-ness alone
+      printed ``FAIL | enforcement 0/5`` over five correct redactions.
+    * a withheld RESPONSE is not prompt enforcement — the prompt reached the
+      provider. Counting it here put ``[caught]`` directly above the same
+      probe's own ``reached the model: yes``.
+    """
     if turn.decision == DECISION_ERROR:
         return OUTCOME_ERROR
     if probe.expect == EXPECT_BLOCK:
-        return OUTCOME_CAUGHT if turn.blocked else OUTCOME_MISSED
+        return OUTCOME_CAUGHT if turn.prompt_enforced else OUTCOME_MISSED
     if probe.expect == EXPECT_ASSIST:
+        # `answered` rather than `prompt_enforced`: this column is about what
+        # the USER got back, and a reply withheld by the response scan is an
+        # over-block from where they are sitting even though the prompt was
+        # never touched.
         return OUTCOME_ASSISTED if turn.answered else OUTCOME_OVER_BLOCKED
-    # KNOWN_GAP: asserted still open. Closing is reported, never punished.
-    return OUTCOME_GAP_CLOSED if turn.blocked else OUTCOME_GAP_OPEN
+    # KNOWN_GAP: asserted still open. Closing is reported, never punished — and
+    # a gap that closes under redact closes by being SCRUBBED, so this needs the
+    # same property as the enforcement column or a closed gap reads as open.
+    return OUTCOME_GAP_CLOSED if turn.prompt_enforced else OUTCOME_GAP_OPEN
 
 
 @dataclass(frozen=True)
@@ -89,6 +107,9 @@ class Scoreboard:
     model: str
     provider_note: str
     ruleset_version: str
+    #: Whether the replies came from a real model. The assistance blurb follows
+    #: this rather than assuming the mock — see :func:`_assistance_blurb`.
+    provider_is_live: bool = False
     results: tuple = ()
 
     def _of(self, expectation):
@@ -153,13 +174,61 @@ class Scoreboard:
         return render(self)
 
 
+class SectorMismatch(ValueError):
+    """``sector`` and ``assistant`` describe different presets. See :func:`run_probes`."""
+
+
 def run_probes(sector, mode="block", provider="mock", api_key: str = "",
                model: str = "", assistant=None) -> Scoreboard:
-    """Run every probe in ``sector``'s corpus and tally the three columns."""
-    sector = get_sector(sector) if isinstance(sector, str) else sector
+    """Run every probe in ``sector``'s corpus and tally the three columns.
+
+    ⚠ WHEN ``assistant`` IS SUPPLIED IT IS THE AUTHORITY, AND A DISAGREEMENT IS
+    REFUSED. Both arguments used to be read independently: the probes and the
+    rendered policy note came from ``sector`` while the verdicts came from
+    whatever tag ``assistant`` was actually built with. So
+    ``run_probes("finance", assistant=Assistant("healthcare"))`` printed
+    finance's "cardholder data is NOT blocked here" note above both finance gaps
+    reported CLOSED — because ``hipaa`` had judged them. A scoreboard describing
+    one policy while reporting another's verdicts is the ``hipaa_basic``
+    mislabelling defect in a new place, and T1/T2/T3 are exactly the callers
+    that hold one long-lived Assistant per session.
+
+    The fix is the refusal: the mismatch RAISES rather than resolving silently
+    to either side — a caller who asked for finance and would have got
+    healthcare has a bug, and picking a winner for them hides it.
+
+    Reading everything from ``assistant.sector`` afterwards is DEFENCE IN DEPTH,
+    not a second fix, and is worth stating honestly: with the refusal in place
+    the two reads are provably identical, because ``Sector`` is a frozen
+    dataclass whose every field participates in ``==``. Measured — no test can
+    tell them apart, and one deliberately written to try is an equivalent
+    mutant. Its value is future-tense: if the comparison is ever loosened (to
+    name and tag, say, so a caller may pass a customised note), this line is
+    what keeps the report following what actually ran instead of silently
+    reintroducing the defect.
+
+    Sectors are compared by VALUE. ``Sector`` and ``Probe`` are frozen
+    dataclasses, so two structurally identical presets are interchangeable and
+    comparing by identity would reject a caller who rebuilt an equal one.
+    """
+    if isinstance(sector, str):
+        sector = get_sector(sector)
+
     if assistant is None:
         assistant = Assistant(sector, mode=mode, provider=provider,
                               api_key=api_key, model=model)
+    elif sector is not None and sector != assistant.sector:
+        raise SectorMismatch(
+            "run_probes was asked for sector {0!r} (policy_tag={1!r}) but the "
+            "assistant supplied runs {2!r} (policy_tag={3!r}). The scoreboard "
+            "would state one preset's limits while reporting the other's "
+            "verdicts. Pass the assistant alone, or build it from this "
+            "sector.".format(sector.name, sector.policy_tag,
+                             assistant.sector.name, assistant.sector.policy_tag))
+
+    # From here on the ASSISTANT is the single source of truth: its sector
+    # supplies the probes and every line the report renders.
+    sector = assistant.sector
 
     results = []
     ruleset_version = ""
@@ -176,6 +245,7 @@ def run_probes(sector, mode="block", provider="mock", api_key: str = "",
         provider=assistant.provider.name,
         model=assistant.provider.model,
         provider_note=assistant.provider.note,
+        provider_is_live=assistant.provider.is_live,
         ruleset_version=ruleset_version,
         results=tuple(results),
     )
@@ -221,6 +291,29 @@ def _probe_lines(result) -> list:
     return lines
 
 
+def _assistance_blurb(board: Scoreboard) -> str:
+    """What 'answered' means HERE — which depends on what actually answered.
+
+    This sentence used to hardcode "with the mock provider the replies are
+    fixtures" and printed it unchanged on a live run, three lines under a header
+    already saying the prompt went to OpenAI under the user's own key. Two
+    contradictory provenance claims about the same replies, in the demo of a
+    product whose entire pitch is that its evidence is honest.
+
+    The half that does NOT change is the second sentence: neither variant claims
+    to grade an answer. Nothing in this package reads a reply's content, so the
+    column measures over-blocking under any provider.
+    """
+    common = ("'answered' means the guard let the prompt through and a reply "
+              "came back. It is NOT a claim that the answer was good -- nothing "
+              "here reads the content of a reply, so this column measures "
+              "whether the guard over-blocks, not model quality.")
+    if board.provider_is_live:
+        return ("{0} The replies came from {1} ({2}), under your own key.".format(
+            common, board.provider, board.model))
+    return "{0} The replies are fixtures, not model output.".format(common)
+
+
 def render(board: Scoreboard) -> str:
     """The scoreboard, as 7-bit text. See the module docstring for why."""
     out = [_rule("="),
@@ -239,6 +332,15 @@ def render(board: Scoreboard) -> str:
     out += ["", _rule(),
             "  ENFORCEMENT -- did the guard stop what it should have?",
             _rule()]
+    if board.mode == "observe":
+        # 0/N here is TRUE, not a regression, and saying so beats letting a
+        # reader conclude the guard is broken. Stated rather than special-cased:
+        # the run still does not pass, because nothing was prevented.
+        out += _wrap(
+            "mode=observe records but never prevents, so nothing below can be "
+            "caught. That is what observe means. Run with --mode block or "
+            "--mode redact to measure enforcement.", 2)
+        out.append("")
     for result in board._of(EXPECT_BLOCK):
         out += _probe_lines(result)
     out.append("  caught {0}/{1} | missed {2}".format(
@@ -247,11 +349,7 @@ def render(board: Scoreboard) -> str:
     out += ["", _rule(),
             "  ASSISTANCE -- is it still useful with the guard on?",
             _rule()]
-    out += _wrap(
-        "'answered' means the guard let the prompt through and a reply came "
-        "back. It is NOT a claim that the answer was good: with the mock "
-        "provider the replies are fixtures, so this column measures whether "
-        "the guard over-blocks, not model quality.", 2)
+    out += _wrap(_assistance_blurb(board), 2)
     out.append("")
     for result in board._of(EXPECT_ASSIST):
         out += _probe_lines(result)

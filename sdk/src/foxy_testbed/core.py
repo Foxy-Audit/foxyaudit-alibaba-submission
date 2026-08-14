@@ -119,13 +119,46 @@ class Turn:
     #: unless ``decision`` is "error".
     error: str = ""
 
+    # ── what the guard did, in four words that cannot be confused ─────────────
+    # There was a single `blocked` property here and it covered both
+    # DECISION_BLOCKED and DECISION_BLOCKED_RESPONSE. That one word spanning
+    # both is precisely the prevention-vs-evidence conflation this product
+    # cannot afford: a withheld RESPONSE means the prompt already reached the
+    # provider and tokens were already spent, so scoring it in the same column
+    # as a prompt that never left printed "[caught] ... reached the model: yes"
+    # on adjacent lines. Each property below states its own scope, and the
+    # ambiguous word is gone rather than redefined.
+
     @property
-    def blocked(self) -> bool:
-        return self.decision in (DECISION_BLOCKED, DECISION_BLOCKED_RESPONSE)
+    def prevented(self) -> bool:
+        """Nothing left this machine. ``reached_provider`` is False."""
+        return self.decision == DECISION_BLOCKED
+
+    @property
+    def response_withheld(self) -> bool:
+        """The prompt DID reach the provider; only the reply was withheld.
+
+        Real prevention of EGRESS TO THE CALLER, and the SDK counts it as such
+        — but not prevention of the prompt, which is what a prompt-side probe
+        asks about.
+        """
+        return self.decision == DECISION_BLOCKED_RESPONSE
+
+    @property
+    def prompt_enforced(self) -> bool:
+        """The guard acted on the PROMPT: it never left, or it left scrubbed.
+
+        THE ONE AN ``expect_block`` PROBE MEASURES. A redacted prompt is a
+        success, not a miss: the offending span never reached the model, which
+        is the whole claim ``mode="redact"`` makes. Scoring redaction as a
+        failure had the testbed reporting the SDK's own correct behaviour as
+        broken — the worst direction an audit product's demo can be wrong in.
+        """
+        return self.decision in (DECISION_BLOCKED, DECISION_REDACTED)
 
     @property
     def enforced(self) -> bool:
-        """Did the guard DO something — prevent or rewrite? Not merely record."""
+        """The guard did something at all — prevented, scrubbed, or withheld."""
         return self.decision in (DECISION_BLOCKED, DECISION_BLOCKED_RESPONSE,
                                  DECISION_REDACTED)
 
@@ -141,7 +174,15 @@ class Turn:
         return {"sector": self.sector, "policy_tag": self.policy_tag,
                 "mode": self.mode, "provider": self.provider, "model": self.model,
                 "decision": self.decision, "answered": self.answered,
-                "reached_provider": self.reached_provider, "reply": self.reply,
+                "reached_provider": self.reached_provider,
+                # Carried rather than left for each surface to re-derive from
+                # `decision`. Three front-ends each writing their own version of
+                # "was this prevented?" is three chances to rebuild the
+                # conflation that produced defect T0b-2.
+                "prevented": self.prevented,
+                "response_withheld": self.response_withheld,
+                "prompt_enforced": self.prompt_enforced,
+                "enforced": self.enforced, "reply": self.reply,
                 "rules": list(self.rules), "signals": list(self.signals),
                 "blocked_reason": self.blocked_reason,
                 "ruleset_version": self.ruleset_version,

@@ -48,7 +48,7 @@ def test_a_blocked_prompt_never_reaches_the_provider():
     turn = _assistant("block", provider).ask(PHI_PROMPT)
 
     assert turn.decision == DECISION_BLOCKED
-    assert turn.blocked and not turn.answered
+    assert turn.prevented and turn.prompt_enforced and not turn.answered
     assert turn.reached_provider is False
     # The claim, at the only place it can actually be checked.
     assert provider.prompts == []

@@ -124,6 +124,12 @@ jobs:
           python -m foxy_testbed --sector healthcare --probe all
           python -m foxy_testbed --sector finance   --probe all
           python -m foxy_testbed --sector legal     --probe all
+          # AND IN REDACT. Every scoreboard step ran the default mode, so the
+          # mode where enforcement arrives as `redacted` rather than `blocked`
+          # was measured nowhere — and the scoreboard scored all five correct
+          # redactions as MISSED and exited 1. A guard covers the tallies; this
+          # line covers the entry point a human actually types.
+          python -m foxy_testbed --sector healthcare --probe all --mode redact
       - name: Hash-chain regression test
         run: pytest backend/tests/test_chain.py -q
       - name: Verifier tests (the second, independent implementation)
