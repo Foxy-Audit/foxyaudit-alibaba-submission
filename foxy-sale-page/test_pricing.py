@@ -198,12 +198,18 @@ def test_the_two_copies_of_the_ghost_rule_agree() -> None:
 
 
 def test_the_brand_font_is_requested_the_way_this_surface_does_it() -> None:
-    """This surface FETCHES Poppins from Google Fonts; the two consoles embed it.
-    They are opposite strategies and pricing.html follows its own site — six pages
-    here omit the tags entirely and fall back to system-ui, which is a real
-    inconsistency but not this phase's to fix."""
-    assert "fonts.googleapis.com" in PRICING
-    assert 'rel="preconnect"' in PRICING
+    """W3 (#10, owner decision) flipped this surface's strategy: Poppins is
+    EMBEDDED (the same two base64 subsets the legal pages ship, inherited via
+    /site.css) and never fetched — a font CDN would send the reader's IP to
+    Google. The old version of this test pinned the fetch; the invariant is
+    now its exact inverse, and test_w3_master_theme.py owns the surface-wide
+    sweep."""
+    assert "fonts.googleapis.com" not in PRICING, (
+        "pricing.html fetches fonts from Google again — the owner decision "
+        "(#10) is embedded faces only")
+    assert 'href="/site.css"' in PRICING, (
+        "pricing.html no longer links site.css, which carries the embedded "
+        "Poppins faces it renders with")
 
 
 def test_pricing_stays_free_of_emoji() -> None:

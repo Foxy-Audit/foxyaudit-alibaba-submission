@@ -230,22 +230,22 @@ def test_terms_of_use_section_13_no_longer_claims_a_complete_list(legal_dom):
         "the disclaimer can go — but say so deliberately"
 
 
-# ── 4. THE THINGS L13 MUST NOT HAVE TOUCHED ─────────────────────────────────
+# ── 4. THE THINGS L13 RESERVED FOR THE W STREAM — WHICH HAS NOW ACTED ───────
 def test_the_w_stream_surfaces_are_untouched():
-    """The Gmail address, the fox and the Google Fonts link are all owner
-    decisions belonging to the W stream. Pinned at their measured counts so this
-    sweep is provably not the thing that changed them.
+    """When this sweep shipped, the Gmail address, the fox and the Google Fonts
+    link were pinned at their measured counts so the sweep was provably not the
+    thing that changed them — the docstring assigned them "to the W stream".
 
-    ⚠ MEASURED, NOT ASSUMED: the brief said the Gmail is on 6 pages. It is on 4
-    (7 occurrences, 4 of them in contact.html). Pinned to what is there."""
+    W3 (2026-08-14) IS that stream acting: #190 removed the Gmail everywhere,
+    #10 removed the font CDN everywhere, and #12 took the fox off desktop.html.
+    The pins now hold the post-W3 steady state; test_w3_master_theme.py owns
+    the richer invariants (support@ replacement, embedded-face parity)."""
     pages = sorted(HERE.glob("*.html"))
     gmail = {p.name for p in pages if "foxyaudit@gmail.com" in p.read_text(encoding="utf-8")}
-    assert gmail == {"book-a-demo.html", "contact.html", "index.html", "partnerships.html"}, \
-        f"the Gmail address moved: {sorted(gmail)} — that is the W stream's to change"
+    assert not gmail, f"the Gmail address is back on {sorted(gmail)} (#190)"
     fox = {p.name for p in pages if "\U0001f98a" in p.read_text(encoding="utf-8")}
-    assert len(fox) == 12, f"the fox emoji is now on {len(fox)} pages, not 12 (#12, W stream)"
+    assert len(fox) == 11 and fox == set(rendered.PAGES), \
+        f"the fox emoji should survive only on the 11 legal documents " \
+        f"(their header micro-phase is still open): {sorted(fox)}"
     fonts = {p.name for p in pages if "fonts.googleapis.com" in p.read_text(encoding="utf-8")}
-    assert len(fonts) == 17, f"the Google Fonts link is now on {len(fonts)} pages, not 17"
-    # and no legal page acquired one, which IS this stream's rule
-    assert not (fonts & set(rendered.PAGES)), \
-        f"a legal page now fetches fonts from the network: {sorted(fonts & set(rendered.PAGES))}"
+    assert not fonts, f"a page fetches fonts from Google again: {sorted(fonts)} (#10)"

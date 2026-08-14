@@ -241,12 +241,17 @@ def test_the_page_adds_no_emoji() -> None:
 
 
 def test_the_page_still_loads_its_typeface() -> None:
-    """This surface fetches Poppins from Google Fonts rather than embedding it,
-    and six pages omit the tags and silently fall back to system-ui. welcome.html
-    is not one of them; a phase that touches the head must keep it that way."""
-    assert "fonts.googleapis.com/css2?family=Poppins" in WELCOME, (
-        "welcome.html stopped loading Poppins and now renders in system-ui")
-    assert 'rel="preconnect"' in WELCOME, "the font preconnect is gone"
+    """W3 (#10, owner decision) flipped this surface's strategy: Poppins is
+    EMBEDDED (the same two base64 subsets the legal pages ship, inherited via
+    /site.css) and never fetched. The old version of this test pinned the CDN
+    fetch; the invariant is now its exact inverse — welcome.html still loads
+    its typeface, through the carrier instead of Google."""
+    assert "fonts.googleapis.com" not in WELCOME, (
+        "welcome.html fetches fonts from Google again — the owner decision "
+        "(#10) is embedded faces only")
+    assert 'href="/site.css"' in WELCOME, (
+        "welcome.html no longer links site.css, which carries the embedded "
+        "Poppins faces it renders with")
 
 
 if __name__ == "__main__":  # pragma: no cover
