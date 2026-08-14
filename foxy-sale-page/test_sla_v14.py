@@ -109,10 +109,20 @@ def test_the_support_table_now_states_which_customers_it_binds(dom):
     assert re.search(r"\bPro\b", pricing) and re.search(r"\bMax\b", pricing), \
         "Pro/Max are no longer self-serve plan names — re-check whether §5's " \
         "scope line still has a population to exclude"
-    assert "These response targets apply to Order Form customers." in t, \
+    assert "These response targets apply to customers under an Order Form." in t, \
         "§5 lost the sentence that resolves the overlap"
-    assert "Self-serve plans receive best-effort support" in t, \
-        "§5 no longer says what a self-serve customer actually gets"
+    # ⚠ §5 DEFERS, IT DOES NOT RESTATE. The first wording said self-serve plans
+    # get "best-effort support", which contradicted contact.html (Pro: 1
+    # business day, Max: Priority) and pricing.html (Email support / Priority
+    # support and onboarding) — a legal page quietly writing down a weaker
+    # promise than the pages taking the money. The cross-page diff that catches
+    # that lives in test_site_wide_claims.py.
+    assert ("Self-serve plans receive the support channels and response times "
+            "published on the") in t, \
+        "§5 no longer points self-serve customers at the pages that sell them support"
+    assert "best-effort" not in t, \
+        "§5 states its own self-serve support promise again, weaker than the " \
+        "one contact.html and pricing.html publish"
 
 
 # ── 2. EVERY COMMITMENT NUMBER, GUARDED ON ITS OWN ──────────────────────────

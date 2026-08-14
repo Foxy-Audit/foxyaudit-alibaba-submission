@@ -99,9 +99,52 @@ def test_every_link_resolves_to_a_file_that_exists(page):
     redirect to the marketing homepage."""
     dom = _dom(page)
     dead = sorted({a["href"] for a in dom.links
-                   if a["href"].startswith("/") and a["href"].endswith(".html")
-                   and not (HERE / a["href"].lstrip("/")).is_file()})
+                   if _is_internal_page(a["href"])
+                   and not (HERE / a["href"].lstrip("/").split("#")[0]).is_file()})
     assert not dead, f"{page} links to pages that do not exist: {dead}"
+
+
+def _is_internal_page(href: str) -> str:
+    """An in-repo .html target, with or without a fragment.
+
+    ⚠ `endswith(".html")` WAS THE BUG. It is false for "/msa.html#s1", so every
+    cross-page SECTION reference on the site was validated for neither file nor
+    anchor. That is the same class of defect as #201b — a survival clause citing
+    a Section 15 that does not exist — and L15 added two more of them while
+    fixing it."""
+    return href.startswith("/") and ".html" in href.split("?")[0]
+
+
+@pytest.mark.parametrize("page", [p for p in PAGES if (HERE / p).is_file()])
+def test_every_cross_page_fragment_lands_on_a_real_anchor(page):
+    """⚠ THE HALF THE FORWARD GUARD STRUCTURALLY COULD NOT DO.
+
+    A link to /msa.html#s1 resolves to a file that exists and scrolls nowhere if
+    the id does not. That renders as a working link — the page loads, the
+    browser simply ignores the fragment — so nothing about it looks broken.
+
+    §201b was exactly this failure in prose (a survival clause citing a
+    non-existent Section 15) and it took an owner decision to fix, because by
+    then nobody could tell whether the number or the section was wrong. Checked
+    here so a citation cannot go stale silently again.
+
+    ⚠ RESOLVED AGAINST THE TARGET PAGE'S REAL IDS, not against a naming
+    convention. `s1`..`s14` is a convention these pages happen to follow, and a
+    guard that assumed it would pass for /msa.html#s15."""
+    dom = _dom(page)
+    broken = []
+    for a in dom.links:
+        href = a["href"]
+        if not _is_internal_page(href) or "#" not in href:
+            continue
+        target, frag = href.lstrip("/").split("#", 1)
+        if not (HERE / target).is_file():
+            continue                      # the forward guard above owns this one
+        if frag not in _dom(target).ids:
+            broken.append(f"{href} (no id={frag!r} on {target})")
+    assert not broken, (
+        f"{page} links to anchors that do not exist: {sorted(broken)}. The link "
+        "loads the page and scrolls nowhere, so it looks like it works.")
 
 
 @pytest.mark.parametrize("page,name,target", _PAIRS,

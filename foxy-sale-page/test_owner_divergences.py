@@ -461,9 +461,24 @@ def test_201a_the_terms_yield_to_a_signed_msa(terms, msa):
     assert "constitute the entire agreement between you and us regarding the Service" in t, \
         _why15("#201a", "terms.html §15's entire-agreement clause is gone")
     assert ("For customers with a signed Master Service Agreement, that agreement "
-            "and its Order Forms govern instead") in t, \
+            "and its Order Forms govern in place of these Terms") in t, \
         _why15("#201a", "terms.html §15 no longer yields to a signed MSA, so two "
                         "entire-agreement clauses govern the same customer again")
+
+    # ⚠ THE CARVE-OUT MUST DISPLACE THE TERMS AND NOTHING ELSE. It first read
+    # "govern instead", which attaches to the whole enumerated set and displaces
+    # the Privacy Policy and Terms of Use too. msa.html §1 supersedes only "the
+    # public Terms of Service", and the MSA incorporates only the DPA and SLA —
+    # so the wide reading made the carve-out claim more than the MSA does.
+    assert "govern instead" not in t, _why15(
+        "#201a", "terms.html §15's carve-out is unqualified again. 'govern "
+                 "instead' displaces the Privacy Policy and Terms of Use as well, "
+                 "which msa.html §1 does not do")
+    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
+    for survivor in ("Privacy Policy", "Terms of Use"):
+        assert survivor in s15, _why15(
+            "#201a", f"§15 stopped enumerating the {survivor}; the narrowed "
+                     "carve-out exists so it stays in force for MSA customers")
     assert "is the entire agreement between the parties regarding the Service" in msa.text, \
         _why15("#201a", "msa.html's entire-agreement clause is gone — the carve-out "
                         "in terms.html now points at nothing")
@@ -515,8 +530,58 @@ def test_201c_the_dpa_and_the_msa_name_the_same_parent(dpa, msa):
     assert "Where Customer has not signed a Master Service Agreement" in d, \
         _why15("#201c", "the DPA stopped saying which document is 'the Agreement' "
                         "for a customer who never signed an MSA")
-    assert 'href="/terms.html"' in dpa.src, \
-        _why15("#201c", "the DPA names the self-serve route without linking it")
+
+    # ⚠ SLICED TO THE SENTENCE, NOT THE PAGE — [[a-window-is-not-a-scope]] in a
+    # guard written to prevent exactly that. `'href="/terms.html"' in dpa.src`
+    # was satisfied by the FOOTER, which links Terms on every legal page.
+    # Measured: deleting the anchor from the fallback sentence still left
+    # `-k 201c` at 2 passed.
+    fallback = re.search(
+        r"<p>Where Customer has not signed a Master Service Agreement.*?</p>",
+        dpa.src, re.S)
+    assert fallback, _why15("#201c", "the DPA's fallback sentence is gone")
+    assert 'href="/terms.html"' in fallback.group(0), _why15(
+        "#201c", "the DPA names the self-serve route without linking it. The "
+                 "footer's Terms link does not count — a reader in the middle of "
+                 "the parent clause needs the anchor there")
+    # …and it points at the clause that does the incorporating, not just the page
+    assert 'href="/terms.html#s5"' in fallback.group(0), _why15(
+        "#201c", "the fallback no longer cites the Terms of Service section that "
+                 "incorporates this DPA, so the claim rests on nothing a reader "
+                 "can check")
+
+
+def test_201c_the_terms_really_do_incorporate_the_dpa(terms, dpa):
+    """⚠ THE CLAIM WAS ONE-SIDED, WHICH IS THE DEFECT #201c EXISTS TO FIX.
+
+    The DPA's fallback says it "forms part of the Terms of Service". terms.html
+    referenced the DPA NOWHERE — not in §5, not in §15's enumeration — so the
+    only document asserting the relationship was the one that benefits from it.
+    An incorporation by reference that the parent never makes is exactly the
+    shape of the original #201c finding, reproduced in the fix for it.
+
+    Resolved by making it true rather than by deleting the claim: a self-serve
+    customer processing personal data needs a processor contract, and the DPA is
+    published, listed on legal.html and cited by the Privacy Policy. Removing
+    the claim would have left that population with no DPA at all.
+
+    ⚠ BOTH PAGES ARE ASSERTED, AND THE PARENT'S SIDE IS ASSERTED FIRST."""
+    t = terms.text
+    assert ("our Data Processing Agreement governs that processing and is "
+            "incorporated into these Terms by reference") in t, _why15(
+        "#201c", "terms.html no longer incorporates the DPA, so the DPA's "
+                 "fallback clause claims a relationship its parent does not make")
+    s5 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(5)))
+    assert "Data Processing Agreement" in s5, _why15(
+        "#201c", "the incorporation left §5, which is the section the DPA's "
+                 "fallback cites by number")
+    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
+    assert "Data Processing Agreement" in s15, _why15(
+        "#201c", "terms.html §15's entire-agreement clause stopped enumerating "
+                 "the DPA while §5 still incorporates it — the two clauses on ONE "
+                 "page now disagree about what the agreement consists of")
+    assert 'href="/dpa.html"' in terms.src, _why15(
+        "#201c", "terms.html names the DPA without linking it")
 
 
 def test_201c_the_precedence_clauses_resolve_against_each_other(dpa, msa):
@@ -534,6 +599,21 @@ def test_201c_the_precedence_clauses_resolve_against_each_other(dpa, msa):
     assert "express exception to the general order of precedence" in dpa.text, \
         _why15("#201c", "DPA §14 no longer reconciles itself with MSA §1's ladder; "
                         "the two clauses each claim to win")
+
+    # ⚠ THE SENTENCE MUST NOT REACH A SELF-SERVE READER. It first sent EVERY
+    # reader to "Master Service Agreement Section 1", whose ladder ranks the
+    # public Terms LAST — so a Terms-only customer was told their own governing
+    # document sits below three they never signed. It is now conditioned.
+    s14 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dpa.section(14)))
+    assert "Where the Agreement is the Master Service Agreement" in s14, _why15(
+        "#201c", "DPA §14's precedence sentence is unconditional again. A "
+                 "self-serve customer's Agreement is the Terms of Service, and "
+                 "MSA §1's ladder ranks those last — it must not be pointed at "
+                 "them as if it governed their contract")
+    # …and sentence one, the only part that binds a self-serve reader, still stands
+    assert ("regarding the processing of personal data, this DPA prevails") in s14, \
+        _why15("#201c", "DPA §14 lost the operative rule that applies to BOTH "
+                        "populations; only the MSA-conditioned sentence remains")
     assert ("except that on the processing of personal data the DPA prevails "
             "over this Agreement") in msa.text, \
         _why15("#201c", "MSA §1's ladder dropped the carve-out, so it ranks the MSA "
@@ -603,6 +683,37 @@ def test_200_each_contract_states_where_notice_is_given(legal_dom, page):
         "#200", f"{page} publishes a phone number, which #200 did not authorise")
 
 
+def test_200_the_msa_notices_bullet_cites_customer_side_notice_provisions(msa):
+    """⚠ THE SENTENCE EXISTING IS NOT THE SAME CLAIM AS THE SENTENCE BEING RIGHT.
+
+    The first cut of this bullet cited §3 and §13. §3's only notice runs Foxy
+    Audit → Customer ("Foxy Audit may suspend the Service on 10 days' written
+    notice"), so a bullet about where to send notice TO Foxy Audit pointed at a
+    provision under which the customer never sends anything. §4 — non-renewal,
+    "unless either party gives notice" — is the one real customer-side notice in
+    the document and was omitted.
+
+    ⚠ THE CITED SECTIONS ARE RE-DERIVED AND THEIR DIRECTION IS RE-CHECKED. The
+    guard that shipped asserted only that a notices sentence existed, which is
+    why the wrong citation survived. This reads the numbers out of the bullet
+    and asserts each names a BILATERAL notice provision, so a future edit cannot
+    quietly point the reader at a one-way clause again."""
+    bullet = re.search(r"<li><strong>Notices:</strong>(.*?)</li>", msa.src, re.S)
+    assert bullet, _why15("#200", "msa.html's Notices bullet is gone")
+    cited = re.findall(r'href="#s(\d+)"', bullet.group(1))
+    assert cited == ["4", "13"], _why15(
+        "#200", f"the Notices bullet cites Sections {cited}; the customer-side "
+                "notice provisions are 4 (non-renewal) and 13 (breach)")
+    for n in cited:
+        body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", msa.section(int(n))))
+        assert re.search(r"either party", body, re.I), _why15(
+            "#200", f"§{n} is cited as a route for notice TO Foxy Audit, but its "
+                    "notice provision is not bilateral — re-read it before citing it")
+    assert 'href="#s3"' not in bullet.group(1), _why15(
+        "#200", "the Notices bullet cites §3 again. §3's notice runs Foxy Audit → "
+                "Customer only, so it is not a provision the customer serves under")
+
+
 def test_200_the_mailbox_matches_the_map_the_other_pages_use():
     """The control. legal@ is not a new mailbox minted for these two pages — it
     is the one the two Terms pages already use for contract questions. If that
@@ -625,12 +736,24 @@ def test_sla_section_5_says_which_customers_its_targets_bind(legal_dom):
     ⚠ THE TABLES ARE UNTOUCHED AND STAY PINNED PER-CELL in test_sla_v14.py. This
     asserts only the sentence that was added."""
     t = legal_dom("sla.html").text
-    assert "These response targets apply to Order Form customers." in t, _why15(
+    assert "These response targets apply to customers under an Order Form." in t, _why15(
         "SLA §5", "the scope line is gone, so the plan-keyed tables again read as "
                   "a promise to self-serve customers the SLA's header excludes")
-    assert "Self-serve plans receive best-effort support via support@foxyaudit.tech" in t, \
-        _why15("SLA §5", "the scope line no longer says what a self-serve customer "
-                         "actually gets, which is the half that makes it fair")
+    # ⚠ THE FIRST WORDING OF THIS DECISION WAS WITHDRAWN ON REVIEW. It read
+    # "Self-serve plans receive best-effort support via support@foxyaudit.tech",
+    # which contradicted three published pages: contact.html sells Pro "1
+    # business day" and Max "Priority", and pricing.html sells "Email support"
+    # and "Priority support and onboarding" — to those same customers. A legal
+    # page had written down a weaker promise than the site was actively making.
+    # §5 now DEFERS to those pages instead of restating them.
+    assert ("Self-serve plans receive the support channels and response times "
+            "published on the pricing page and contact page.") in t, \
+        _why15("SLA §5", "the scope line no longer points self-serve customers at "
+                         "the pages that publish their support, which is the half "
+                         "that keeps it from being a downgrade")
+    assert "best-effort" not in t, _why15(
+        "SLA §5", "the withdrawn wording is back. It promises less than "
+                  "contact.html and pricing.html sell to the same customers")
     for plan in ("Pro", "Max, Premium", "Max / Premium"):
         assert plan in t, _why15(
             "SLA §5", f"§5 stopped keying off {plan!r}. The resolution KEPT the "

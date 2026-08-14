@@ -449,3 +449,125 @@ def test_the_three_lists_are_the_same_length():
     assert privacy == trust == dpa == 6, (
         f"the three sub-processor lists have different lengths: "
         f"privacy.html={privacy}, trust.html={trust}, dpa.html={dpa} (expected 6 each)")
+
+
+# ── SLA §5 vs THE PAGES THAT SELL SUPPORT ───────────────────────────────────
+#
+# ⚠ THIS COMPARISON DID NOT EXIST, WHICH IS HOW A DOWNGRADE GOT WRITTEN.
+#
+# sla.html §5 first resolved its scope with "Self-serve plans receive
+# best-effort support via support@foxyaudit.tech." Every guard on the page went
+# green. But contact.html sells Pro "1 business day" and Max "Priority", and
+# pricing.html sells "Email support" and "Priority support and onboarding" — to
+# exactly the self-serve customers that sentence was about. A legal page had
+# quietly written down a weaker promise than the two pages taking the money.
+#
+# Nothing compared them, because §5's guards asked only whether §5 was
+# internally consistent — the same shape as the three sub-processor rosters
+# above. The SLA now DEFERS to those pages instead of restating them, which is
+# the L14 rule ("a carve-out must defer, not duplicate") applied to a promise:
+# one commitment, in one place, and the legal page points at it.
+
+#: The self-serve plans whose support is sold on the marketing pages AND keyed
+#: in sla.html §5's tables. The overlap is the whole problem — the same names
+#: address two populations — so it is named once, here.
+OVERLOADED_PLANS = ("Pro", "Max")
+
+#: Wording that would make §5 state a self-serve support promise of its own
+#: rather than defer. "best-effort" is the exact phrase that shipped.
+SELF_SERVE_DOWNGRADE = re.compile(
+    r"best[- ]effort|no response target|not guaranteed|as time permits|"
+    r"without any response target|reasonable endeavours only", re.I)
+
+
+def _sla_section_5() -> str:
+    """sla.html §5, tags stripped. Bounded by §6, not by the end of the card."""
+    from conftest import load
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", load("sla.html").section(5)))
+
+
+def test_the_sla_does_not_state_a_self_serve_support_promise_of_its_own():
+    """⚠ THE DEFECT THIS FILE EXISTS FOR, IN ITS NEWEST FORM.
+
+    §5's scope line must say who its targets bind and then point at the pages
+    that sell the other population's support. The moment it states that promise
+    itself there are two of them to keep in step, and the legal one wins in an
+    argument while the marketing one is what the customer actually bought."""
+    s5 = _sla_section_5()
+    hit = SELF_SERVE_DOWNGRADE.search(s5)
+    assert not hit, (
+        f"sla.html §5 states its own self-serve support promise ({hit.group(0)!r}). "
+        "contact.html and pricing.html sell those customers a specific channel "
+        "and response time; §5 must DEFER to them, not restate or weaken them.")
+    assert "These response targets apply to customers under an Order Form." in s5, \
+        "§5 lost the sentence that scopes its tables to Order Form customers"
+    assert ("Self-serve plans receive the support channels and response times "
+            "published on the") in s5, \
+        "§5 no longer defers to the pages that publish self-serve support"
+
+
+def test_the_sla_links_the_pages_it_defers_to():
+    """A deferral a reader cannot follow is not a deferral — the same rule the
+    AUP's disclosure carve-outs are held to (#194)."""
+    from conftest import load
+    s5_src = load("sla.html").section(5)
+    for target in ("/pricing.html", "/contact.html"):
+        assert f'href="{target}"' in s5_src, (
+            f"sla.html §5 defers to the published support commitments but does "
+            f"not link {target} from the section that defers")
+
+
+@pytest.mark.parametrize("plan", OVERLOADED_PLANS)
+def test_the_pages_the_sla_defers_to_actually_publish_that_plans_support(plan):
+    """⚠ THE HALF THAT MAKES THE DEFERRAL REAL, AND IT IS THE DIFF.
+
+    §5 points at pricing.html and contact.html for the self-serve promise. If
+    either page stops publishing one, the pointer resolves to nothing and the
+    only support commitment left for that plan is the Order Form table §5 says
+    does not apply to them — which is the original defect, inverted.
+
+    Both directions are checked: every plan §5 keys off is sold with support on
+    the marketing pages, and every plan sold with support on contact.html is one
+    §5 knows about."""
+    from conftest import load
+    s5 = _sla_section_5()
+    assert re.search(rf"\b{plan}\b", s5), \
+        f"sla.html §5 no longer keys off {plan!r}; the overload may be gone"
+
+    contact = (HERE / "contact.html").read_text(encoding="utf-8")
+    rows = {re.sub(r"<[^>]+>", "", c[0]).strip():
+            [re.sub(r"<[^>]+>", "", x).strip() for x in c[1:]]
+            for c in (re.findall(r"<span>(.*?)</span>", r)
+                      for r in re.findall(r'<div class="sla-row">(.*?)</div>',
+                                          contact, re.S))
+            if len(c) >= 3}
+    assert plan in rows, (
+        f"contact.html no longer publishes a support row for {plan!r}, but "
+        f"sla.html §5 defers self-serve customers to it")
+    response, channel = rows[plan][0], rows[plan][1]
+    assert response and channel, \
+        f"contact.html's {plan!r} row publishes an empty commitment: {rows[plan]}"
+
+    pricing = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ",
+                     (HERE / "pricing.html").read_text(encoding="utf-8")))
+    assert re.search(r"\bsupport\b", pricing, re.I), \
+        "pricing.html no longer sells support at all, and sla.html §5 points at it"
+
+
+def test_no_self_serve_plan_is_sold_support_the_sla_has_never_heard_of():
+    """The reverse direction. contact.html's table is the self-serve promise; if
+    it grows a plan §5 does not key off, the two populations have diverged and
+    §5's scope line no longer partitions them cleanly.
+
+    ⚠ "Free trial" IS EXPECTED AND IS NOT A FAILURE. It is sold "Community"
+    support and appears in no Order Form, so it is self-serve-only by design —
+    pinned by name so a NEW unknown plan is what fails, rather than this one."""
+    contact = (HERE / "contact.html").read_text(encoding="utf-8")
+    plans = {re.sub(r"<[^>]+>", "", re.findall(r"<span>(.*?)</span>", r)[0]).strip()
+             for r in re.findall(r'<div class="sla-row">(.*?)</div>', contact, re.S)
+             if re.findall(r"<span>(.*?)</span>", r)}
+    known = set(OVERLOADED_PLANS) | {"Free trial", "Plan"}
+    unknown = plans - known
+    assert not unknown, (
+        f"contact.html publishes support for {sorted(unknown)}, which sla.html §5 "
+        "does not key off. Either §5's tables or its scope line is now incomplete.")

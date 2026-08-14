@@ -296,10 +296,21 @@ def test_the_support_tier_scope_finding_is_resolved_the_way_the_evidence_argued(
     # ⚠ THIS REPLACED AN `"Order Form" not in s5` ASSERTION, WHICH HELD THE
     # FINDING OPEN. Deleting it without putting the resolution in its place
     # would have left §5's scope with no guard at all.
-    assert ("These response targets apply to Order Form customers. Self-serve "
-            "plans receive best-effort support via support@foxyaudit.tech") in s5, (
+    # ⚠ NO TRAILING PERIOD. This module's tag-stripper replaces EVERY tag with a
+    # space, including the inline </a> that closes "contact page", so the
+    # rendered slice reads "contact page ." — conftest.LegalDom exists precisely
+    # because that naive strip changes what a sentence looks like.
+    assert ("These response targets apply to customers under an Order Form. "
+            "Self-serve plans receive the support channels and response times "
+            "published on the pricing page and contact page") in s5, (
         "SLA §5 lost its scope line, so the plan-keyed tables again read as a "
         "promise to the self-serve customers the SLA's own header excludes")
+    # ⚠ THE SCOPE LINE DEFERS RATHER THAN RESTATING. Its first wording gave
+    # self-serve customers "best-effort support", which is weaker than what
+    # contact.html and pricing.html sell them.
+    assert "best-effort" not in s5, (
+        "SLA §5 states a self-serve support promise of its own again — see "
+        "test_site_wide_claims.py for the diff against the pages that sell it")
 
     # (2) the scope sentence still limits the SLA to Order Form customers
     sla_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sla_src))

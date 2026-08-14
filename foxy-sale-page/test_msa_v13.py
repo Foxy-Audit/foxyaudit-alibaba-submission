@@ -344,9 +344,12 @@ def test_terms_html_now_yields_to_the_msa_in_its_entire_agreement_clause(legal_d
     assert "constitute the entire agreement" in s15, \
         "terms.html's entire-agreement clause left §15"
     assert ("For customers with a signed Master Service Agreement, that agreement "
-            "and its Order Forms govern instead") in s15, (
+            "and its Order Forms govern in place of these Terms") in s15, (
         "terms.html §15 no longer yields to the MSA, so two entire-agreement "
         "clauses compete again (#201a)")
+    assert "govern instead" not in s15, (
+        "§15's carve-out is unqualified again — 'govern instead' displaces the "
+        "Privacy Policy and Terms of Use too, which msa.html §1 does not do")
     assert 'href="/msa.html"' in dom_terms.src, \
         "terms.html names the MSA but no longer links it"
 
