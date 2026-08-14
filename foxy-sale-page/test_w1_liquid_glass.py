@@ -64,14 +64,16 @@ SRC = (_HERE / "index.html").read_text(encoding="utf-8")
 
 #: The approved refraction pipeline, as literal markup. These came from the
 #: artifact the owner signed off in Chrome; they are not tuning knobs.
+#: ⚠ W2 re-approved these (w2-approved-spec.html): slower, softer turbulence,
+#: scale 44, and NO blur primitive — test_w2_card_treatment.py guards the
+#: absence of feGaussianBlur; this tuple guards what must be present.
 APPROVED_PIPELINE = (
-    'baseFrequency="0.007 0.011"',
+    'baseFrequency="0.004 0.008"',
     'numOctaves="2"',
-    'seed="7"',
-    'scale="46"',
-    'stdDeviation="2.5"',
+    'seed="11"',
+    'scale="44"',
     'type="saturate" values="1.45"',
-    'dur="22s"',
+    'dur="24s"',
 )
 
 
@@ -194,7 +196,6 @@ _PROBE = r"""
                           - parseFloat(c.style.opacity || 0) * 0.34) < 0.002);
     });
     out.reflCount = refls.length;
-    out.lensCount = document.querySelectorAll('.card .card-lens').length;
     document.documentElement.innerHTML =
       '<pre id="p">' + JSON.stringify(out) + '</pre>';
   }, 900);
@@ -283,14 +284,17 @@ def test_nothing_drags_the_stage():
         assert token not in js, f"drag was cut from this design; {token!r} is back"
 
 
-def test_the_orphaned_accent_property_is_fully_gone():
+def test_the_orphaned_accent_properties_are_fully_gone():
     text = _strip_comments(SRC)
-    assert "--dim" not in text, (
-        "--dim lost its only consumer with the accent border; both halves of the "
-        "plumbing go, or neither")
-    # its siblings kept real consumers and must survive
-    for live in ("--acc", "--glow", "--soft"):
-        assert live in text, f"{live} still dresses the card icon and must stay"
+    # --dim died with W1's accent border; --glow with the icon's drop-shadow and
+    # --soft with the card-top wash, both cut by W2. Both halves of each
+    # property's plumbing go, or neither.
+    for dead in ("--dim", "--glow", "--soft"):
+        assert dead not in text, (
+            f"{dead} lost its last consumer; a setProperty with no reader (or a "
+            f"reader with no setter) is a trap for the next phase")
+    # the accent itself kept real consumers and must survive
+    assert "--acc" in text, "--acc still dresses the card and must stay"
 
 
 # ── 4 · reflections are laid out, not polled ─────────────────────────────────
@@ -307,7 +311,6 @@ def test_no_frame_loop_drives_the_reflections():
 @needs_chrome
 def test_reflections_follow_the_cards_with_the_frame_clock_disabled(rendered):
     assert rendered["reflCount"] == rendered["cards"], "one reflection per card"
-    assert rendered["lensCount"] == rendered["cards"], "one lens per card"
     bad = [i for i, ok in enumerate(rendered["tracked"]) if ok is not True]
     assert not bad, (
         f"cards {bad} left their reflection behind after requestAnimationFrame "
@@ -344,13 +347,13 @@ def test_the_reduced_motion_block_survived_the_cascade(rendered):
     r = rendered["reduced"]
     assert r, "no prefers-reduced-motion rules reached the CSSOM"
     assert "none" in r.get(".blob", ""), "blobs still drift under reduced motion"
-    hidden = next((v for k, v in r.items() if "card-refl" in k and "card-lens" in k), "")
-    assert "display: none" in hidden, "lens/reflection not hidden under reduced motion"
+    hidden = next((v for k, v in r.items() if "card-refl" in k), "")
+    assert "display: none" in hidden, "reflections not hidden under reduced motion"
     card = next((v for k, v in r.items() if k.startswith(".card")
                  and "backdrop-filter" in v), "")
     assert card and "url(" not in card, (
-        "the card must fall back to a still blur — the turbulence in #hero-glass "
-        "animates and cannot be paused per element")
+        "the card must fall back to a still treatment — the turbulence in "
+        "#hero-glass animates and cannot be paused per element")
 
 
 @needs_chrome
@@ -378,5 +381,6 @@ def test_only_the_three_visible_cards_refract(rendered):
         f"{rendered['refracting']} of {rendered['cards']} cards are running the "
         f"refraction. Only centre/left/right are visible; handing the filter to "
         f"all of them measured 11.1ms/frame against 5.6ms, for the same picture")
-    assert rendered["backBackdrop"].startswith("blur("), (
-        "back cards must carry the plain blur fallback")
+    assert rendered["backBackdrop"].startswith("saturate("), (
+        "back cards must carry the plain saturate fallback (W2: the frost is "
+        "gone everywhere, including the back cards)")

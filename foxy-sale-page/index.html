@@ -38,6 +38,21 @@
     --blob-cyan:    rgba(56,189,248,.18);
     --blob-magenta: rgba(232,121,249,.14);
 
+    /* ⚠ THE THEME MASTER (owner decision). Every sale sub-page adopts this
+       treatment by inheriting these tokens — add values here, not as literals
+       in sub-page rules. --thm-rim / --thm-flare / --thm-ripple have no
+       consumer on THIS page yet; they are part of the master vocabulary and
+       stay for the sub-pages. */
+    --thm-fill-a:rgba(255,255,255,.055);
+    --thm-fill-b:rgba(255,255,255,.012);
+    --thm-rim:rgba(255,255,255,.42);
+    --thm-flare:rgba(255,255,255,.85);
+    --thm-ripple:rgba(200,212,255,.20);
+    --thm-chrome:rgba(14,13,20,.66);
+    --thm-chrome-line:rgba(255,255,255,.12);
+    --thm-ink:rgba(244,246,252,.92);
+    --thm-ink-soft:rgba(226,230,240,.62);
+
     --safe-bg:   #3ddc84; --safe-tx:   #07210f;
     --warn-bg:   #ffc83d; --warn-tx:   #2a1d00;
     --guard-bg:  #c9b7ff; --guard-tx:  #1c1035;
@@ -124,46 +139,91 @@
       filter 640ms cubic-bezier(.16,1,.3,1), opacity 640ms cubic-bezier(.16,1,.3,1),
       box-shadow 420ms ease;
     will-change:transform,filter,opacity,left,bottom,height;
-    /* Liquid glass. The backdrop is REFRACTED through the card, not frosted behind
-       it: `url(#hero-glass)` runs a turbulence → displacement → blur → saturate
-       pipeline (see the <svg> in .stage) so the ground bends as it passes through.
+    /* Clear glass, ZERO frost (owner decision, W2). The backdrop is REFRACTED
+       through the card — `url(#hero-glass)` is turbulence → displacement →
+       saturate, with NO blur primitive — so the ground stays readable straight
+       through the plate. The fill is near-nothing on purpose.
        ⚠ ORDER MATTERS — the -webkit- line is the Safari/Firefox fallback and must
        stay ABOVE the url() line. Last supported declaration wins, so a browser
-       without SVG-filter backdrops keeps a plain blur instead of losing the fill. */
-    background:linear-gradient(163deg,rgba(255,255,255,.10),rgba(255,255,255,.04) 55%,rgba(255,255,255,.06));
-    -webkit-backdrop-filter:blur(7px) saturate(1.5) brightness(1.05);
+       without SVG-filter backdrops keeps the plain grade instead of losing the fill. */
+    background:linear-gradient(158deg,var(--thm-fill-a),var(--thm-fill-b) 48%,rgba(255,255,255,.03));
+    -webkit-backdrop-filter:saturate(1.45) brightness(1.03);
     backdrop-filter:url(#hero-glass);
     border:none;
-    box-shadow:0 32px 70px -28px rgba(0,0,0,.88);
+    box-shadow:0 30px 66px -30px rgba(0,0,0,.85);
     overflow:hidden;cursor:pointer;
   }
-  .card.is-center{box-shadow:0 50px 100px -32px rgba(0,0,0,.94);}
-  /* Only the three cards you can see refract. The other ten are stacked at
-     opacity 0 behind the centre one, and each was still forcing its own render
-     surface for an animated displacement map. Measured on an RTX 5060 Ti:
-     13 refracting cards ran 11.1ms/frame median with a 16.7ms p95 — already
-     missing 60Hz on a discrete GPU — against 5.6ms median / 5.7ms p95 with this
-     rule. Identical picture, half the frame time.
+  .card.is-center{box-shadow:0 46px 92px -32px rgba(0,0,0,.92);}
+  /* Only the three cards you can see refract; the ten at opacity 0 behind the
+     centre keep a plain saturate — W1's economics, still true of this pipeline
+     (see the marble mitigation below for the W2 numbers).
      ⚠ Applied by settle(), one transition AFTER a card becomes a back card, so
-     a card that is still fading out does not snap from refraction to flat blur. */
-  .card.is-back{backdrop-filter:blur(7px) saturate(1.5) brightness(1.05);}
-  /* the rim — a bright top hairline fading round the sides into a dim underside,
-     which is what reads as a thick piece of glass rather than a tinted rectangle */
+     a card that is still fading out does not snap from refraction to flat. */
+  .card.is-back{backdrop-filter:saturate(1.3);}
+  /* the face keeps ONE inset top light — W1's six-shadow rim stack is replaced
+     by the machined .thm-ring below (owner decision: an edge, not a glow) */
   .card::before{content:'';position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
-    box-shadow:
-      inset 0 0 0 1px rgba(255,255,255,.15),
-      inset 0 1.6px 0 rgba(255,255,255,.65),
-      inset 1.2px 0 0 rgba(255,255,255,.24),
-      inset -1.2px 0 0 rgba(255,255,255,.24),
-      inset 0 -1.2px 0 rgba(255,255,255,.13),
-      inset 0 22px 34px -24px rgba(255,255,255,.28);}
-  /* pointer-tracked specular highlight, centre card only (see the pointermove
-     handler, which writes --mx/--my) */
-  .card-lens{position:absolute;inset:0;z-index:4;pointer-events:none;border-radius:inherit;
-    background:radial-gradient(400px 400px at var(--mx,50%) var(--my,22%),
-      rgba(255,255,255,.14),rgba(255,255,255,.04) 36%,transparent 64%);
-    opacity:0;transition:opacity .5s cubic-bezier(.16,1,.3,1);}
-  .card.is-center .card-lens{opacity:1;}
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.18);}
+  /* ── the machined rim: a 1.2px ring drawn with a conic gradient, so light
+     travels AROUND the edge — bright where it faces the key light, near-dark
+     on the shadow side. No blur, no bloom. Built into the card template. */
+  .thm-ring{position:absolute;inset:0;z-index:3;pointer-events:none;
+    border-radius:inherit;padding:1.2px;
+    background:conic-gradient(from 215deg,
+      rgba(255,255,255,.46) 0%,
+      rgba(255,255,255,.10) 22%,
+      rgba(255,255,255,.05) 40%,
+      rgba(255,255,255,.30) 52%,
+      rgba(255,255,255,.06) 68%,
+      rgba(255,255,255,.12) 84%,
+      rgba(255,255,255,.46) 100%);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+            mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite:exclude;}
+  /* the face: one barely-there top light; its ::after carries the folio */
+  .thm-face{position:absolute;inset:0;z-index:2;pointer-events:none;border-radius:inherit;
+    background:linear-gradient(180deg,rgba(255,255,255,.05),transparent 30%);}
+  .cards{counter-reset:thm-card;}
+  .card{counter-increment:thm-card;}
+  .thm-face::after{content:counter(thm-card,decimal-leading-zero);
+    position:absolute;bottom:clamp(13px,1.6vw,18px);right:clamp(14px,1.8vw,22px);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:clamp(9px,1vw,11.5px);letter-spacing:.2em;
+    color:rgba(255,255,255,.45);}
+  /* ── the marble, below the divider only: posterized turbulence at .05,
+     flowing through the LIVE #hero-marble filter (the pattern itself keeps
+     re-forming — owner addition on top of the approved spec). It is
+     DELIBERATELY nearly subliminal; do not brighten it. */
+  .thm-dots{position:absolute;left:0;right:0;top:44%;bottom:0;z-index:1;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='360' height='360'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='2' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1 0 0 0 0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='discrete' tableValues='0 1 0 1 0 1 0 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='360' height='360' filter='url(%23m)'/%3E%3C/svg%3E");
+    background-size:360px 360px;
+    filter:url(#hero-marble);
+    -webkit-mask-image:linear-gradient(180deg,#000,rgba(0,0,0,.45) 55%,transparent 96%);
+            mask-image:linear-gradient(180deg,#000,rgba(0,0,0,.45) 55%,transparent 96%);
+    opacity:.05;}
+  /* ⚠ PRE-APPROVED MITIGATION, and it fired: thirteen live marble filters —
+     ten of them inside cards at opacity 0 — measured 30.4ms/frame median
+     (94.5ms p95) on an RTX 5060 Ti; with the water on the CENTRE card's
+     texture only it is 11.1ms median / 16.7ms p95, at the 60Hz boundary.
+     At .05 opacity the still pattern on the side cards is indistinguishable. */
+  .card:not(.is-center) .thm-dots{filter:none;}
+  /* ── ripples: a water band — light crest outside a dark trough, NOT a white
+     ring. Spawned by the pointermove handler, appended INSIDE the card so the
+     card's own overflow clips them at the edge. */
+  .thm-ripple{position:absolute;z-index:2;pointer-events:none;border-radius:50%;
+    width:16px;height:16px;margin:-8px 0 0 -8px;
+    background:radial-gradient(circle,
+      transparent 52%,
+      rgba(150,195,235,.16) 60%,
+      rgba(30,60,105,.14) 68%,
+      transparent 76%);
+    opacity:0;will-change:transform,opacity;
+    animation:thm-ring-grow 2200ms cubic-bezier(.16,1,.3,1) forwards;}
+  @keyframes thm-ring-grow{
+    0%  {transform:scale(1);opacity:.34;}
+    100%{transform:scale(15);opacity:0;}
+  }
   /* the card's mirrored image on the floor of the stage, positioned by layout() */
   .card-refl{position:absolute;left:50%;bottom:0;aspect-ratio:0.6/1;border-radius:24px;
     z-index:2;pointer-events:none;transform-origin:50% 0%;
@@ -175,30 +235,48 @@
   /* curved specular sweep across the top — the wet gloss */
   .card::after{content:'';position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
     background:radial-gradient(120% 46% at 50% -10%, rgba(255,255,255,.24), rgba(255,255,255,0) 62%);}
-  .card-top{height:44%;display:flex;align-items:center;justify-content:center;position:relative;
-    background-image:radial-gradient(circle at 50% 44%, var(--soft), transparent 66%), radial-gradient(rgba(0,0,0,.18) 1.3px, transparent 1.5px);
-    background-size:100% 100%, 12px 12px;background-repeat:no-repeat, repeat;}
+  /* the colour wash that used to sit here was tinting the whole panel (owner
+     correction); the icon zone is clear glass with an explicit dividing line */
+  .card-top{height:44%;display:flex;align-items:center;justify-content:center;position:relative;z-index:5;
+    border-bottom:1px solid rgba(255,255,255,.12);}
+  /* the icon sits IN the water: same turbulence family as the glass, gentle,
+     and no drop-shadow (cut with the glow language). Non-centre cards keep
+     filter:none via the quiet-state rule below — only the centre icon pays. */
   .card-top svg{width:38%;height:38%;position:relative;z-index:2;stroke:var(--acc);
-    filter:drop-shadow(0 0 6px var(--glow));}
+    opacity:.55;filter:url(#hero-water);}
   /* dim glow behind the icon */
   .card-top::after{content:'';position:absolute;width:46%;aspect-ratio:1;border-radius:50%;
     background:var(--acc);filter:blur(24px);opacity:.3;}
   /* divider between the icon and the text */
   .card-top::before{content:'';position:absolute;left:18px;right:18px;bottom:0;height:1px;z-index:4;
     background:linear-gradient(90deg, transparent, var(--acc) 50%, transparent);opacity:.6;}
-  .card-body{padding:16px 16px 0;position:relative;z-index:5;}
-  /* --muted was tuned against the old near-opaque card; on the refracting glass it
-     sinks into whatever the blobs are doing behind it. This is --ink at 72%. */
-  .card-eyebrow{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:rgba(247,241,232,.72);margin:0 0 6px;}
-  .card-title{font-family:var(--disp);font-weight:700;font-size:clamp(13px,1.4vw,17px);color:var(--ink);margin:0;line-height:1.15;
-    text-shadow:0 1px 10px rgba(0,0,0,.55);}
-  .card-hint{position:absolute;left:0;right:0;bottom:10px;text-align:center;opacity:0;transform:translateY(4px);z-index:5;
-    transition:opacity 300ms,transform 300ms;font-family:var(--mono);font-size:9px;letter-spacing:.12em;
-    text-transform:uppercase;color:var(--muted);}
+  /* the deep bottom padding clears the hint/folio row */
+  .card-body{padding:16px 16px clamp(38px,4.5vw,52px);position:relative;z-index:5;}
+  /* the eyebrow is tinted from the card's own accent — a neutral grey sank
+     into whatever the blobs were doing behind the clear glass */
+  .card-eyebrow{font-family:var(--mono);font-size:clamp(8px,.9vw,10px);letter-spacing:.2em;text-transform:uppercase;
+    color:color-mix(in srgb, var(--acc, #ff7a2e) 70%, #fff 22%);margin:0 0 6px;}
+  /* display type for the name, not a caption */
+  .card-title{font-family:var(--disp);font-weight:800;font-size:clamp(15px,1.6vw,20px);color:var(--ink);margin:0;line-height:1.12;
+    letter-spacing:-.025em;text-shadow:0 1px 10px rgba(0,0,0,.55);transition:font-size .4s ease;}
+  .card.is-center .card-title{font-size:clamp(21px,2.3vw,30px);letter-spacing:-.035em;}
+  /* bottom row: the slide's own CTA label bottom-left (set at card
+     construction from SLIDES), folio counter bottom-right (.thm-face::after) */
+  .card-hint{position:absolute;left:clamp(14px,1.8vw,22px);right:auto;bottom:clamp(13px,1.6vw,18px);text-align:left;
+    opacity:0;transform:translateY(4px);z-index:5;
+    transition:opacity 300ms,transform 300ms;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:clamp(8px,.9vw,10px);letter-spacing:.18em;
+    text-transform:uppercase;color:rgba(255,255,255,.55);}
+  .card-hint::after{content:' \2192';color:var(--thm-ink);}
   .card.is-center .card-hint{opacity:.85;transform:translateY(0);}
-  /* quiet state — non-centre cards drop their detail so nothing smears through the glass */
-  .card .card-body,.card .card-top svg{transition:opacity .5s ease, filter .4s ease;}
-  .card:not(.is-center) .card-body,
+  /* quiet state — non-centre cards soften rather than vanish: the body stays
+     readable at .85 and settles 4px when the card takes the centre.
+     ⚠ In the approved demo the .55s transform settle was silently eaten by
+     this very rule (its two-class selector outranked the override's one-class
+     transition), so the body SNAPPED. The spec's written intent wins here. */
+  .card .card-top svg{transition:opacity .5s ease, filter .4s ease;}
+  .card .card-body{transition:transform .55s cubic-bezier(.16,1,.3,1), opacity .55s ease;}
+  .card:not(.is-center) .card-body{transform:translateY(4px);opacity:.85;}
   .card:not(.is-center) .card-hint{opacity:0;}
   .card:not(.is-center) .card-top::before{opacity:0;}
   .card:not(.is-center) .card-top::after{opacity:.1;}
@@ -232,18 +310,19 @@
   @media (prefers-reduced-motion: reduce){
     .card, .ghost{transition-duration:1ms !important;}
     .blob{animation:none;}
-    .card-refl, .card-lens{display:none;}
-    /* the turbulence in #hero-glass animates and cannot be paused per-element,
-       so the whole refraction is swapped for a still blur.
+    .card-refl, .thm-ripple{display:none;}
+    /* the turbulence in every url() filter animates and cannot be paused
+       per-element, so each falls back to a STILL treatment.
        .card.is-back is named too — it outranks a bare .card on specificity and
-       would otherwise keep its own blur through this block. */
-    .card, .card.is-back{backdrop-filter:blur(7px) saturate(1.4);}
+       would otherwise keep its own filter through this block. */
+    .card, .card.is-back{backdrop-filter:saturate(1.4);}
+    .card-top svg, .thm-dots{filter:none;}
   }
   @media (forced-colors:active){
-    .blob, .card-refl, .card-lens{display:none;}
+    .blob, .card-refl, .thm-ring, .thm-face, .thm-dots, .thm-ripple{display:none;}
     /* border:none leaves nothing for High Contrast to keep — the card would have
        no edge at all, since forced-colors drops every box-shadow on this page. */
-    .card{border:2px solid ButtonBorder;}
+    .card{backdrop-filter:none;border:2px solid ButtonBorder;}
   }
 
   .card-fox-topper{display:none !important;}   /* static card toppers — hidden */
@@ -392,7 +471,7 @@
   .cta-band h2{font-family:var(--disp);font-weight:700;font-size:clamp(24px,4vw,40px);margin:0 0 20px;}
   .cta-band p{max-width:480px;margin:0 auto 28px;font-size:13.5px;}
 
-  footer{padding:56px 24px 26px;border-top:1px solid var(--line);background:var(--surf);color:var(--muted);}
+  footer{padding:56px 24px 26px;border-top:1px solid var(--thm-chrome-line);background:var(--surf);color:var(--muted);}
   .footer-grid{display:flex;flex-wrap:wrap;justify-content:space-between;gap:40px 56px;text-align:left;}
   .footer-brand{max-width:300px;}
   .footer-logo{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;font-size:17px;color:var(--ink);margin-bottom:12px;}
@@ -400,8 +479,9 @@
   .footer-brand p{margin:0;font-size:12.5px;line-height:1.65;color:var(--muted);}
   .footer-col{display:flex;flex-direction:column;gap:11px;}
   .footer-col-title{font-family:var(--mono);font-weight:700;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);opacity:.7;margin:0 0 3px;}
-  .footer-col a{color:var(--ink);text-decoration:none;font-size:13px;opacity:.82;transition:opacity .15s ease,color .15s ease;}
-  .footer-col a:hover{opacity:1;color:var(--fox);}
+  /* theme ink (colours only — the LINK SET itself is L13's canonical footer) */
+  .footer-col a{color:var(--thm-ink-soft);text-decoration:none;font-size:13px;opacity:.82;transition:opacity .15s ease,color .15s ease;}
+  .footer-col a:hover{opacity:1;color:var(--thm-ink);}
   .footer-contact-btn{color:var(--fox) !important;font-weight:700;opacity:1 !important;}
   .footer-bottom{margin-top:44px;padding-top:22px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);letter-spacing:.03em;}
   .footer-bottom-links{display:flex;gap:18px;flex-wrap:wrap;}
@@ -476,16 +556,17 @@
   @media(max-width:540px){ .flow{grid-template-columns:1fr;} }
   /* ---------- sticky top nav (folds in the old brand + login) ---------- */
   .brand,.login-link{display:none !important;}
+  /* theme chrome: --thm-* tokens, cool near-white ink over the glass */
   .topnav{position:fixed;top:0;left:0;right:0;z-index:120;display:flex;align-items:center;justify-content:space-between;gap:16px;
-    padding:11px clamp(16px,4vw,40px);background:rgba(14,12,10,.72);
-    backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border-bottom:1px solid var(--line);}
-  .tn-brand{display:flex;align-items:center;gap:8px;font-family:var(--disp);font-weight:800;font-size:14px;letter-spacing:.02em;color:var(--ink);text-decoration:none;text-transform:uppercase;}
+    padding:11px clamp(16px,4vw,40px);background:var(--thm-chrome);
+    -webkit-backdrop-filter:saturate(1.5) blur(18px);backdrop-filter:saturate(1.5) blur(18px);border-bottom:1px solid var(--thm-chrome-line);}
+  .tn-brand{display:flex;align-items:center;gap:8px;font-family:var(--disp);font-weight:800;font-size:14px;letter-spacing:.02em;color:var(--thm-ink);text-decoration:none;text-transform:uppercase;}
   .tn-brand img{width:24px;height:24px;object-fit:contain;}
   .tn-links{display:flex;gap:24px;}
-  .tn-links a{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-decoration:none;transition:color .15s;}
-  .tn-links a:hover{color:var(--ink);}
+  .tn-links a{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--thm-ink-soft);text-decoration:none;transition:color .15s;}
+  .tn-links a:hover{color:var(--thm-ink);}
   .tn-actions{display:flex;align-items:center;gap:14px;}
-  .tn-login{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);text-decoration:none;opacity:.85;}
+  .tn-login{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--thm-ink-soft);text-decoration:none;opacity:.85;}
   .tn-login:hover{opacity:1;}
   .tn-cta{font-family:var(--disp);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.02em;color:var(--bg);background:var(--fox);border-radius:10px;padding:9px 16px;text-decoration:none;box-shadow:var(--clay-sm);transition:transform .15s;}
   .tn-cta:hover{transform:translateY(-2px);}
@@ -582,24 +663,50 @@
 <a class="login-link" href="https://app.foxyaudit.tech/dashboard">Log in</a>
 
 <div class="stage" id="stage">
-  <!-- The refraction pipeline the cards' backdrop-filter runs through. Inline and
-       0×0 — no request, nothing to lay out. Turbulence generates a noise field,
-       feDisplacementMap pushes the backdrop's pixels around by it, then a small
-       blur and a saturate bring it back to something you can read text on.
-       ⚠ These values are the approved ones. Do not retune them. -->
+  <!-- The three turbulence pipelines of the theme. Inline and 0×0 — no request,
+       nothing to lay out. ⚠ These values are the W2-approved ones. Do not retune.
+       #hero-glass  — the card's backdrop: refraction you can SEE, zero frost
+                      (the blur primitive was removed by owner decision)
+       #hero-water  — the centre icon's gentle water
+       #hero-marble — the marble texture's own water, kept LIVE: its turbulence
+                      drifts on an 18s period and the displacement scale
+                      breathes 8→11→8 over 26s, so the pattern itself keeps
+                      re-forming (owner addition on top of the approved spec) -->
   <svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
-    <filter id="hero-glass" x="-20%" y="-20%" width="140%" height="140%"
+    <filter id="hero-glass" x="-25%" y="-25%" width="150%" height="150%"
             color-interpolation-filters="sRGB">
-      <feTurbulence type="fractalNoise" baseFrequency="0.007 0.011" numOctaves="2"
-                    seed="7" result="noise">
-        <animate attributeName="baseFrequency" dur="22s"
-                 values="0.007 0.011;0.011 0.007;0.007 0.011"
+      <feTurbulence type="fractalNoise" baseFrequency="0.004 0.008" numOctaves="2"
+                    seed="11" result="noise">
+        <animate attributeName="baseFrequency" dur="24s"
+                 values="0.004 0.008;0.008 0.004;0.004 0.008"
                  repeatCount="indefinite"/>
       </feTurbulence>
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="46"
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="44"
                          xChannelSelector="R" yChannelSelector="G"/>
-      <feGaussianBlur stdDeviation="2.5"/>
       <feColorMatrix type="saturate" values="1.45"/>
+    </filter>
+    <filter id="hero-water" x="-15%" y="-15%" width="130%" height="130%"
+            color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2"
+                    seed="5" result="iw">
+        <animate attributeName="baseFrequency" dur="14s"
+                 values="0.012 0.018;0.018 0.012;0.012 0.018" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="iw" scale="9"
+                         xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="hero-marble" x="-15%" y="-15%" width="130%" height="130%"
+            color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2"
+                    seed="9" result="mw">
+        <animate attributeName="baseFrequency" dur="18s"
+                 values="0.012 0.018;0.018 0.012;0.012 0.018" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="mw" scale="9"
+                         xChannelSelector="R" yChannelSelector="G">
+        <animate attributeName="scale" dur="26s" values="8;11;8"
+                 repeatCount="indefinite"/>
+      </feDisplacementMap>
     </filter>
   </svg>
 
@@ -974,12 +1081,8 @@ function safeAccentHex(s){
   return (typeof val === 'string' && val.trim() !== '') ? val : FALLBACK_ACCENT;
 }
 
-function hexToRgb(h){
-  const m = /^#?([0-9a-f]{6})$/i.exec((h || '').trim());
-  if (!m) return [255, 122, 46];
-  const n = parseInt(m[1], 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
+/* hexToRgb left with --glow/--soft: the accent now reaches CSS only as the
+   --acc custom property, and color-mix() does the mixing. */
 
 function buildCards(){
   cardsEl.innerHTML = '';
@@ -988,23 +1091,27 @@ function buildCards(){
     card.className = 'card';
     card.dataset.index = i;
     const icon = safeIcon(s);
-    const accent = safeAccentHex(s);
-    const [r, g, b] = hexToRgb(accent);
-    card.style.setProperty('--acc', accent);
-    card.style.setProperty('--glow', `rgba(${r},${g},${b},.55)`);
-    /* --acc, --glow and --soft still dress the card's icon well (stroke, halo and
-       divider). --dim went with the accent border that was its only consumer. */
-    card.style.setProperty('--soft', `rgba(${r},${g},${b},.18)`);
+    /* --acc still dresses the card (icon stroke, halo, divider, the eyebrow
+       tint). --glow went with the icon's drop-shadow and --soft with the
+       card-top wash — W2 cut both consumers, so both halves of the plumbing
+       go, the same rule that took --dim in W1. */
+    card.style.setProperty('--acc', safeAccentHex(s));
     const eyebrow = safeSlideField(s, 'cardEyebrow', FALLBACK_EYEBROW, 40);
     const title = safeSlideField(s, 'cardTitle', FALLBACK_TITLE, 60);
+    const hint = safeSlideField(s, 'ctaLabel', 'Tap to explore', 40);
+    /* every theme layer is part of the template — nothing dresses cards after
+       the fact. thm-dots z1 under everything; face z2 carries the folio;
+       ring z3 draws the machined edge. */
     card.innerHTML = `
+      <div class="thm-dots"></div>
       <div class="card-top">${icon}</div>
       <div class="card-body">
         <p class="card-eyebrow">${eyebrow}</p>
         <p class="card-title">${title}</p>
       </div>
-      <p class="card-hint">Tap to explore</p>
-      <div class="card-lens"></div>`;
+      <p class="card-hint">${hint}</p>
+      <div class="thm-face"></div>
+      <div class="thm-ring"></div>`;
     card.addEventListener('click', () => {
       if (Number(card.dataset.index) !== active) { goTo(i); }
       else { openModal(i, card); }
@@ -1159,15 +1266,25 @@ carouselWrap.addEventListener('mousemove', (e) => {
 });
 carouselWrap.addEventListener('mouseleave', () => layout());
 
-/* Specular highlight tracking the pointer across the focused card. Writes two
-   custom properties; .card-lens does the painting, and only the centre card's
-   lens is visible, so this is one style write per move and no layout. */
+/* Gentle ripples: rare, small, quiet. The water lives on the glass only — a
+   move anywhere else on the stage spawns nothing (stage ripples and content
+   displacement were both cut). Appended INSIDE the card, so the card's own
+   overflow clips the band at the edge; the node removes itself after the
+   2200ms animation. */
+let lastRipple = 0;
 stageEl.addEventListener('pointermove', (e) => {
-  const center = cardsEl.querySelector('.card.is-center');
-  if (!center) return;
-  const b = center.getBoundingClientRect();
-  center.style.setProperty('--mx', `${(e.clientX - b.left) / b.width * 100}%`);
-  center.style.setProperty('--my', `${(e.clientY - b.top) / b.height * 100}%`);
+  const card = e.target.closest && e.target.closest('.card');
+  if (!card) return;
+  const now = performance.now();
+  if (now - lastRipple < 650) return;
+  lastRipple = now;
+  const r = card.getBoundingClientRect();
+  const d = document.createElement('div');
+  d.className = 'thm-ripple';
+  d.style.left = (e.clientX - r.left) + 'px';
+  d.style.top  = (e.clientY - r.top ) + 'px';
+  card.appendChild(d);
+  setTimeout(() => { d.remove(); }, 2300);
 });
 
 /* ---------------- modal ---------------- */
