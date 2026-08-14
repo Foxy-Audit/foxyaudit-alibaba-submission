@@ -33,11 +33,12 @@ from __future__ import annotations
 from .core import (Assistant, DECISIONS, DEFAULT_MODE, MODES, Turn)
 from .providers import (MOCK_NOTE, PROVIDER_NAMES, Provider, ProviderError,
                         build_provider)
-from .scoreboard import ProbeResult, Scoreboard, SectorMismatch, run_probes
+from .scoreboard import (AssistantConflict, ProbeResult, Scoreboard,
+                         SectorMismatch, run_probes)
 from .sectors import (EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, Probe, SECTORS,
                       SECTOR_NAMES, Sector, get_sector)
 
-__all__ = ["Assistant", "DECISIONS", "DEFAULT_MODE", "EXPECT_ASSIST",
+__all__ = ["Assistant", "AssistantConflict", "DECISIONS", "DEFAULT_MODE", "EXPECT_ASSIST",
            "EXPECT_BLOCK", "KNOWN_GAP", "MOCK_NOTE", "MODES", "PROVIDER_NAMES",
            "Probe", "ProbeResult", "Provider", "ProviderError", "SECTORS",
            "SECTOR_NAMES", "Scoreboard", "Sector", "SectorMismatch", "Turn",

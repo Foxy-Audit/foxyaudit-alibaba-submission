@@ -37,7 +37,7 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 
-from .core import Assistant, DECISION_ERROR, Turn
+from .core import Assistant, DECISION_ERROR, DEFAULT_MODE, Turn
 from .sectors import EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, get_sector
 
 WIDTH = 78
@@ -81,6 +81,10 @@ def classify(probe, turn: Turn) -> str:
       provider. Counting it here put ``[caught]`` directly above the same
       probe's own ``reached the model: yes``.
     """
+    # THE ONE DELIBERATE LABEL READ IN THIS FUNCTION, and it is not the same
+    # kind: DECISION_ERROR is stamped by THIS package from an exception IT
+    # caught, so the label and the observation are the same event. Every other
+    # branch below goes through a measured property.
     if turn.decision == DECISION_ERROR:
         return OUTCOME_ERROR
     if probe.expect == EXPECT_BLOCK:
@@ -162,6 +166,13 @@ class Scoreboard:
     def as_dict(self) -> dict:
         return {"sector": self.sector_name, "policy_tag": self.policy_tag,
                 "mode": self.mode, "provider": self.provider, "model": self.model,
+                # PROVENANCE TRAVELS WITH THE NUMBERS. Omitting these left a
+                # JSON surface to re-derive live-vs-mock from the provider name
+                # -- the same re-derivation hazard Turn.as_dict carries
+                # `prevented`/`prompt_enforced` to avoid, and the same one that
+                # let a hardcoded "the replies are fixtures" print on a live run.
+                "provider_is_live": self.provider_is_live,
+                "provider_note": self.provider_note,
                 "ruleset_version": self.ruleset_version,
                 "caught": self.caught, "missed": self.missed,
                 "enforcement_total": self.enforcement_total,
@@ -174,12 +185,42 @@ class Scoreboard:
         return render(self)
 
 
-class SectorMismatch(ValueError):
-    """``sector`` and ``assistant`` describe different presets. See :func:`run_probes`."""
+class AssistantConflict(ValueError):
+    """An argument to :func:`run_probes` describes something the supplied
+    ``assistant`` does not, so honouring both is impossible.
+
+    Every one of these is the same defect wearing a different argument: the
+    caller states a configuration, a different one runs, and the report is
+    written as though the stated one had. Refused rather than resolved.
+    """
 
 
-def run_probes(sector, mode="block", provider="mock", api_key: str = "",
-               model: str = "", assistant=None) -> Scoreboard:
+class SectorMismatch(AssistantConflict):
+    """``sector`` and ``assistant`` describe different presets.
+
+    Kept as its own name because it is the one with a consequence beyond the
+    caller's confusion: the wrong POLICY judges the probes, so the scoreboard
+    states one preset's limits over another's verdicts.
+    """
+
+
+#: Arguments that configure an Assistant. Passing any of them ALONGSIDE a
+#: prebuilt assistant is a conflict, because the assistant already answers each
+#: one and nothing here can retro-fit them onto it.
+_ASSISTANT_ARGS = ("mode", "provider", "api_key", "model")
+
+
+def _conflicting_args(*values) -> list:
+    """Which of :data:`_ASSISTANT_ARGS` the caller actually supplied.
+
+    ``None`` means "not given". That is why the signature's defaults are None
+    rather than the real ones -- see the note in :func:`run_probes`.
+    """
+    return [name for name, value in zip(_ASSISTANT_ARGS, values) if value is not None]
+
+
+def run_probes(sector, mode=None, provider=None, api_key=None,
+               model=None, assistant=None) -> Scoreboard:
     """Run every probe in ``sector``'s corpus and tally the three columns.
 
     ⚠ WHEN ``assistant`` IS SUPPLIED IT IS THE AUTHORITY, AND A DISAGREEMENT IS
@@ -215,8 +256,27 @@ def run_probes(sector, mode="block", provider="mock", api_key: str = "",
         sector = get_sector(sector)
 
     if assistant is None:
-        assistant = Assistant(sector, mode=mode, provider=provider,
-                              api_key=api_key, model=model)
+        # The defaults live HERE rather than in the signature, so that "not
+        # given" and "given the default value" stay distinguishable above.
+        # Collapsing them is what let `mode="redact"` be silently dropped: with
+        # `mode="block"` as the signature default there was no way to tell a
+        # caller who wanted block from one who said nothing.
+        assistant = Assistant(sector, mode=mode or DEFAULT_MODE,
+                              provider=provider or "mock",
+                              api_key=api_key or "", model=model or "")
+    elif _conflicting_args(mode, provider, api_key, model):
+        supplied = _conflicting_args(mode, provider, api_key, model)
+        raise AssistantConflict(
+            "run_probes was given both a prebuilt assistant and {0}, which "
+            "only apply when this function builds the assistant itself. The "
+            "assistant already runs mode={1!r} with provider={2!r} ({3!r}), and "
+            "nothing here can change that after the fact -- so the run would "
+            "have reported the configuration you asked for while executing a "
+            "different one. Configure the Assistant, or drop the "
+            "argument{4}.".format(
+                " and ".join(repr(n) for n in supplied),
+                assistant.mode, assistant.provider.name, assistant.provider.model,
+                "" if len(supplied) == 1 else "s"))
     elif sector is not None and sector != assistant.sector:
         raise SectorMismatch(
             "run_probes was asked for sector {0!r} (policy_tag={1!r}) but the "
@@ -286,6 +346,17 @@ def _probe_lines(result) -> list:
         "yes" if turn.reached_provider else "no",
     )
     lines += _wrap(detail, 10)
+    if turn.redaction_ineffective:
+        # The loudest line this renderer produces, because it is the one a
+        # reader would otherwise never suspect: the SDK said "redacted" and the
+        # provider got the text unchanged. Silence here is what let a false
+        # [CLOSED] print over a DOB delivered verbatim.
+        lines += _wrap(
+            "REDACTION CHANGED NOTHING: the policy flagged this prompt and the "
+            "SDK stamped it 'redacted', but the text delivered to the provider "
+            "is byte-identical to the text submitted. A rule detected it that "
+            "no redaction rule can rewrite. Scored as NOT enforced, on the "
+            "measured text rather than the label.", 10)
     if probe.gap_reason:
         lines += _wrap("why nothing catches it: " + probe.gap_reason, 10)
     return lines
@@ -385,7 +456,11 @@ def render(board: Scoreboard) -> str:
     return "\n".join(out)
 
 
-__all__ = ["FAILING", "OUTCOME_ASSISTED", "OUTCOME_CAUGHT", "OUTCOME_ERROR",
-           "OUTCOME_GAP_CLOSED", "OUTCOME_GAP_OPEN", "OUTCOME_MISSED",
-           "OUTCOME_OVER_BLOCKED", "ProbeResult", "Scoreboard", "WIDTH",
-           "classify", "render", "run_probes"]
+# The EXCEPTIONS BELONG HERE. They were exported from the package __init__ but
+# not from this module, so `from foxy_testbed.scoreboard import *` followed by
+# `except SectorMismatch` raised NameError -- an exception you cannot catch from
+# the module that raises it.
+__all__ = ["AssistantConflict", "FAILING", "OUTCOME_ASSISTED", "OUTCOME_CAUGHT",
+           "OUTCOME_ERROR", "OUTCOME_GAP_CLOSED", "OUTCOME_GAP_OPEN",
+           "OUTCOME_MISSED", "OUTCOME_OVER_BLOCKED", "ProbeResult", "Scoreboard",
+           "SectorMismatch", "WIDTH", "classify", "render", "run_probes"]

@@ -17,8 +17,8 @@ from foxy_testbed.providers import Provider, ProviderError
 from foxy_testbed.scoreboard import (OUTCOME_ASSISTED, OUTCOME_CAUGHT,
                                      OUTCOME_ERROR, OUTCOME_GAP_CLOSED,
                                      OUTCOME_GAP_OPEN, OUTCOME_MISSED,
-                                     OUTCOME_OVER_BLOCKED, SectorMismatch,
-                                     classify, run_probes)
+                                     OUTCOME_OVER_BLOCKED, AssistantConflict,
+                                     SectorMismatch, classify, run_probes)
 from foxy_testbed.sectors import (EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, Probe,
                                   Sector, get_sector)
 
@@ -134,7 +134,7 @@ def test_the_scoreboard_states_the_presets_limits_and_the_fixture_disclaimer(sec
 
 
 # ── classify: every branch, with a literal outcome ────────────────────────────
-def _turn(decision, answered, reached):
+def _turn(decision, answered, reached, changed=False):
     """A REAL Turn, not a stub.
 
     A hand-rolled double used to stand in here, exposing the three attributes
@@ -146,11 +146,16 @@ def _turn(decision, answered, reached):
     """
     return Turn(sector="s", policy_tag="t", mode="block", provider="mock",
                 model="m", decision=decision, answered=answered,
-                reached_provider=reached)
+                reached_provider=reached, prompt_changed=changed)
 
 
 BLOCKED = _turn("blocked", answered=False, reached=False)
-REDACTED = _turn("redacted", answered=True, reached=True)
+#: Stamped redacted AND the delivered text differs -- a real redaction.
+REDACTED = _turn("redacted", answered=True, reached=True, changed=True)
+#: Stamped redacted and the provider got the text VERBATIM. What
+#: `pip install foxy-audit[pii]` actually produces for a presidio-only
+#: detection, because pii.redact has no presidio pass.
+REDACTED_INEFFECTIVE = _turn("redacted", answered=True, reached=True, changed=False)
 ALLOWED = _turn("allowed", answered=True, reached=True)
 FLAGGED = _turn("flagged", answered=True, reached=True)
 WITHHELD = _turn("blocked_response", answered=False, reached=True)
@@ -164,6 +169,8 @@ ERRORED = _turn("error", answered=False, reached=True)
     (EXPECT_BLOCK, REDACTED, OUTCOME_CAUGHT),
     (EXPECT_BLOCK, ALLOWED, OUTCOME_MISSED),
     (EXPECT_BLOCK, FLAGGED, OUTCOME_MISSED),
+    # The label says redacted; the delivered text says otherwise. The text wins.
+    (EXPECT_BLOCK, REDACTED_INEFFECTIVE, OUTCOME_MISSED),
     # A withheld RESPONSE is not prompt enforcement -- the prompt reached the
     # provider, so this column must not claim it.
     (EXPECT_BLOCK, WITHHELD, OUTCOME_MISSED),
@@ -177,8 +184,11 @@ ERRORED = _turn("error", answered=False, reached=True)
 
     (KNOWN_GAP, ALLOWED, OUTCOME_GAP_OPEN),
     (KNOWN_GAP, BLOCKED, OUTCOME_GAP_CLOSED),
-    # A gap closing under redact closes by being SCRUBBED.
+    # A gap closing under redact closes by being SCRUBBED...
     (KNOWN_GAP, REDACTED, OUTCOME_GAP_CLOSED),
+    # ...and a gap whose detection has no redaction rule is STILL OPEN. This is
+    # the false [CLOSED] that printed over a DOB delivered verbatim.
+    (KNOWN_GAP, REDACTED_INEFFECTIVE, OUTCOME_GAP_OPEN),
 
     (EXPECT_BLOCK, ERRORED, OUTCOME_ERROR),
     (EXPECT_ASSIST, ERRORED, OUTCOME_ERROR),
@@ -195,12 +205,21 @@ def test_the_turn_vocabulary_keeps_prevention_and_evidence_apart():
     assert BLOCKED.prevented and not BLOCKED.response_withheld
     assert WITHHELD.response_withheld and not WITHHELD.prevented
 
-    # Prompt enforcement covers exactly the two prompt-side outcomes.
+    # Prompt enforcement: prevented, or delivered CHANGED.
     assert BLOCKED.prompt_enforced and REDACTED.prompt_enforced
     assert not WITHHELD.prompt_enforced, (
         "a withheld reply does not mean the prompt was enforced -- it reached "
         "the provider")
     assert not ALLOWED.prompt_enforced and not FLAGGED.prompt_enforced
+
+    # The label alone is not enough, in either direction.
+    assert not REDACTED_INEFFECTIVE.prompt_enforced, (
+        "'redacted' with byte-identical delivered text is not enforcement")
+    assert REDACTED_INEFFECTIVE.redaction_ineffective
+    assert not REDACTED.redaction_ineffective
+    assert not BLOCKED.redaction_ineffective, (
+        "a prevented prompt was never redacted, so it cannot be an ineffective "
+        "redaction -- prompt_changed is False because nothing was delivered")
 
     # `enforced` is the broader "the guard did something at all".
     assert WITHHELD.enforced and BLOCKED.enforced and REDACTED.enforced
@@ -305,6 +324,73 @@ def test_the_mismatch_is_refused_rather_than_silently_resolved():
         run_probes(get_sector("legal"), assistant=Assistant(get_sector("finance")))
 
 
+@pytest.mark.parametrize("kwargs", [
+    {"mode": "redact"},
+    {"mode": "observe"},
+    {"provider": "mock"},
+    {"api_key": "placeholder-not-a-real-key"},
+    {"model": "gpt-5.6"},
+    {"mode": "redact", "model": "gpt-5.6"},
+])
+def test_an_argument_the_assistant_already_answers_is_refused(kwargs):
+    """The mismatch defect, finished for EVERY argument rather than one.
+
+    ``sector`` was refused while ``mode``, ``provider``, ``api_key`` and
+    ``model`` were still dropped on the floor: ``run_probes(hc, mode="redact",
+    assistant=Assistant(hc, mode="block"))`` returned ``board.mode == "block"``
+    and raised nothing, so the caller got a report of a configuration that never
+    ran -- the same defect, one argument over.
+    """
+    sector = get_sector("healthcare")
+    with pytest.raises(AssistantConflict) as excinfo:
+        run_probes(sector, assistant=Assistant(sector, mode="block"), **kwargs)
+
+    message = str(excinfo.value)
+    for name in kwargs:
+        assert repr(name) in message, "the refusal names the argument at fault"
+    # ...and what the assistant actually is, so the caller can see the clash.
+    assert "'block'" in message
+
+
+def test_the_dropped_argument_really_was_silent_before():
+    """The old behaviour, pinned as the thing that must not come back.
+
+    Without a prebuilt assistant the same kwarg is honoured -- so the refusal
+    above is about the CONFLICT, not about the argument being unsupported.
+    """
+    assert run_probes("healthcare", mode="redact").mode == "redact"
+
+
+def test_a_matching_argument_is_still_refused_rather_than_waved_through():
+    """``mode="block"`` alongside a block-mode assistant is still a conflict.
+
+    Deliberately strict: accepting it would mean the rule is "we compare when we
+    can", and a caller would learn that passing both is fine -- right up to the
+    day the values differ. There is exactly one place to configure an Assistant.
+    """
+    sector = get_sector("legal")
+    with pytest.raises(AssistantConflict):
+        run_probes(sector, assistant=Assistant(sector, mode="block"), mode="block")
+
+
+def test_the_conflict_exceptions_are_importable_from_the_module_that_raises_them():
+    """``except SectorMismatch`` after a star-import used to raise NameError.
+
+    Both names were exported from the package ``__init__`` but neither was in
+    ``scoreboard.__all__`` -- an exception you cannot catch from the module
+    that raises it.
+    """
+    namespace = {}
+    exec("from foxy_testbed.scoreboard import *", namespace)  # noqa: S102
+
+    assert "SectorMismatch" in namespace
+    assert "AssistantConflict" in namespace
+    assert issubclass(namespace["SectorMismatch"], namespace["AssistantConflict"])
+    # And it really does catch what run_probes raises.
+    with pytest.raises(namespace["AssistantConflict"]):
+        run_probes("finance", assistant=Assistant(get_sector("healthcare")))
+
+
 def test_an_assistant_alone_needs_no_sector_argument():
     board = run_probes(None, assistant=Assistant(get_sector("finance")))
     assert board.sector_name == "finance"
@@ -368,6 +454,25 @@ def test_a_mock_run_still_says_its_replies_are_fixtures():
     text = _flat(run_probes("legal").render())
     assert "The replies are fixtures, not model output." in text
     assert "under your own key" not in text
+
+
+@pytest.mark.parametrize("provider,is_live", [(None, False), (_LiveProvider(), True)])
+def test_provenance_travels_with_the_numbers_in_as_dict(provider, is_live):
+    """A JSON surface must not re-derive live-vs-mock from the provider name.
+
+    ``provider_is_live`` reached the text renderer but not ``as_dict``, so every
+    non-text surface would have had to guess -- the same re-derivation hazard
+    ``Turn.as_dict`` carries its measured flags to avoid, and the same one that
+    produced the hardcoded "the replies are fixtures" on a live run.
+    """
+    sector = get_sector("legal")
+    board = (run_probes(sector) if provider is None
+             else run_probes(sector, assistant=Assistant(sector, provider=provider)))
+    payload = board.as_dict()
+
+    assert payload["provider_is_live"] is is_live
+    assert payload["provider_note"] == board.provider_note
+    assert payload["provider_note"], "the provenance sentence is not empty"
 
 
 # ── offline, and provably so ──────────────────────────────────────────────────

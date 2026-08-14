@@ -88,13 +88,29 @@ class Turn:
     provider: str
     model: str
 
+    #: What the SDK stamped. A LABEL, and treated as one: nothing in the
+    #: scoreboard concludes anything about behaviour from it. See the class
+    #: note below.
     decision: str
-    #: Did anything reach the caller? False for every block.
+    #: Did a non-empty reply actually reach the caller? MEASURED from the
+    #: returned value, not from the absence of an exception -- a provider that
+    #: returns "" delivered nothing, whatever the decision says.
     answered: bool
-    #: Did the wrapped function actually run? This is the prevention claim, and
-    #: it is a measurement rather than an inference: the wrapped callable sets
-    #: it, so a block that failed to prevent the call could not report True.
+    #: Did the wrapped function actually run? The wrapped callable sets it, so
+    #: a block that failed to prevent the call could not report True.
     reached_provider: bool
+    #: Did the text the provider received DIFFER from the text submitted?
+    #: Measured by capturing the delivered prompt inside the wrapped callable
+    #: and comparing. False when nothing reached the provider at all.
+    #:
+    #: ⚠ THIS IS WHAT MAKES A REDACTION CLAIM TRUE. `decision == "redacted"` is
+    #: the SDK's label and is NOT proof a byte changed: `pii.detect_pii` emits
+    #: `presidio:*` labels while `pii.redact` has no presidio pass, so with
+    #: `pip install foxy-audit[pii]` a prompt can be evaluated as needing
+    #: redaction, stamped "redacted", and delivered VERBATIM. Reproduced, not
+    #: theorised. (The SDK stamping that label without comparing is filed
+    #: separately; this field is how the testbed avoids repeating it.)
+    prompt_changed: bool = False
 
     reply: str = ""
     rules: tuple = ()
@@ -129,10 +145,23 @@ class Turn:
     # on adjacent lines. Each property below states its own scope, and the
     # ambiguous word is gone rather than redefined.
 
+    # EVERY PROPERTY BELOW PAIRS THE LABEL WITH THE OBSERVATION THAT WOULD
+    # CONTRADICT IT. The label alone says what the policy evaluation concluded;
+    # the observation says what happened. Where they can disagree, the
+    # observation decides — which is the rule three review rounds arrived at the
+    # hard way, once per label.
+
     @property
     def prevented(self) -> bool:
-        """Nothing left this machine. ``reached_provider`` is False."""
-        return self.decision == DECISION_BLOCKED
+        """Nothing left this machine.
+
+        ``reached_provider`` is the load-bearing half: a block that somehow
+        failed to stop the call cannot report prevention, whatever it was
+        stamped. Both halves are needed — a provider that raised before
+        returning also leaves ``reached_provider`` True, and an internal fault
+        before the call leaves it False without anything having been prevented.
+        """
+        return self.decision == DECISION_BLOCKED and not self.reached_provider
 
     @property
     def response_withheld(self) -> bool:
@@ -140,27 +169,55 @@ class Turn:
 
         Real prevention of EGRESS TO THE CALLER, and the SDK counts it as such
         — but not prevention of the prompt, which is what a prompt-side probe
-        asks about.
+        asks about. Paired with ``reached_provider`` for the same reason as
+        above: this outcome asserts the call happened, so it is checked.
         """
-        return self.decision == DECISION_BLOCKED_RESPONSE
+        return self.decision == DECISION_BLOCKED_RESPONSE and self.reached_provider
+
+    @property
+    def redaction_ineffective(self) -> bool:
+        """Stamped ``redacted``, and the provider got the text unchanged.
+
+        The gap between the SDK's label and what was actually delivered. Worth
+        its own name because it is the interesting outcome, not an edge case: a
+        surface that renders it is showing a customer a real hole in their
+        configuration.
+        """
+        return self.decision == DECISION_REDACTED and not self.prompt_changed
 
     @property
     def prompt_enforced(self) -> bool:
-        """The guard acted on the PROMPT: it never left, or it left scrubbed.
+        """The guard acted on the PROMPT: it never left, or it left CHANGED.
 
-        THE ONE AN ``expect_block`` PROBE MEASURES. A redacted prompt is a
-        success, not a miss: the offending span never reached the model, which
-        is the whole claim ``mode="redact"`` makes. Scoring redaction as a
-        failure had the testbed reporting the SDK's own correct behaviour as
-        broken — the worst direction an audit product's demo can be wrong in.
+        THE ONE AN ``expect_block`` PROBE MEASURES, and the third revision of
+        it. The first read ``blocked``, which called every correct redaction a
+        miss. The second read ``decision in (blocked, redacted)``, which called
+        every INEFFECTIVE redaction a success — because the label is stamped
+        from the policy evaluation, before any text is compared.
+
+        So this one reads the label for exactly one thing, prevention, where
+        the label is backed by ``reached_provider`` anyway, and MEASURES the
+        other: a redaction counts only if the delivered text actually differs
+        from the submitted text.
         """
-        return self.decision in (DECISION_BLOCKED, DECISION_REDACTED)
+        if self.decision == DECISION_BLOCKED:
+            # `prevented`, not True: the block claim carries its own observation.
+            return self.prevented
+        if self.decision == DECISION_REDACTED:
+            return self.prompt_changed
+        return False
 
     @property
     def enforced(self) -> bool:
-        """The guard did something at all — prevented, scrubbed, or withheld."""
-        return self.decision in (DECISION_BLOCKED, DECISION_BLOCKED_RESPONSE,
-                                 DECISION_REDACTED)
+        """The guard did something at all — prevented, scrubbed, or withheld.
+
+        Composed from the three measured properties rather than re-listing the
+        decision constants. A fourth place matching on labels is a fourth place
+        to get the family wrong, and this one would have gone stale silently:
+        it named ``DECISION_REDACTED`` directly, so it would still have called
+        an ineffective redaction enforcement after ``prompt_enforced`` stopped.
+        """
+        return self.prompt_enforced or self.response_withheld
 
     def as_dict(self) -> dict:
         """A plain dict for a surface to render or serialise.
@@ -175,6 +232,8 @@ class Turn:
                 "mode": self.mode, "provider": self.provider, "model": self.model,
                 "decision": self.decision, "answered": self.answered,
                 "reached_provider": self.reached_provider,
+                "prompt_changed": self.prompt_changed,
+                "redaction_ineffective": self.redaction_ineffective,
                 # Carried rather than left for each surface to re-derive from
                 # `decision`. Three front-ends each writing their own version of
                 # "was this prevented?" is three chances to rebuild the
@@ -229,16 +288,26 @@ class Assistant:
             api_key="", desktop_ping=desktop_ping)
 
         self._reached = False
+        self._delivered = None
         self._guarded = self._client.audit(
             policy=self.sector.policy_tag,
             agent=self.provider.model,
             mode=self.mode,
         )(self._invoke)
 
-    # The wrapped function. Reached ONLY when the guard let the prompt through,
-    # which is what makes Turn.reached_provider a measurement.
+    # THE OBSERVATION POINT. This is the only place in the package that sees
+    # what the provider was actually handed, which is why both of the
+    # scoreboard's behavioural claims are taken here rather than read off a
+    # label afterwards:
+    #
+    #   reached_provider  - this function ran at all
+    #   prompt_changed    - the prompt it ran WITH differs from the one submitted
+    #
+    # Reached only when the guard let the prompt through, and carrying whatever
+    # the guard rewrote it into.
     def _invoke(self, prompt, system=None, provider=None, model=None):
         self._reached = True
+        self._delivered = prompt
         return self.provider.complete(system or "", prompt)
 
     def ask(self, prompt: str) -> Turn:
@@ -256,6 +325,7 @@ class Assistant:
         pre = check(prompt, self.sector.policy_tag)
 
         self._reached = False
+        self._delivered = None
         started = time.perf_counter()
         reply, error = "", ""
         try:
@@ -281,13 +351,22 @@ class Assistant:
             decision, answered = DECISION_ERROR, False
             error = "{0}: {1}".format(type(exc).__name__, exc)
         else:
-            answered = True
+            # MEASURED FROM THE RETURNED VALUE, not from "no exception was
+            # raised". A provider that returns "" delivered nothing to the
+            # caller, and scoring that as a successful assist would be the same
+            # label-over-observation mistake in the other column.
+            answered = bool(str(reply or "").strip())
             if pre.triggered:
                 decision = (DECISION_REDACTED if self.mode == "redact"
                             else DECISION_FLAGGED)
             else:
                 decision = DECISION_ALLOWED
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        # The comparison that turns "redacted" from a claim into a finding.
+        # Guarded on _reached so a BLOCKED turn -- where nothing was delivered
+        # and _delivered is None -- can never read as "the text changed".
+        prompt_changed = self._reached and self._delivered != prompt
 
         return Turn(
             sector=self.sector.name,
@@ -298,6 +377,7 @@ class Assistant:
             decision=decision,
             answered=answered,
             reached_provider=self._reached,
+            prompt_changed=prompt_changed,
             reply=reply if answered else "",
             rules=tuple(pre.rules),
             signals=tuple(pre.signals),
