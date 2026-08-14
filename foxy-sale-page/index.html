@@ -88,13 +88,13 @@
   .blob{position:absolute;border-radius:50%;pointer-events:none;z-index:1;
     filter:blur(90px);will-change:transform;mix-blend-mode:screen;}
   .blob-1{width:60vw;height:52vh;left:-10%;top:-12%;background:var(--blob-fox);
-    animation:blob-drift-1 30s ease-in-out infinite alternate;}
+    animation:blob-drift-1 21s ease-in-out infinite alternate;}
   .blob-2{width:54vw;height:50vh;right:-8%;top:2%;background:var(--blob-violet);
-    animation:blob-drift-2 24s ease-in-out infinite alternate;}
+    animation:blob-drift-2 17s ease-in-out infinite alternate;}
   .blob-3{width:56vw;height:44vh;left:22%;bottom:-14%;background:var(--blob-cyan);
-    animation:blob-drift-3 20s ease-in-out infinite alternate;}
+    animation:blob-drift-3 14s ease-in-out infinite alternate;}
   .blob-4{width:38vw;height:36vh;right:16%;bottom:-6%;background:var(--blob-magenta);
-    animation:blob-drift-4 16s ease-in-out infinite alternate;}
+    animation:blob-drift-4 11s ease-in-out infinite alternate;}
   @keyframes blob-drift-1{to{transform:translate(12vw,9vh) scale(1.2) rotate(10deg);}}
   @keyframes blob-drift-2{to{transform:translate(-11vw,11vh) scale(1.15) rotate(-12deg);}}
   @keyframes blob-drift-3{to{transform:translate(10vw,-9vh) scale(1.22) rotate(8deg);}}
@@ -699,12 +699,11 @@
             color-interpolation-filters="sRGB">
       <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2"
                     seed="9" result="mw">
-        <animate attributeName="baseFrequency" dur="18s"
-                 values="0.012 0.018;0.018 0.012;0.012 0.018" repeatCount="indefinite"/>
+        <animate attributeName="baseFrequency" dur="9s" values="0.012 0.018;0.021 0.009;0.009 0.021;0.012 0.018" repeatCount="indefinite"/>
       </feTurbulence>
       <feDisplacementMap in="SourceGraphic" in2="mw" scale="9"
                          xChannelSelector="R" yChannelSelector="G">
-        <animate attributeName="scale" dur="26s" values="8;11;8"
+        <animate attributeName="scale" dur="12s" values="8;16;8"
                  repeatCount="indefinite"/>
       </feDisplacementMap>
     </filter>
