@@ -24,16 +24,27 @@
   <div class="phead">
     <a class="back" href="/">← Back to all cards</a>
     <p class="sec-eb">Metadata Policy Judge</p>
-    <h1 class="sec-h">An optional judge reviews captured metadata.</h1>
-    <p class="sub">Capture comes first. The judge then evaluates non-content metadata against your policy and records an honest review signal without receiving raw prompts or responses.</p>
+    <h1 class="sec-h">How the AI judge actually works.</h1>
+    <p class="sub">Two different machines guard your calls. A deterministic policy engine runs on your machine, before the model call. The judge grades afterwards — and it never sees your text. Here is exactly what it receives.</p>
   </div>
 
   <div class="prose">
-    <p class="lead">For interactions captured through the SDK, a configured judge evaluates the recorded metadata and returns a verdict such as clean, flagged, or unavailable. It is an operational review signal, not a compliance certification, and its verdict remains linked to the tamper-evident audit record. You choose which model judges your workspace and — depending on your plan — whose API key pays for those model calls.</p>
+    <p class="subhead">First machine: the policy engine, before the model call</p>
+    <p>Enforcement is local and deterministic. When you run in <code>block</code> or <code>redact</code> mode, the SDK's own policy engine — PHI/PII sweeps, secret detection, prompt-injection rules — runs inside your process <b>before the model call</b>, and blocks or redacts before the request leaves. No AI is involved in that decision, no network is required for it, and its verdict is sealed into the hash chain.</p>
 
-    <p class="subhead">What it does for you</p>
+    <p class="subhead">Second machine: the judge, after capture</p>
+    <p>Once a captured record lands in the ledger, an optional judge — Google Gemini, OpenAI, or both — grades it <b>after</b> the fact. Its instruction sheet is short, and we can quote it, because it is in our own source: the judge receives <b>only structural metadata</b> about the exchange —</p>
     <ul class="points">
-      <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span><b>Content-blind review:</b> configured providers receive metadata, never raw prompts or responses.</span></li>
+      <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>two opaque customer-keyed <b>commitments</b> (the hashes of prompt and response),</span></li>
+      <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>an integer <b>token count</b>,</span></li>
+      <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>your <b>policy tag</b>, and</span></li>
+      <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span>optionally a <b><code>pii_signals</code></b> list naming the pattern types the local engine detected.</span></li>
+    </ul>
+    <p>It never receives the prompt or response text — there is nothing to send: the SDK threw the raw text away on your machine, and there is no raw-text column anywhere in our schema. The judge's instructions also tell it to treat every field value as untrusted data, never as instructions, so a hostile prompt cannot smuggle orders to its own reviewer.</p>
+
+    <p class="subhead">What the verdict is — and is not</p>
+    <p>The judge returns a breach flag, a short reason, and a 0–100 risk score. That verdict is <b>advisory</b>: a review signal for your team, not a certification, and deliberately <b>not part of the hash chain</b> — the chain seals the deterministic facts of capture and enforcement, which exist before any judge has run. You can tune how conservatively ambiguity is graded per workspace: minimise false positives, surface every plausible concern, or the balanced default.</p>
+    <ul class="points">
       <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span><b>Honest states:</b> clean, flagged, pending, failed, and unavailable remain visible rather than being invented.</span></li>
       <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span><b>Linked evidence:</b> the verdict is linked to the captured audit record for investigation and export.</span></li>
       <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><span><b>Visible operations:</b> the <a href="/desktop.html" style="color:var(--fox)">desktop app</a> and dashboard surface record and grading status as it arrives.</span></li>

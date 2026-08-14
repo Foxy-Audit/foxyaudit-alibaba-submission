@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Documentation — Foxy Audit</title>
-<meta name="description" content="Developer documentation for Foxy Audit is on the way. In the meantime, see how it works or reach out and we'll walk you through setup.">
+<meta name="description" content="The Foxy Audit documentation index: install guide, SDK, how it works, the hash chain, the content-blind judge, independent verification, and the compliance passport.">
 <link rel="canonical" href="https://foxyaudit.tech/docs.html">
 <link rel="icon" type="image/png" href="/logo.png">
 <meta name="theme-color" content="#ff7a2e">
@@ -24,17 +24,54 @@
   <div class="phead">
     <a class="back" href="/">← Back to all cards</a>
     <p class="sec-eb">Documentation</p>
-    <h1 class="sec-h">Docs are on the way.</h1>
-    <p class="sub">We're writing the full developer documentation — SDK reference, setup guides, and policy configuration. Here's how to get going in the meantime.</p>
+    <h1 class="sec-h">Everything, by topic.</h1>
+    <p class="sub">Each page below is real and current — the same pages the homepage cards used to preview. Start with the walkthrough or the install guide; go deep where you need to.</p>
   </div>
 
-  <div class="soon">
-    <div class="big">📚</div>
-    <h3>Full docs coming soon</h3>
-    <p>Until they're live, the fastest path is the how-it-works walkthrough or a quick message — we'll help you wire the SDK into a real call.</p>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
-      <a class="btn" href="/how-it-works.html" style="text-decoration:none;">See how it works</a>
-      <a class="btn ghost" href="/contact.html" style="text-decoration:none;">Ask a question</a>
+  <!-- The documentation hub. The four topics that lost their homepage cards
+       (hash chain · judge · verify · passport) live on here, beside the two
+       guides. Every link is a real page — no invented content, no "coming
+       soon". -->
+  <div class="grid">
+    <div class="gcard">
+      <h3>How it works</h3>
+      <p>The whole pipeline in four steps: hashed on your machine, graded against your policy, sealed into the chain, proven anywhere.</p>
+      <a class="cta" href="/how-it-works.html">Read the walkthrough →</a>
+    </div>
+    <div class="gcard">
+      <h3>Install guide</h3>
+      <p>One pip install and three ways in: the capture decorator, the check() pre-flight gate for CI, and explain() for local replay.</p>
+      <a class="cta" href="/install.html">Read the install guide →</a>
+    </div>
+    <div class="gcard">
+      <h3>The SDK</h3>
+      <p>What the decorator captures, what the policy tags run locally, and exactly what does — and does not — leave your process.</p>
+      <a class="cta" href="/sdk.html">Open the SDK page →</a>
+    </div>
+    <div class="gcard">
+      <h3>The hash chain</h3>
+      <p>Each record's hash folds in the one before it — edit any past entry and every hash after it stops matching, mathematically.</p>
+      <a class="cta" href="/hash-chain.html">Open Hash Chain →</a>
+    </div>
+    <div class="gcard">
+      <h3>The metadata judge</h3>
+      <p>An optional, content-blind reviewer that grades captured metadata after the fact. It never receives your text — here is what it does receive.</p>
+      <a class="cta" href="/judge.html">How the judge works →</a>
+    </div>
+    <div class="gcard">
+      <h3>Verify a chain</h3>
+      <p>Paste an export, get pass or fail — the same math your system used to build the chain, runnable by anyone, no login.</p>
+      <a class="cta" href="/verify-page.html">Open Verify →</a>
+    </div>
+    <div class="gcard">
+      <h3>The compliance passport</h3>
+      <p>Months of AI activity as one exportable document, mapped to NIST AI RMF and EU AI Act clauses — evidence mapping, not certification.</p>
+      <a class="cta" href="/passport.html">Open the Passport →</a>
+    </div>
+    <div class="gcard">
+      <h3>Still stuck?</h3>
+      <p>Ask a question from the FAQ page and it lands in our inbox, or send a note through the contact page — a real person replies.</p>
+      <a class="cta" href="/faq.html">Read the FAQ →</a>
     </div>
   </div>
 </main>

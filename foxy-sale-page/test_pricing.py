@@ -265,5 +265,29 @@ def test_the_stylesheet_braces_balance() -> None:
     )
 
 
+def test_the_planned_copilot_reads_as_planned_not_shipped() -> None:
+    """W4 (owner: "add the agent we plan to build in the future"). A pricing
+    page is a commercial promise and the hard rule is no fake data — the
+    Copilot row must be unmistakably PLANNED: its own styled row with an
+    explicit label, never flush beside shipped features, and exactly one of
+    it (a second unlabelled mention would be the claim sneaking back)."""
+    assert PRICING.count("Foxy Copilot") == 1, (
+        "Foxy Copilot appears more than once (or not at all) — the single "
+        "labelled planned row is the only sanctioned mention")
+    m = re.search(r'<li class="planned-feature">.*?</li>', PRICING, re.S)
+    assert m, "the Copilot lost its planned-feature row styling"
+    assert "Foxy Copilot" in m.group(0), "the planned row no longer names the Copilot"
+    # tag-stripped: the class attribute itself contains "planned", so a check
+    # against raw markup is green by construction — the READER must see the word
+    visible = re.sub(r"<[^>]+>", " ", m.group(0))
+    assert re.search(r"[Pp]lanned", visible), (
+        "the explicit planned label is gone from the row's visible text")
+    # the row's own separation is a style RULE, not a hope — it must exist
+    assert ".planned-feature{" in PRICING and "border-top" in PRICING.split(
+        ".planned-feature{", 1)[1][:200], (
+        "the planned row's set-apart styling (its divider) is gone — a "
+        "planned item flush beside shipped features reads as shipped")
+
+
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "-q"]))

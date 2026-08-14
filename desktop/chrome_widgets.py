@@ -690,7 +690,7 @@ class LockOverlay(QWidget):
         self.out_btn.setMinimumHeight(44)
         self.out_btn.clicked.connect(self.sign_out.emit)
         self.support = QLabel(
-            '<a href="mailto:foxyaudit@gmail.com?subject=Dashboard%20locked">'
+            '<a href="mailto:support@foxyaudit.tech?subject=Dashboard%20locked">'
             "Contact support</a>")
         self.support.setObjectName("lockAlt")
         self.support.setOpenExternalLinks(True)
@@ -770,7 +770,7 @@ class LockOverlay(QWidget):
             " font-size: 10px; font-weight: 800; letter-spacing: .6px; }")
         # A QLabel link takes its colour from the anchor, not the stylesheet.
         self.support.setText(
-            '<a href="mailto:foxyaudit@gmail.com?subject=Dashboard%20locked" '
+            '<a href="mailto:support@foxyaudit.tech?subject=Dashboard%20locked" '
             f'style="color:{link};text-decoration:none;">Contact support</a>')
 
     # -- rendering -----------------------------------------------------------

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FAQ — Foxy Audit</title>
+<meta name="description" content="Frequently asked questions about Foxy Audit: content-blindness, the AI judge, billing, certification status, outages, and cancelling — plus a way to ask your own.">
+<link rel="canonical" href="https://foxyaudit.tech/faq.html">
+<link rel="icon" type="image/png" href="/logo.png">
+<meta name="theme-color" content="#ff7a2e">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+
+<header class="topnav">
+  <a class="tn-brand" href="/"><img src="/logo.png" alt="">Foxy Audit</a>
+  <div class="tn-actions">
+    <a class="tn-login" href="https://app.foxyaudit.tech/dashboard">Log in</a>
+    <a class="tn-cta" href="/book-a-demo.html">Book a demo</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="phead">
+    <a class="back" href="/">← Back to all cards</a>
+    <p class="sec-eb">FAQ</p>
+    <h1 class="sec-h">Asked and answered.</h1>
+    <p class="sub">The questions people actually ask, answered plainly. If yours isn't here, ask it at the bottom — it goes straight to our inbox.</p>
+  </div>
+
+  <div class="faq-wrap">
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Do you ever see our raw prompts?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>By default, the SDK keeps raw prompt and response text on your machine and sends content-blind commitments plus operational metadata. Do not add raw content to custom fields, and it never leaves your process. There is no raw-text column anywhere in our schema. More in the <a href="/privacy.html">Privacy Policy</a> and on <a href="/trust.html">Trust &amp; Security</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">How do I install it?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p><code>pip install foxy-audit</code>, then wrap one function with the decorator — your code stays unchanged. There are three supported ways in, covered step by step in the <a href="/install.html">install guide</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Who pays for the AI judge's model calls?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>On Pro and Max — and on a free account — you do: you bring your own Gemini or OpenAI key, add it in the dashboard, and those model calls land on your provider bill at your rates. Audit-event credits cover capture, chaining, anchoring and exports; they are not model tokens. Premium can either keep using its own key or switch to Foxy's managed keys, where the model calls are on us. Your key is stored encrypted, used only in memory at grading time, and never shown back to you or written into your audit chain. See <a href="/judge.html">how the judge works</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Can an auditor verify our records without trusting you?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>Yes — that is the point. Every record is bound into a per-organisation hash chain that anyone can recompute offline from an export, using a dependency-free verifier that ships inside the export bundle itself. The export contains everything needed to prove us wrong. Try it on the <a href="/verify-page.html">verify page</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">How am I billed, and by whom?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>Pro and Max are monthly subscriptions in US dollars. Payment is handled by <strong>Paddle</strong>, who act as the merchant of record and appear as the seller on your statement and your receipt — card details are entered on Paddle's checkout and never reach Foxy Audit. Any sales tax or VAT is calculated and remitted by Paddle at checkout. Premium is agreed in writing and invoiced directly, so it does not go through the card checkout at all. Full details on <a href="/pricing.html">the pricing page</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Is this SOC 2 certified?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>We're currently completing our SOC 2 Type I audit. Until it's issued, we won't claim certification — we'll tell you exactly where we are in the process. Foxy Audit produces compliance <em>evidence</em>, not certifications, and that distinction is written on every page that could blur it. Current status on <a href="/trust.html">Trust &amp; Security</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">What happens if your servers go down?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>Your hash chain is append-only and independently re-computable, so an outage doesn't corrupt or invalidate what's already been recorded. New calls queue in the SDK's durable local spool and upload when we're back — capture never blocks your request path. The mechanics are in <a href="/how-it-works.html">how it works</a>.</p></div>
+    </div>
+    <div class="faq-item">
+      <button class="faq-q" onclick="this.parentElement.classList.toggle('open')">Can I cancel anytime?
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="faq-a"><p>Yes — Pro and Max can be cancelled from the dashboard and remain available through the paid period, so you keep what you have already paid for. Premium follows the terms in your agreement. See <a href="/refund.html">the refund policy</a>.</p></div>
+    </div>
+  </div>
+
+  <!-- ask a question — the same /v1/leads route the contact and demo forms
+       use, arriving as a support-sourced note so it lands in the inbox and
+       notifies the team. An input that silently drops questions would be
+       worse than no input at all, so failure falls back to a real mailbox. -->
+  <form class="note" id="askForm" onsubmit="return askQuestion(event)">
+    <p class="lead">Didn't find yours? <b>Ask a question.</b></p>
+    <input id="askEmail" type="email" placeholder="you@company.com" autocomplete="email" required>
+    <textarea id="askMsg" rows="4" placeholder="Your question…" required></textarea>
+    <button class="btn" type="submit">Ask us
+      <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
+    <p class="status" id="askStatus"></p>
+  </form>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="footer-logo"><img src="/logo.png" alt=""><span>Foxy Audit</span></div>
+        <p>Cryptographic compliance evidence, not a certification. Tamper-evident records for interactions captured through the Foxy SDK.</p>
+      </div>
+      <div class="footer-col"><p class="footer-col-title">Product</p>
+        <a href="/how-it-works.html">How it works</a><a href="/pricing.html">Pricing</a><a href="/sdk.html">SDK</a><a href="/passport.html">Compliance passport</a><a href="/desktop.html">Desktop app</a></div>
+      <div class="footer-col"><p class="footer-col-title">Company</p>
+        <a href="/about.html">About us</a><a href="/contact.html">Contact</a><a href="/docs.html">Docs</a><a href="/partnerships.html">Partnerships</a><a href="/reviews.html">Reviews</a></div>
+      <div class="footer-col"><p class="footer-col-title">Legal &amp; Trust</p>
+        <a href="/legal.html">Legal &amp; Trust</a><a href="/terms.html">Terms of Service</a><a href="/privacy.html">Privacy Policy</a><a href="/acceptable-use.html">Acceptable Use</a><a href="/report-abuse.html">Report Abuse</a></div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Foxy Audit. Cryptographic compliance, not a promise.</span>
+      <span><a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a><a href="/cookie-policy.html">Cookies</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  async function askQuestion(e){
+    e.preventDefault();
+    const email = document.getElementById('askEmail').value.trim();
+    const msg = document.getElementById('askMsg').value.trim();
+    const status = document.getElementById('askStatus');
+    if(!email || !msg){ status.style.color='#ffb020'; status.textContent='Please add your email and your question.'; return false; }
+    status.style.color='var(--muted)'; status.textContent='Sending…';
+    try{
+      const base = window.FOXY_API || ((location.hostname==='localhost'||location.hostname==='127.0.0.1')
+        ? 'http://localhost:8000' : 'https://app.'+location.hostname.replace(/^www\./,''));
+      const r = await fetch(base+'/v1/leads', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({email, message: msg, source:'support', subject:'FAQ question'})});
+      if(!r.ok) throw new Error();
+      status.style.color='#3ddc84'; status.textContent="Got it — we'll answer by email, and good questions end up on this page.";
+      e.target.reset();
+    }catch(_){ status.style.color='#ffb020'; status.textContent='Something went wrong. Please email support@foxyaudit.tech directly.'; }
+    return false;
+  }
+</script>
+</body>
+</html>

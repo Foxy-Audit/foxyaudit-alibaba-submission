@@ -104,3 +104,29 @@ def test_enterprise_contact_notifies_superadmins(client, make_staff, monkeypatch
     assert boss["email"] in tos                                                # superadmin paged
     assert "founder-lead@corp.com" in tos                                      # sender confirmation
     assert any("custom SLA" in (k.get("text") or "") for k in sent)
+
+
+def test_a_support_note_notifies_too_but_not_as_priority(client, make_staff, monkeypatch):
+    """W4 (owner: "Contact Us doesn't work"). A support note from contact.html
+    used to return 200, show the sender a green "Got it", land in the admin
+    inbox — and email NOBODY in either direction, because only
+    PRIORITY_SOURCES notified. Every message-bearing lead notifies now; the
+    subject line stays honest (no "Priority" on an ordinary note), and the
+    inbox's priority sorting is untouched (the test above still passes)."""
+    import app.routers.leads as leads
+    sent = []
+    monkeypatch.setattr(leads.email_mod, "send_email", lambda **kw: sent.append(kw) or True)
+    boss = make_staff(role="superadmin")
+    client.post("/v1/leads", json={"email": "asker@corp.com",
+                                   "source": "support", "subject": "Support note",
+                                   "message": "How do I rotate a key?"})
+    tos = [k["to"] for k in sent]
+    assert boss["email"] in tos, "a support note no longer notifies staff"
+    assert "asker@corp.com" in tos, "the sender no longer gets a confirmation"
+    staff_subjects = [k["subject"] for k in sent if k["to"] == boss["email"]]
+    assert staff_subjects and all("Priority" not in sub for sub in staff_subjects), (
+        f"an ordinary support note is titled as Priority: {staff_subjects}")
+    # and a bare signup (no message) still notifies nobody
+    sent.clear()
+    client.post("/v1/leads", json={"email": "quiet-signup@corp.com", "source": "landing"})
+    assert not sent, "a message-less signup lead started paging staff"

@@ -58,11 +58,19 @@ def _verify_recaptcha(token: str | None) -> bool:
 
 
 def _notify_priority_contact(name: str | None, email_addr: str, message: str | None,
-                             source: str | None = None) -> None:
-    """Best-effort alert for a new priority (enterprise) contact — runs as a
+                             source: str | None = None,
+                             priority: bool = True) -> None:
+    """Best-effort alert for a new message-bearing contact — runs as a
     BackgroundTask so it never blocks /v1/leads. Emails every ENABLED superadmin at
     their registered staff address, plus a confirmation to the sender. send_email
-    already swallows its own errors; we only guard the DB read."""
+    already swallows its own errors; we only guard the DB read.
+
+    ⚠ W4 (owner: "Contact Us doesn't work"): this used to fire only for
+    PRIORITY_SOURCES, so a support note from contact.html returned 200, showed
+    the sender a green "Got it", landed in the admin inbox — and emailed
+    NOBODY, in either direction. Every message-bearing lead now notifies;
+    `priority` only changes how the alert is titled, and the inbox's
+    priority sorting (admin_inbox._is_priority) is untouched."""
     db = SessionLocal()
     try:
         recipients = [s.email for s in db.execute(
@@ -77,13 +85,14 @@ def _notify_priority_contact(name: str | None, email_addr: str, message: str | N
     recipients = list(dict.fromkeys([r for r in recipients if r] + [FOUNDER_ALERT_EMAIL]))
 
     label = {"partnership": "partnership", "enterprise": "enterprise",
-             "demo": "demo"}.get((source or "").strip().lower(), "contact")
+             "demo": "demo", "support": "support"}.get(
+                 (source or "").strip().lower(), "contact")
     who = (name or email_addr or "Someone").strip()
     body = (message or "").strip()
     body_paras = [et.paragraph(ln.strip()) for ln in body.split("\n") if ln.strip()] \
         or [et.muted("(no message body)")]
     alert_html, alert_text = et.layout(
-        title=f"Priority {label} inquiry",
+        title=(f"Priority {label} inquiry" if priority else f"New {label} message"),
         preheader=f"{who} <{email_addr}> sent a priority {label} inquiry.",
         blocks=[
             et.paragraph(f"{who} <{email_addr}> sent a priority {label} inquiry:"),
@@ -94,7 +103,8 @@ def _notify_priority_contact(name: str | None, email_addr: str, message: str | N
         ],
         surface="staff",
     )
-    alert_subject = f"\U0001f534 Priority {label.capitalize()} — {who}"
+    alert_subject = (f"\U0001f534 Priority {label.capitalize()} — {who}" if priority
+                     else f"\U0001f4e8 {label.capitalize()} — {who}")
     for r in recipients:
         email_mod.send_email(to=r, subject=alert_subject, html=alert_html, text=alert_text)
 
@@ -182,8 +192,9 @@ def create_lead(payload: LeadRequest, request: Request, background: BackgroundTa
         existing.utm_source = payload.utm_source or existing.utm_source
         existing.utm_medium = payload.utm_medium or existing.utm_medium
         db.commit()
-        if is_priority and has_msg:
-            background.add_task(_notify_priority_contact, payload.name, email, payload.message, payload.source)
+        if has_msg:
+            background.add_task(_notify_priority_contact, payload.name, email,
+                                payload.message, payload.source, is_priority)
         return LeadResponse(status="updated", id=str(existing.id))
 
     lead = MarketingLead(
@@ -205,8 +216,9 @@ def create_lead(payload: LeadRequest, request: Request, background: BackgroundTa
         ).scalars().first()
         return LeadResponse(status="updated", id=str(existing.id) if existing else "")
     db.refresh(lead)
-    if is_priority and has_msg:
-        background.add_task(_notify_priority_contact, payload.name, email, payload.message, payload.source)
+    if has_msg:
+        background.add_task(_notify_priority_contact, payload.name, email,
+                            payload.message, payload.source, is_priority)
     return LeadResponse(status="created", id=str(lead.id))
 
 

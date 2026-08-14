@@ -153,7 +153,8 @@
     backdrop-filter:url(#hero-glass);
     border:none;
     box-shadow:0 30px 66px -30px rgba(0,0,0,.85);
-    overflow:hidden;cursor:pointer;
+    /* cards are real <a> links since W4 — keep the glass, drop the underline */
+    overflow:hidden;cursor:pointer;text-decoration:none;color:inherit;display:block;
   }
   .card.is-center{box-shadow:0 46px 92px -32px rgba(0,0,0,.92);}
   /* Only the three cards you can see refract; the ten at opacity 0 behind the
@@ -352,9 +353,6 @@
   .modal-eb{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--fox);margin:0 0 10px;}
   .modal-title{font-family:var(--disp);font-weight:700;font-size:clamp(20px,3vw,28px);margin:0 0 14px;line-height:1.15;}
   .modal-desc{font-size:13.5px;margin:0 0 20px;}
-  .modal-features{list-style:none;padding:0;margin:0 0 24px;display:flex;flex-direction:column;gap:10px;}
-  .modal-features li{display:flex;align-items:flex-start;gap:10px;font-size:12.5px;color:var(--ink);}
-  .modal-features svg{width:15px;height:15px;stroke:var(--fox);flex-shrink:0;margin-top:2px;}
   .modal-cta{display:inline-flex;align-items:center;gap:10px;text-decoration:none;
     font-family:var(--disp);font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:.02em;
     background:var(--fox);color:var(--bg);padding:13px 20px;border-radius:12px;box-shadow:var(--clay-sm);
@@ -363,12 +361,6 @@
   .modal-cta:active{transform:translate(3px,3px);box-shadow:var(--clay-press);}
   .modal-cta svg{width:16px;height:16px;stroke:var(--bg);}
 
-  .plan-grid{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:24px;}
-  .plan{border:1px solid var(--line);border-radius:16px;padding:16px 18px;display:flex;justify-content:space-between;align-items:center;}
-  .plan.is-best{border-color:var(--fox);background:rgba(255,122,46,.06);}
-  .plan-name{font-family:var(--disp);font-weight:700;font-size:14px;}
-  .plan-name small{display:block;font-family:var(--mono);font-weight:400;font-size:10px;color:var(--muted);margin-top:3px;text-transform:none;letter-spacing:0;}
-  .plan-price{font-family:var(--disp);font-weight:700;font-size:16px;color:var(--fox);}
 
   /* ---------------- SALES SECTIONS BELOW THE HERO ---------------- */
   section{position:relative;padding:88px 24px;}
@@ -815,16 +807,6 @@
   </div>
 </div>
 
-<div class="modal-backdrop" id="modalBackdrop"></div>
-<div class="modal-card" id="modalCard">
-  <div class="modal-top" id="modalTop">
-    <button class="modal-close" id="modalClose" aria-label="Close">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-    </button>
-    <div id="modalIcon"></div>
-  </div>
-  <div class="modal-body" id="modalBody"></div>
-</div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <div class="modal-backdrop" id="leadBackdrop"></div>
@@ -854,31 +836,6 @@
   </div>
 </div>
 
-<!-- enterprise contact modal (name + email + message → priority inbox) -->
-<div class="modal-backdrop" id="contactBackdrop"></div>
-<div class="modal-card" id="contactCard">
-  <div class="modal-top" style="background:var(--fox)">
-    <button class="modal-close" id="contactClose" aria-label="Close">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-    </button>
-  </div>
-  <div class="modal-body">
-    <p class="modal-eb">Enterprise · priority</p>
-    <h3 class="modal-title">Contact us</h3>
-    <p class="modal-desc">SSO, on-prem, a custom SLA — tell us what you need. This goes straight to the founders.</p>
-    <input id="contactName" type="text" placeholder="Your name" autocomplete="name"
-           style="width:100%;margin:16px 0 10px;padding:13px 14px;background:var(--surf);border:2px solid var(--line);border-radius:12px;color:var(--ink);font-family:var(--mono);font-size:13px;outline:none;">
-    <input id="contactEmail" type="email" placeholder="you@company.com" autocomplete="email"
-           style="width:100%;margin:0 0 10px;padding:13px 14px;background:var(--surf);border:2px solid var(--line);border-radius:12px;color:var(--ink);font-family:var(--mono);font-size:13px;outline:none;">
-    <textarea id="contactMsg" rows="4" placeholder="What do you need?"
-           style="width:100%;padding:13px 14px;background:var(--surf);border:2px solid var(--line);border-radius:12px;color:var(--ink);font-family:inherit;font-size:14px;line-height:1.5;outline:none;resize:vertical;"></textarea>
-    <a class="modal-cta" id="contactSubmit" href="#">
-      Send message
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-    </a>
-    <p id="contactStatus" style="font-family:var(--mono);font-size:11px;margin-top:10px;min-height:14px;letter-spacing:.04em;"></p>
-  </div>
-</div>
 
 <script>
 const FOX = {
@@ -900,109 +857,35 @@ document.querySelectorAll('img[data-fox]').forEach(img => {
 
 const SLIDES = [
   {
-    ghost: "HASH.", accentHex: "#ff7a2e", accentTx:"var(--ink)",
-    cardTitle: "@foxy.audit()", cardEyebrow: "One decorator",
-    modalDesc: "Wrap a model call — OpenAI, Anthropic, or your own fine-tune — with one Python decorator. Captured interactions become customer-keyed commitments and tamper-evident records without a proxy or raw-text upload.",
-    features: ["Works with any LLM provider or self-hosted model","Zero added latency in the request path","Drop-in — no SDK migration required"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6L2 12l6 6"/><path d="M16 6l6 6-6 6"/></svg>`,
-    ctaLabel: "Open the SDK", ctaHref: "/sdk.html"
-  },
-  {
-    ghost: "LEARN.", accentHex: "#ffb020", accentTx:"var(--warn-tx)",
-    cardTitle: "How it works", cardEyebrow: "3 lines of code",
-    modalDesc: "Install the SDK, wrap one function, and watch captured interactions become commitments, ledger records, and verifiable evidence in minutes.",
-    features: ["Three lines of code to integrate","Queues locally by default; fail-closed mode available","Watch capture and grading alerts in the desktop app"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#3a2400" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
+    ghost: "FOXY.", accentHex: "#ff7a2e", accentTx:"var(--ink)",
+    cardTitle: "What Foxy Audit is", cardEyebrow: "Tamper-evident AI audit trails",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>`,
     ctaLabel: "See how it works", ctaHref: "/how-it-works.html"
   },
   {
-    ghost: "CHAIN.", accentHex: "#ffc83d", accentTx:"var(--warn-tx)",
-    cardTitle: "Hash Chain", cardEyebrow: "Sequential integrity",
-    modalDesc: "Each record's hash includes the one directly before it. Edit, delete, or backdate any past entry and the whole chain stops matching — instantly and mathematically, with no manual review needed.",
-    features: ["Tamper-evident by construction, not by policy","Break one record, break every one after it","Independently re-computable by any auditor"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--warn-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
-    ctaLabel: "Open Hash Chain", ctaHref: "/hash-chain.html"
+    ghost: "INSTALL.", accentHex: "#ffb020", accentTx:"var(--warn-tx)",
+    cardTitle: "How to install", cardEyebrow: "pip install foxy-audit",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#3a2400" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6L2 12l6 6"/><path d="M16 6l6 6-6 6"/></svg>`,
+    ctaLabel: "Read the install guide", ctaHref: "/install.html"
   },
   {
-    ghost: "GUARD.", accentHex: "#c9b7ff", accentTx:"var(--guard-tx)",
-    cardTitle: "Metadata Policy Judge", cardEyebrow: "Optional and content-blind",
-    modalDesc: "After a captured record lands, an optional judge evaluates non-content metadata against your policy. It never receives raw prompts or responses, and its result is a signal for review, not a certification.",
-    features: ["Content-blind metadata evaluation","Configurable policy tags and rules","Flags are linked to the audit record"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--guard-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
-    ctaLabel: "Open the Judge", ctaHref: "/judge.html"
-  },
-  {
-    ghost: "PROVE.", accentHex: "#3ddc84", accentTx:"var(--safe-tx)",
-    cardTitle: "Verify Chain", cardEyebrow: "One click, live",
-    modalDesc: "Your buyer doesn't need to trust your word or read a single log line. They paste in the chain, hit verify, and get a pass or fail — checkable by anyone, in seconds.",
-    features: ["Public verification endpoint, no login needed","Runs the same math your system used to build it","Shareable link for procurement and audit teams"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--safe-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>`,
-    ctaLabel: "Open Verify", ctaHref: "/verify-page.html"
-  },
-  {
-    ghost: "PASSPORT.", accentHex: "#d9722e", accentTx:"var(--ink)",
-    cardTitle: "Compliance Passport", cardEyebrow: "Export & share",
-    modalDesc: "Turn months of AI activity into a single exportable document mapped to NIST AI RMF and EU AI Act clauses — the artifact your legal and procurement teams actually want to see.",
-    features: ["One-click PDF export for audits and RFPs","Maps directly to NIST AI RMF & EU AI Act","Always reflects your live, current chain"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg>`,
-    ctaLabel: "Open the Passport", ctaHref: "/passport.html"
-  },
-  {
-    ghost: "PET.", accentHex: "#3ddc84", accentTx:"var(--safe-tx)",
-    cardTitle: "Desktop app", cardEyebrow: "Your compliance buddy",
-    modalDesc: "A pixel-art fox that lives at the edge of your screen and reacts the instant a call lands — green when clean, red on a breach — with a built-in chat copilot.",
-    features: ["Live green / red reactions on every call","Chat copilot on your desktop","One click into the full dashboard"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--safe-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
-    ctaLabel: "Open Desktop app", ctaHref: "/desktop.html"
-  },
-  {
-    ghost: "PLANS.", accentHex: "#ffb020", accentTx:"var(--plan-tx)",
-    cardTitle: "See Pricing", cardEyebrow: "Simple, usage-based",
-    modalDesc: "Start with a 7-day trial, then pay for the audit events you capture. Every plan includes content-blind commitments, the hash chain, and independent verification.",
-    features: ["Free trial: 500 audit-event credits for 7 days","Pro: 25,000 credits, 5 seats, $49/mo","Max: 250,000 credits, 20 seats, $199/mo"],
-    isPricing:true,
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#3a2400" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
-    ctaLabel: "See full pricing", ctaHref: "/pricing.html"
-  },
-  {
-    ghost: "DEMO.", accentHex: "#ff7a2e", accentTx:"var(--ink)",
+    ghost: "DEMO.", accentHex: "#3ddc84", accentTx:"var(--safe-tx)",
     cardTitle: "Book a demo", cardEyebrow: "See it on your stack",
-    modalDesc: "See Foxy Audit on your own stack. We'll wire the SDK into a real call live, trigger a breach, and verify the chain in front of you.",
-    features: ["A live, hands-on walkthrough","See a real breach get flagged","No credit card, no commitment"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m10 14 4 2-4 2z"/></svg>`,
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--safe-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m10 14 4 2-4 2z"/></svg>`,
     ctaLabel: "Book a demo", ctaHref: "/book-a-demo.html"
   },
   {
-    ghost: "DOCS.", accentHex: "#c9b7ff", accentTx:"var(--guard-tx)",
-    cardTitle: "Documentation", cardEyebrow: "For developers",
-    modalDesc: "SDK reference, setup guides, and policy configuration. The full developer documentation is being written — here's how to get going right now.",
-    features: ["Quickstart from the how-it-works guide","Ask us anything while docs are in progress"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--guard-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>`,
-    ctaLabel: "Open Docs", ctaHref: "/docs.html"
+    ghost: "PLANS.", accentHex: "#ffc83d", accentTx:"var(--warn-tx)",
+    cardTitle: "See Pricing", cardEyebrow: "Simple, usage-based",
+    isPricing:true,
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--warn-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
+    ctaLabel: "See full pricing", ctaHref: "/pricing.html"
   },
   {
-    ghost: "TEAM.", accentHex: "#d9722e", accentTx:"var(--ink)",
-    cardTitle: "About us", cardEyebrow: "Who's building this",
-    modalDesc: "Foxy Audit is built by people who've been audited. Our mission: make AI compliance something you can prove, not just promise.",
-    features: ["Founder-led, founder-answered inbox","Privacy-first by design","Built for teams shipping real AI"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-    ctaLabel: "About us", ctaHref: "/about.html"
-  },
-  {
-    ghost: "TALK.", accentHex: "#ff7a2e", accentTx:"var(--ink)",
-    cardTitle: "Contact us", cardEyebrow: "Talk to a founder",
-    modalDesc: "Email support, the Help Center, or an enterprise inquiry straight to the founders — plus a per-plan response-time SLA. Real engineers, not a ticket queue.",
-    features: ["Same-business-day email on paid plans","Enterprise inquiries go to the founders","Send a note — we read every message"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>`,
-    ctaLabel: "Open Contact", ctaHref: "/contact.html"
-  },
-  {
-    ghost: "LEGAL.", accentHex: "#ffc83d", accentTx:"var(--warn-tx)",
-    cardTitle: "Legal & Trust", cardEyebrow: "Terms · Privacy · Cookies",
-    modalDesc: "Terms of Service, Privacy Policy, Cookie Policy, Acceptable Use, and how to report abuse — all in one place. We hash your data; we don't hold your raw payloads.",
-    features: ["Privacy-first: hashes, not raw prompts","Geo-aware cookie consent (GDPR / CCPA)","Clear, plain-language policies"],
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--warn-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M7 7l-3 6a3 3 0 0 0 6 0z"/><path d="M17 7l-3 6a3 3 0 0 0 6 0z"/><path d="M8 21h8"/></svg>`,
-    ctaLabel: "Open Legal & Trust", ctaHref: "/legal.html"
+    ghost: "FAQ.", accentHex: "#c9b7ff", accentTx:"var(--guard-tx)",
+    cardTitle: "FAQ", cardEyebrow: "Asked and answered",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="var(--guard-tx)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5"/></svg>`,
+    ctaLabel: "Read the FAQ", ctaHref: "/faq.html"
   }
 ];
 
@@ -1088,8 +971,13 @@ function safeAccentHex(s){
 function buildCards(){
   cardsEl.innerHTML = '';
   SLIDES.forEach((s, i) => {
-    const card = document.createElement('div');
+    /* Every card IS a link now — the pop-up mechanism is gone, and the promise
+       bubble ("Click any card — each opens its own page") is finally literal.
+       A real <a> keeps native semantics: keyboard focus, Enter to follow,
+       middle-click, copy-link-address. */
+    const card = document.createElement('a');
     card.className = 'card';
+    card.href = safeSlideField(s, 'ctaHref', '/', 200);
     card.dataset.index = i;
     const icon = safeIcon(s);
     /* --acc still dresses the card (icon stroke, halo, divider, the eyebrow
@@ -1113,9 +1001,14 @@ function buildCards(){
       <p class="card-hint">${hint}</p>
       <div class="thm-face"></div>
       <div class="thm-ring"></div>`;
-    card.addEventListener('click', () => {
-      if (Number(card.dataset.index) !== active) { goTo(i); }
-      else { openModal(i, card); }
+    card.addEventListener('click', (e) => {
+      /* a side card focuses first rather than navigating — the centre card
+         is the one whose link you can read; plain modifier-clicks stay native */
+      if (Number(card.dataset.index) !== active
+          && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+        e.preventDefault();
+        goTo(i);
+      }
     });
     cardsEl.appendChild(card);
   });
@@ -1237,10 +1130,6 @@ if (heroPricing) heroPricing.addEventListener('click', e => {
   if (idx >= 0) { e.preventDefault(); goTo(idx); }
 });
 document.addEventListener('keydown', (e) => {
-  if (document.getElementById('modalBackdrop').classList.contains('open')) {
-    if (e.key === 'Escape') closeModal();
-    return;
-  }
   if (e.key === 'ArrowRight') next();
   if (e.key === 'ArrowLeft') prev();
 });
@@ -1288,72 +1177,6 @@ stageEl.addEventListener('pointermove', (e) => {
   setTimeout(() => { d.remove(); }, 2300);
 });
 
-/* ---------------- modal ---------------- */
-const modalBackdrop = document.getElementById('modalBackdrop');
-const modalCard = document.getElementById('modalCard');
-const modalTop = document.getElementById('modalTop');
-const modalIcon = document.getElementById('modalIcon');
-const modalBody = document.getElementById('modalBody');
-
-function openModal(i){
-  const s = SLIDES[i];
-  modalTop.style.background = safeAccentHex(s);
-  const modalIconSrc = safeIcon(s);
-  // Only rewrite attributes on the opening <svg ...> tag itself — a naive global
-  // replace on width="…"/height="…" also matches inside stroke-width="2", which
-  // was blowing the icon's stroke up to 56px and rendering a garbled dark blob
-  // once the same icon was scaled up inside the modal.
-  modalIcon.innerHTML = modalIconSrc.replace(/<svg([^>]*)>/, (match, attrs) => {
-    const cleanedAttrs = attrs
-      .replace(/\s(?:width|height)="[^"]*"/g, '');
-    return `<svg${cleanedAttrs} width="56" height="56">`;
-  });
-
-  const featureList = (s && Array.isArray(s.features)) ? s.features : [];
-  let featuresHtml = featureList
-    .filter(f => typeof f === 'string' && f.trim() !== '')
-    .map(f => `<li>${CHECK}${truncateText(f, 140)}</li>`)
-    .join('');
-
-  let extra = '';
-  if (s && s.isPricing){
-    extra = `
-      <div class="plan-grid">
-        <div class="plan"><span class="plan-name">Free trial<small>500 credits · 7 days</small></span><span class="plan-price">$0</span></div>
-        <div class="plan is-best"><span class="plan-name">Pro<small>25,000 credits / mo</small></span><span class="plan-price">$49</span></div>
-        <div class="plan"><span class="plan-name">Max<small>250,000 credits / mo</small></span><span class="plan-price">$199</span></div>
-      </div>`;
-  }
-
-  const eyebrow = safeSlideField(s, 'cardEyebrow', FALLBACK_EYEBROW, 40);
-  const title = safeSlideField(s, 'cardTitle', FALLBACK_TITLE, 60);
-  const desc = safeSlideField(s, 'modalDesc', 'More details coming soon.', 600);
-  const ctaLabel = safeSlideField(s, 'ctaLabel', 'See pricing', 40);
-  const ctaHref = safeSlideField(s, 'ctaHref', '#pricing', 200);
-
-  modalBody.innerHTML = `
-    <p class="modal-eb">${eyebrow}</p>
-    <h3 class="modal-title">${title}</h3>
-    <p class="modal-desc">${desc}</p>
-    <ul class="modal-features">${featuresHtml}</ul>
-    ${extra}
-    <a class="modal-cta" href="${ctaHref}" onclick="setTimeout(closeModal,50)">
-      ${ctaLabel}
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-    </a>`;
-
-  modalBackdrop.classList.add('open');
-  modalCard.classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-function closeModal(){
-  modalBackdrop.classList.remove('open');
-  modalCard.classList.remove('open');
-  document.body.style.overflow = '';
-}
-modalBackdrop.addEventListener('click', closeModal);
-document.getElementById('modalClose').addEventListener('click', closeModal);
-document.querySelectorAll('.modal-cta').forEach(a => a.addEventListener('click', () => setTimeout(closeModal, 50)));
 
 /* ---------------- pricing calculator ---------------- */
 const calcSlider = document.getElementById('calcSlider');
@@ -1391,7 +1214,7 @@ document.querySelectorAll('#faqWrap .faq-item').forEach(item => {
 
 buildCards();
 render();
-setInterval(()=>{ if(!animating && !modalBackdrop.classList.contains('open')) next(); }, 5600);
+setInterval(()=>{ if(!animating && !leadBackdrop.classList.contains('open')) next(); }, 5600);
 
 /* ---------------- scroll companion: a sprite fox walks the left-gutter dotted path ---------------- */
 (function foxPath(){
@@ -1614,7 +1437,6 @@ window.FOXY_CONSENT = window.FOXY_CONSENT || { analytics:false, functional:false
   if (!stored){ cbA.checked = geo.regime === 'ccpa'; setTimeout(() => banner.classList.add('show'), 900); }
 })();
 /* footer 'Contact us' opens the enterprise modal */
-(function(){ const fc = document.getElementById('footerContact'); if (fc) fc.addEventListener('click', e => { e.preventDefault(); if (typeof openContactModal === 'function') openContactModal(); }); })();
 
 /* ── Foxy Audit backend: pageview + signup/checkout + lead & support capture ── */
 const FOXY_API = window.FOXY_API ||
@@ -1773,33 +1595,6 @@ try {
   }
 } catch (_) {}
 
-/* enterprise contact modal → /v1/leads (source=enterprise → priority inbox + superadmin alert) */
-const contactBackdrop = document.getElementById('contactBackdrop');
-const contactCard = document.getElementById('contactCard');
-function openContactModal(){ contactBackdrop.classList.add('open'); contactCard.classList.add('open'); document.body.style.overflow='hidden'; setTimeout(()=>{ const n=document.getElementById('contactName'); if(n)n.focus(); },120); }
-function closeContactModal(){ contactBackdrop.classList.remove('open'); contactCard.classList.remove('open'); document.body.style.overflow=''; const st=document.getElementById('contactStatus'); if(st)st.textContent=''; }
-contactBackdrop.addEventListener('click', closeContactModal);
-document.getElementById('contactClose').addEventListener('click', closeContactModal);
-const openContactBtn = document.getElementById('openContact');
-if (openContactBtn) openContactBtn.addEventListener('click', e => { e.preventDefault(); openContactModal(); });
-document.getElementById('contactSubmit').addEventListener('click', async e => {
-  e.preventDefault();
-  const name = (document.getElementById('contactName').value || '').trim();
-  const email = (document.getElementById('contactEmail').value || '').trim();
-  const msg = (document.getElementById('contactMsg').value || '').trim();
-  const st = document.getElementById('contactStatus');
-  if (!isValidEmail(email)) { st.style.color='var(--warn-bg)'; st.textContent='Enter a valid email.'; return; }
-  if (!msg) { st.style.color='var(--warn-bg)'; st.textContent='Tell us what you need.'; return; }
-  st.style.color='var(--muted)'; st.textContent='Sending…';
-  try {
-    const r = await fetch(FOXY_API + '/v1/leads', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name, email, source:'enterprise', subject:'Custom / enterprise inquiry', message: msg }) });
-    if (!r.ok) throw 0;
-    st.style.color='var(--safe-bg)'; st.textContent='✓ Sent — a founder will be in touch shortly.';
-    setTimeout(closeContactModal, 2600);
-  } catch (_) { st.style.color='var(--warn-bg)'; st.textContent="Couldn't send — please try again."; }
-});
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && contactBackdrop.classList.contains('open')) closeContactModal(); });
 /* Google SSO: verify on the app origin, then land on the dashboard */
 (async function initSalesGoogle(){
   let cid = '';

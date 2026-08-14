@@ -9,6 +9,16 @@
 <link rel="icon" type="image/png" href="/logo.png">
 <meta name="theme-color" content="#ff7a2e">
 <link rel="stylesheet" href="/site.css">
+<style>
+  /* the one PLANNED feature on this page: set apart from shipped rows — its
+     own divider, muted ink, and an explicit label. Never restyle it to match
+     the shipped features; a pricing page is a commercial promise. */
+  .planned-feature{margin-top:10px;padding-top:12px;border-top:1px dashed var(--thm-chrome-line);color:var(--muted) !important;}
+  .planned-feature svg{stroke:var(--muted) !important;}
+  .planned-feature b{color:var(--ink);font-weight:600;}
+  .planned-tag{display:block;font-style:normal;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn-bg);margin-top:3px;}
+</style>
+
 </head>
 <body>
 
@@ -53,6 +63,7 @@
         <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>Priority support and onboarding</li>
         <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>Everything in Pro with hourly anchors</li>
         <li><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>AI judge on your own Gemini/OpenAI key</li>
+        <li class="planned-feature"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><span><b>Foxy Copilot</b> — an agent layer that explains your evidence in plain language. <em class="planned-tag">Planned — not yet available</em></span></li>
       </ul>
       <a class="price-btn" href="/?plan=max">Start Max</a>
     </div>
