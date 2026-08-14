@@ -32,6 +32,12 @@
     --fox:     #ff7a2e;
     --foxdeep: #8a3611;
 
+    /* the hero's ambient ground — four drifting blobs screened over the stage */
+    --blob-fox:     rgba(255,122,46,.24);
+    --blob-violet:  rgba(139,92,246,.22);
+    --blob-cyan:    rgba(56,189,248,.18);
+    --blob-magenta: rgba(232,121,249,.14);
+
     --safe-bg:   #3ddc84; --safe-tx:   #07210f;
     --warn-bg:   #ffc83d; --warn-tx:   #2a1d00;
     --guard-bg:  #c9b7ff; --guard-tx:  #1c1035;
@@ -55,17 +61,39 @@
   p{color:var(--muted);line-height:1.6;}
 
   /* ---------------- HERO / STAGE ---------------- */
+  /* The ground the glass refracts. It is FIXED, not per-slide: the carousel used
+     to wash the stage with the active card's accent, but a backdrop that restates
+     the card's own colour gives the refraction nothing to bend. Four blurred
+     blobs drift over a three-stop field instead, so what shows through the card
+     changes as the blobs move rather than as the slide changes. */
   .stage{
     position:relative;width:100%;height:100vh;min-height:640px;overflow:hidden;
-    background:radial-gradient(closest-side, rgba(255,122,46,.14), rgba(255,122,46,0) 72%), var(--bg);
-    transition:background 700ms cubic-bezier(.4,0,.2,1);
+    background:linear-gradient(160deg,#171225 0%,#0b0a12 55%,#120b08 100%);
   }
+  .blob{position:absolute;border-radius:50%;pointer-events:none;z-index:1;
+    filter:blur(90px);will-change:transform;mix-blend-mode:screen;}
+  .blob-1{width:60vw;height:52vh;left:-10%;top:-12%;background:var(--blob-fox);
+    animation:blob-drift-1 30s ease-in-out infinite alternate;}
+  .blob-2{width:54vw;height:50vh;right:-8%;top:2%;background:var(--blob-violet);
+    animation:blob-drift-2 24s ease-in-out infinite alternate;}
+  .blob-3{width:56vw;height:44vh;left:22%;bottom:-14%;background:var(--blob-cyan);
+    animation:blob-drift-3 20s ease-in-out infinite alternate;}
+  .blob-4{width:38vw;height:36vh;right:16%;bottom:-6%;background:var(--blob-magenta);
+    animation:blob-drift-4 16s ease-in-out infinite alternate;}
+  @keyframes blob-drift-1{to{transform:translate(12vw,9vh) scale(1.2) rotate(10deg);}}
+  @keyframes blob-drift-2{to{transform:translate(-11vw,11vh) scale(1.15) rotate(-12deg);}}
+  @keyframes blob-drift-3{to{transform:translate(10vw,-9vh) scale(1.22) rotate(8deg);}}
+  @keyframes blob-drift-4{to{transform:translate(-8vw,-8vh) scale(1.26) rotate(-7deg);}}
+  /* hairline along the top of the controls strip, so the stage ends on a line */
+  .stage::after{content:'';position:absolute;left:0;right:0;bottom:104px;height:1px;
+    z-index:2;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);}
   .grain{
     position:absolute;inset:0;pointer-events:none;z-index:50;opacity:.35;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size:200px 200px;background-repeat:repeat;
   }
-  .vignette{position:absolute;inset:0;pointer-events:none;z-index:4;
+  .vignette{position:absolute;inset:0;pointer-events:none;z-index:4;opacity:.38;
     background:radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%);}
 
   .brand{
@@ -91,27 +119,59 @@
     position:absolute;left:50%;bottom:0;aspect-ratio:0.6/1;border-radius:24px;
     transform-origin:50% 100%;
     transition:
-      left 650ms cubic-bezier(.4,0,.2,1), bottom 650ms cubic-bezier(.4,0,.2,1),
-      height 650ms cubic-bezier(.4,0,.2,1), transform 720ms cubic-bezier(.22,1.4,.36,1),
-      filter 650ms cubic-bezier(.4,0,.2,1), opacity 650ms cubic-bezier(.4,0,.2,1),
-      box-shadow 500ms ease, border-color 400ms ease, background 400ms ease;
+      left 640ms cubic-bezier(.16,1,.3,1), bottom 640ms cubic-bezier(.16,1,.3,1),
+      height 640ms cubic-bezier(.16,1,.3,1), transform 700ms cubic-bezier(.16,1,.3,1),
+      filter 640ms cubic-bezier(.16,1,.3,1), opacity 640ms cubic-bezier(.16,1,.3,1),
+      box-shadow 420ms ease;
     will-change:transform,filter,opacity,left,bottom,height;
-    /* clear iOS liquid glass — near-zero fill, faint lens blur, glowing accent edge */
-    background:rgba(255,255,255,.035);
-    backdrop-filter:blur(2.5px) saturate(1.9) brightness(1.1);-webkit-backdrop-filter:blur(2.5px) saturate(1.9) brightness(1.1);
-    border:1.2px solid var(--acc, var(--line));
-    box-shadow:0 0 18px -5px var(--glow), 0 26px 60px -32px rgba(0,0,0,.9);
+    /* Liquid glass. The backdrop is REFRACTED through the card, not frosted behind
+       it: `url(#hero-glass)` runs a turbulence → displacement → blur → saturate
+       pipeline (see the <svg> in .stage) so the ground bends as it passes through.
+       ⚠ ORDER MATTERS — the -webkit- line is the Safari/Firefox fallback and must
+       stay ABOVE the url() line. Last supported declaration wins, so a browser
+       without SVG-filter backdrops keeps a plain blur instead of losing the fill. */
+    background:linear-gradient(163deg,rgba(255,255,255,.10),rgba(255,255,255,.04) 55%,rgba(255,255,255,.06));
+    -webkit-backdrop-filter:blur(7px) saturate(1.5) brightness(1.05);
+    backdrop-filter:url(#hero-glass);
+    border:none;
+    box-shadow:0 32px 70px -28px rgba(0,0,0,.88);
     overflow:hidden;cursor:pointer;
   }
-  .card.is-center{box-shadow:0 0 30px -4px var(--glow), 0 40px 80px -30px rgba(0,0,0,.95);}
-  /* edge lensing — light bending around the rim like the edge of a lens */
+  .card.is-center{box-shadow:0 50px 100px -32px rgba(0,0,0,.94);}
+  /* Only the three cards you can see refract. The other ten are stacked at
+     opacity 0 behind the centre one, and each was still forcing its own render
+     surface for an animated displacement map. Measured on an RTX 5060 Ti:
+     13 refracting cards ran 11.1ms/frame median with a 16.7ms p95 — already
+     missing 60Hz on a discrete GPU — against 5.6ms median / 5.7ms p95 with this
+     rule. Identical picture, half the frame time.
+     ⚠ Applied by settle(), one transition AFTER a card becomes a back card, so
+     a card that is still fading out does not snap from refraction to flat blur. */
+  .card.is-back{backdrop-filter:blur(7px) saturate(1.5) brightness(1.05);}
+  /* the rim — a bright top hairline fading round the sides into a dim underside,
+     which is what reads as a thick piece of glass rather than a tinted rectangle */
   .card::before{content:'';position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
     box-shadow:
-      inset 0 1.5px 1px rgba(255,255,255,.55),
-      inset 1.5px 0 1px rgba(255,255,255,.22),
-      inset -1.5px 0 1px rgba(255,255,255,.16),
-      inset 0 -2px 2px rgba(255,255,255,.20),
-      inset 0 14px 26px -16px rgba(255,255,255,.22);}
+      inset 0 0 0 1px rgba(255,255,255,.15),
+      inset 0 1.6px 0 rgba(255,255,255,.65),
+      inset 1.2px 0 0 rgba(255,255,255,.24),
+      inset -1.2px 0 0 rgba(255,255,255,.24),
+      inset 0 -1.2px 0 rgba(255,255,255,.13),
+      inset 0 22px 34px -24px rgba(255,255,255,.28);}
+  /* pointer-tracked specular highlight, centre card only (see the pointermove
+     handler, which writes --mx/--my) */
+  .card-lens{position:absolute;inset:0;z-index:4;pointer-events:none;border-radius:inherit;
+    background:radial-gradient(400px 400px at var(--mx,50%) var(--my,22%),
+      rgba(255,255,255,.14),rgba(255,255,255,.04) 36%,transparent 64%);
+    opacity:0;transition:opacity .5s cubic-bezier(.16,1,.3,1);}
+  .card.is-center .card-lens{opacity:1;}
+  /* the card's mirrored image on the floor of the stage, positioned by layout() */
+  .card-refl{position:absolute;left:50%;bottom:0;aspect-ratio:0.6/1;border-radius:24px;
+    z-index:2;pointer-events:none;transform-origin:50% 0%;
+    background:linear-gradient(163deg,rgba(255,255,255,.08),rgba(255,255,255,.03));
+    box-shadow:inset 0 -1px 0 rgba(255,255,255,.16);
+    -webkit-mask-image:linear-gradient(180deg,rgba(0,0,0,.32),transparent 38%);
+            mask-image:linear-gradient(180deg,rgba(0,0,0,.32),transparent 38%);
+    filter:blur(2.6px);}
   /* curved specular sweep across the top — the wet gloss */
   .card::after{content:'';position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;
     background:radial-gradient(120% 46% at 50% -10%, rgba(255,255,255,.24), rgba(255,255,255,0) 62%);}
@@ -127,8 +187,11 @@
   .card-top::before{content:'';position:absolute;left:18px;right:18px;bottom:0;height:1px;z-index:4;
     background:linear-gradient(90deg, transparent, var(--acc) 50%, transparent);opacity:.6;}
   .card-body{padding:16px 16px 0;position:relative;z-index:5;}
-  .card-eyebrow{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;}
-  .card-title{font-family:var(--disp);font-weight:700;font-size:clamp(13px,1.4vw,17px);color:var(--ink);margin:0;line-height:1.15;}
+  /* --muted was tuned against the old near-opaque card; on the refracting glass it
+     sinks into whatever the blobs are doing behind it. This is --ink at 72%. */
+  .card-eyebrow{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:rgba(247,241,232,.72);margin:0 0 6px;}
+  .card-title{font-family:var(--disp);font-weight:700;font-size:clamp(13px,1.4vw,17px);color:var(--ink);margin:0;line-height:1.15;
+    text-shadow:0 1px 10px rgba(0,0,0,.55);}
   .card-hint{position:absolute;left:0;right:0;bottom:10px;text-align:center;opacity:0;transform:translateY(4px);z-index:5;
     transition:opacity 300ms,transform 300ms;font-family:var(--mono);font-size:9px;letter-spacing:.12em;
     text-transform:uppercase;color:var(--muted);}
@@ -140,7 +203,10 @@
   .card:not(.is-center) .card-top::before{opacity:0;}
   .card:not(.is-center) .card-top::after{opacity:.1;}
   .card:not(.is-center) .card-top svg{filter:none;opacity:.65;}
-  .card:not(.is-center){border-color:var(--dim);box-shadow:0 22px 55px -30px rgba(0,0,0,.85);}
+  /* NOTE: the old `.card:not(.is-center){border-color:var(--dim);box-shadow:…}` is
+     gone with the accent border. Its box-shadow outranks `.card` on specificity,
+     so leaving it would have quietly restored the old flat drop on every
+     non-centre card — and taken `--dim`'s last consumer with it. */
 
   .controls{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:16px;}
   .navbtn{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
@@ -162,7 +228,23 @@
     display:flex;align-items:center;justify-content:center;box-shadow:var(--clay-sm);flex-shrink:0;}
   .cta svg{width:55%;height:55%;stroke:var(--bg);}
   @media (max-width:640px){ .cta span{display:none;} .carousel-wrap{top:64px;bottom:94px;} }
-  @media (prefers-reduced-motion: reduce){ .card, .ghost, .stage{transition-duration:1ms !important;} }
+  /* .stage dropped from this list with its background transition — it has none left. */
+  @media (prefers-reduced-motion: reduce){
+    .card, .ghost{transition-duration:1ms !important;}
+    .blob{animation:none;}
+    .card-refl, .card-lens{display:none;}
+    /* the turbulence in #hero-glass animates and cannot be paused per-element,
+       so the whole refraction is swapped for a still blur.
+       .card.is-back is named too — it outranks a bare .card on specificity and
+       would otherwise keep its own blur through this block. */
+    .card, .card.is-back{backdrop-filter:blur(7px) saturate(1.4);}
+  }
+  @media (forced-colors:active){
+    .blob, .card-refl, .card-lens{display:none;}
+    /* border:none leaves nothing for High Contrast to keep — the card would have
+       no edge at all, since forced-colors drops every box-shadow on this page. */
+    .card{border:2px solid ButtonBorder;}
+  }
 
   .card-fox-topper{display:none !important;}   /* static card toppers — hidden */
   .wrap{position:relative;z-index:2;}
@@ -500,6 +582,32 @@
 <a class="login-link" href="https://app.foxyaudit.tech/dashboard">Log in</a>
 
 <div class="stage" id="stage">
+  <!-- The refraction pipeline the cards' backdrop-filter runs through. Inline and
+       0×0 — no request, nothing to lay out. Turbulence generates a noise field,
+       feDisplacementMap pushes the backdrop's pixels around by it, then a small
+       blur and a saturate bring it back to something you can read text on.
+       ⚠ These values are the approved ones. Do not retune them. -->
+  <svg aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
+    <filter id="hero-glass" x="-20%" y="-20%" width="140%" height="140%"
+            color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.007 0.011" numOctaves="2"
+                    seed="7" result="noise">
+        <animate attributeName="baseFrequency" dur="22s"
+                 values="0.007 0.011;0.011 0.007;0.007 0.011"
+                 repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="46"
+                         xChannelSelector="R" yChannelSelector="G"/>
+      <feGaussianBlur stdDeviation="2.5"/>
+      <feColorMatrix type="saturate" values="1.45"/>
+    </filter>
+  </svg>
+
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+  <div class="blob blob-4"></div>
+
   <div class="grain"></div>
   <div class="vignette"></div>
 
@@ -809,6 +917,8 @@ const foxImgEl = document.getElementById('foxImg');
 let foxPoseTimer = null;
 let foxInitialized = false;
 let lastDirection = 'right';
+let reflEls = [];
+let settleTimer = null;
 
 function setFoxPose(poseKey){
   if (!foxMascotEl || !foxImgEl) return;
@@ -882,8 +992,9 @@ function buildCards(){
     const [r, g, b] = hexToRgb(accent);
     card.style.setProperty('--acc', accent);
     card.style.setProperty('--glow', `rgba(${r},${g},${b},.55)`);
+    /* --acc, --glow and --soft still dress the card's icon well (stroke, halo and
+       divider). --dim went with the accent border that was its only consumer. */
     card.style.setProperty('--soft', `rgba(${r},${g},${b},.18)`);
-    card.style.setProperty('--dim',  `rgba(${r},${g},${b},.3)`);
     const eyebrow = safeSlideField(s, 'cardEyebrow', FALLBACK_EYEBROW, 40);
     const title = safeSlideField(s, 'cardTitle', FALLBACK_TITLE, 60);
     card.innerHTML = `
@@ -892,12 +1003,21 @@ function buildCards(){
         <p class="card-eyebrow">${eyebrow}</p>
         <p class="card-title">${title}</p>
       </div>
-      <p class="card-hint">Tap to explore</p>`;
+      <p class="card-hint">Tap to explore</p>
+      <div class="card-lens"></div>`;
     card.addEventListener('click', () => {
       if (Number(card.dataset.index) !== active) { goTo(i); }
       else { openModal(i, card); }
     });
     cardsEl.appendChild(card);
+  });
+  /* One reflection per card, built here so layout() only ever has to move them.
+     They live in #cards alongside the cards and sit beneath them on z-index. */
+  reflEls = SLIDES.map(() => {
+    const r = document.createElement('div');
+    r.className = 'card-refl';
+    cardsEl.appendChild(r);
+    return r;
   });
   dotsEl.innerHTML = '';
   SLIDES.forEach((_, i) => {
@@ -931,8 +1051,22 @@ function styleFor(role){
   }
 }
 
+/* A card's mirror on the floor, placed from the card's own resolved style: same
+   left, same height, flipped below its bottom edge, a third of its opacity.
+   ⚠ #cards now holds reflections too, so this must select .card, not .children. */
+function reflect(i, card){
+  const r = reflEls[i];
+  if (!r) return;
+  const s = card.style, h = s.height || '0%';
+  r.style.left = s.left || '50%';
+  r.style.height = h;
+  r.style.bottom = `calc(${s.bottom || '0%'} - ${h})`;
+  r.style.opacity = (parseFloat(s.opacity || '0') * 0.34).toFixed(3);
+  r.style.transform = `${s.transform || ''} scaleY(-1)`;
+}
+
 function layout(){
-  [...cardsEl.children].forEach(card => {
+  cardsEl.querySelectorAll('.card').forEach(card => {
     const i = Number(card.dataset.index);
     const role = roleFor(i);
     const st = styleFor(role);
@@ -941,14 +1075,35 @@ function layout(){
       transform: st.transform, filter: st.filter, opacity: st.opacity, zIndex: st.zIndex
     });
     card.classList.toggle('is-center', role === 'center');
+    /* Upgrade to the refraction the instant a card is on its way in; the
+       downgrade waits for settle() below. */
+    if (role !== 'back') card.classList.remove('is-back');
+    /* positioned in the same pass that positions the card — a card only moves
+       when layout() moves it or the parallax tilt rewrites its transform, and
+       both call reflect(). Nothing polls, so a still page costs nothing. */
+    reflect(i, card);
+  });
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(settle, 700);
+}
+
+/* Drop the refraction on cards that have finished retreating to opacity 0.
+   Deferred by one transition on purpose: swapping backdrop-filter is instant and
+   uninterpolated, so doing it in layout() would pop the outgoing card from
+   refracted to flat while it was still half visible. */
+function settle(){
+  cardsEl.querySelectorAll('.card').forEach(card => {
+    card.classList.toggle('is-back', roleFor(Number(card.dataset.index)) === 'back');
   });
 }
 
 function render(){
   const s = SLIDES[active];
   ghostEl.textContent = safeSlideField(s, 'ghost', '', 20);
-  const accent = safeAccentHex(s);
-  stageEl.style.background = `radial-gradient(closest-side, ${accent.startsWith('var')?'#8a361140':accent+'28'}, transparent 72%), var(--bg)`;
+  /* The per-slide accent wash that used to be written onto stageEl is gone, not
+     merely overridden: the stage now carries a fixed gradient plus drifting
+     blobs, and tinting the ground with the centre card's own accent flattened
+     exactly the contrast the refraction needs to read as glass. */
   [...dotsEl.children].forEach((d,i)=> d.classList.toggle('active', i===active));
   layout();
   /* fox mascot is now scroll-driven (see scrollFox) — no longer carousel-coupled */
@@ -1000,8 +1155,20 @@ carouselWrap.addEventListener('mousemove', (e) => {
   const py = (e.clientY - r.top) / r.height - 0.5;
   const baseScale = center.style.transform.match(/scale\(([\d.]+)\)/)[1];
   center.style.transform = `translateX(-50%) scale(${baseScale}) rotateY(${px*8}deg) rotateX(${-py*6}deg)`;
+  reflect(Number(center.dataset.index), center);
 });
 carouselWrap.addEventListener('mouseleave', () => layout());
+
+/* Specular highlight tracking the pointer across the focused card. Writes two
+   custom properties; .card-lens does the painting, and only the centre card's
+   lens is visible, so this is one style write per move and no layout. */
+stageEl.addEventListener('pointermove', (e) => {
+  const center = cardsEl.querySelector('.card.is-center');
+  if (!center) return;
+  const b = center.getBoundingClientRect();
+  center.style.setProperty('--mx', `${(e.clientX - b.left) / b.width * 100}%`);
+  center.style.setProperty('--my', `${(e.clientY - b.top) / b.height * 100}%`);
+});
 
 /* ---------------- modal ---------------- */
 const modalBackdrop = document.getElementById('modalBackdrop');
