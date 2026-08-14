@@ -162,7 +162,9 @@ guards run in CI: every job is `ubuntu-latest`, which ships Chrome. Nothing in
 them compares a system colour to a literal, so a different palette cannot redden
 the job.
 
-**Known gap:** the marketing site and the checkout page have no
-`@media (forced-colors)` support. The marketing site matters least — it carries
-no control whose state a High Contrast user has to read — but the checkout page
-is a payment step and needs its own pass.
+**Known gap:** the checkout page and the marketing sub-pages have no
+`@media (forced-colors)` support. The marketing homepage gained its block in the
+W1 hero work (the glass cards would otherwise render edgeless in High Contrast).
+The sub-pages matter least — they carry no control whose state a High Contrast
+user has to read — but the checkout page is a payment step and needs its own
+pass.

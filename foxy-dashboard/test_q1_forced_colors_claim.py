@@ -77,9 +77,14 @@ def test_the_documented_gap_names_the_surfaces_that_still_lack_it():
     """The sentence has to keep up with the surfaces. It named the wrong one for
     a whole release, which is what this file exists to stop happening again."""
     section = _accessibility_section()
-    assert _blocks(_SALE) == 0 and _blocks(_CHECKOUT) == 0, \
-        "a surface gained forced-colors support; PRODUCT.md still calls it a gap"
-    assert "marketing site" in section and "checkout" in section, \
+    # W1 gave the sale HOMEPAGE its block (the glass cards render edgeless in
+    # High Contrast without it); the checkout and the marketing sub-pages are
+    # the remaining gap. Losing the homepage's block should fail loudly.
+    assert _blocks(_SALE) >= 1, \
+        "the sale homepage lost its forced-colors block (added in W1)"
+    assert _blocks(_CHECKOUT) == 0, \
+        "checkout gained forced-colors support; PRODUCT.md still calls it a gap"
+    assert "marketing sub-pages" in section and "checkout" in section, \
         "the remaining gaps are no longer named in PRODUCT.md"
     assert not re.search(r"no `@media \(forced-colors\)` support on the customer",
                          section), \
