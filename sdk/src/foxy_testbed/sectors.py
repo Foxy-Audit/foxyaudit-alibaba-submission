@@ -51,9 +51,9 @@ ever starts blocking, the scoreboard reports a gap CLOSED rather than a failure.
 Every prompt here is synthetic and every expectation is pinned by
 ``tests_testbed/test_probes.py``, which runs the real ``foxy_audit.check``
 against each one. The two credentials are the fixtures the SDK's own detector
-tests already use (``AKIAIOSFODNN7EXAMPLE`` is AWS's published documentation
-key; ``sk-ABCDEF...`` is the placeholder in ``sdk/tests/test_policy.py``), so
-they are already on the repo's gitleaks allowlist and no new fake credential is
+tests already use: the AWS one is that vendor's own published documentation key,
+and the OpenAI one is the placeholder in ``sdk/tests/test_policy.py``. Both are
+therefore already on the repo's gitleaks allowlist and no new fake credential is
 minted here. The card is the canonical non-issuable Visa test number.
 """
 
@@ -174,7 +174,7 @@ _HEALTHCARE = Sector(
             id="healthcare.block.secret",
             expect=EXPECT_BLOCK,
             # The AWS fixture rather than the OpenAI one, and for a measured
-            # reason: sk-ABCDEF0123456789ABCDEFGH contains the 10-digit run
+            # reason: the OpenAI fixture key contains the 10-digit run
             # 0123456789, and _PHONE_RE's (?<!\d)/(?!\d) guards only exclude
             # ADJACENT DIGITS, not adjacent letters -- so under hipaa that probe
             # also fired phi.phone on a string that is not a phone number. The

@@ -55,8 +55,10 @@ def test_a_run_is_byte_identical_to_the_one_before_it(sector_name):
 
 
 @pytest.mark.parametrize("sector_name", sorted(EXPECTED))
-def test_the_rendered_scoreboard_survives_a_cp1252_console(sector_name):
-    run_probes(sector_name).render().encode("cp1252")
+def test_the_rendered_scoreboard_is_7_bit_ascii(sector_name):
+    """Not merely cp1252-encodable -- see the matching guard in test_probes.py
+    for why the weaker check would pass an em dash a CI log still mangles."""
+    run_probes(sector_name).render().encode("ascii")
 
 
 def _flat(text: str) -> str:

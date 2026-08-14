@@ -162,20 +162,24 @@ def _rendered_strings():
                     yield "{0}.{1}".format(probe.id, field.name), value
 
 
-def test_no_preset_string_can_break_a_cp1252_console():
+def test_no_preset_string_leaves_7_bit_ascii():
     """7-bit only, and this is not hypothetical.
 
-    A Windows console and a captured CI stream are both cp1252 here. Writing an
-    em dash or a warning sign into a field that gets printed raises
-    UnicodeEncodeError inside ``print``, so the gate fails with a traceback
-    pointing at the renderer instead of at the character. It happened while this
-    corpus was being written; encoding to cp1252 is the check that would have
-    caught it in the first place.
+    A Windows console and a captured CI stream are both cp1252 here. A warning
+    sign in a printed field raises UnicodeEncodeError inside ``print``, so the
+    gate fails with a traceback pointing at the renderer instead of at the
+    character -- which happened while this corpus was being written.
+
+    ASCII rather than cp1252, deliberately, and the difference is not pedantry:
+    cp1252 HAS an em dash at 0x97, so a cp1252 check passes an em dash while an
+    ASCII-decoding CI log still mangles it. Checking the encoding that happens
+    to be on this machine would leave the guard exactly as strong as this
+    machine, which is the wrong thing to pin.
     """
     offenders = []
     for where, value in _rendered_strings():
         try:
-            value.encode("cp1252")
+            value.encode("ascii")
         except UnicodeEncodeError as exc:
             offenders.append("{0}: {1!r}".format(where, value[exc.start:exc.end]))
-    assert not offenders, "non-cp1252-encodable text in printed fields: " + "; ".join(offenders)
+    assert not offenders, "non-ASCII text in printed fields: " + "; ".join(offenders)
