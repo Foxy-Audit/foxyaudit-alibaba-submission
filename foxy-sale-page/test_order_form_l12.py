@@ -277,9 +277,20 @@ def test_the_support_tier_scope_finding_is_resolved_the_way_the_evidence_argued(
     ARGUMENT ABOVE IS WHY IT WAS SETTLED THIS WAY. §5 stays plan-keyed, because
     the Order Form template points at it to resolve a plan name and re-keying it
     would break the document that depends on it. What §5 gained is a scope line
-    stating who the targets bind: Order Form customers, with self-serve plans on
-    best-effort support. The overloaded names stay; the ambiguity about which
-    population is in scope does not.
+    stating who the targets bind: customers under an Order Form, with self-serve
+    plans DEFERRED to the support published on pricing.html and contact.html.
+    The overloaded names stay; the ambiguity about which population is in scope
+    does not.
+
+    ⚠ THE FIRST WORDING OF THAT DECISION WAS WITHDRAWN, AND THIS DOCSTRING
+    RECORDED IT FOR A WHILE. It read "self-serve plans on best-effort support",
+    which contradicted contact.html (Pro: 1 business day, Max: Priority) and
+    pricing.html (Email support / Priority support and onboarding) — a legal page
+    promising less than the pages taking the money. The `"best-effort" not in s5`
+    assertion below is the enforcement of that withdrawal, and for one round it
+    sat thirty lines under a docstring still describing the withdrawn version.
+    These docstrings ARE the record of what was decided, so a stale one is a
+    false record, not an untidy comment.
 
     The three facts stay pinned, because they are the reasoning the resolution
     rests on rather than evidence for a question that is now closed."""

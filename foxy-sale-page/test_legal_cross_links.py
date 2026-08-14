@@ -100,12 +100,25 @@ def test_every_link_resolves_to_a_file_that_exists(page):
     dom = _dom(page)
     dead = sorted({a["href"] for a in dom.links
                    if _is_internal_page(a["href"])
-                   and not (HERE / a["href"].lstrip("/").split("#")[0]).is_file()})
+                   and not (HERE / _page_path(a["href"])).is_file()})
     assert not dead, f"{page} links to pages that do not exist: {dead}"
 
 
-def _is_internal_page(href: str) -> str:
-    """An in-repo .html target, with or without a fragment.
+def _page_path(href: str) -> str:
+    """The file part of an internal href — fragment AND query stripped.
+
+    ⚠ STRIPPING ONLY "#" WAS A TRAP ARMED FOR THE NEXT PERSON. `_is_internal_page`
+    classifies on `href.split("?")[0]`, so "/book-a-demo.html?plan=premium" is
+    internal — and the path check then looked for a file literally named
+    "book-a-demo.html?plan=premium" and reported a live link as DEAD. The site
+    ships that exact href today; no page in PAGES carries one yet, which is the
+    only reason this was not red. Both separators are stripped here, in ONE
+    place, so the two guards cannot disagree about what a path is."""
+    return href.lstrip("/").split("#")[0].split("?")[0]
+
+
+def _is_internal_page(href: str) -> bool:
+    """An in-repo .html target, with or without a fragment or query string.
 
     ⚠ `endswith(".html")` WAS THE BUG. It is false for "/msa.html#s1", so every
     cross-page SECTION reference on the site was validated for neither file nor
@@ -113,6 +126,24 @@ def _is_internal_page(href: str) -> str:
     a Section 15 that does not exist — and L15 added two more of them while
     fixing it."""
     return href.startswith("/") and ".html" in href.split("?")[0]
+
+
+def test_a_query_string_link_is_classified_and_resolved_consistently():
+    """⚠ THE CONTROL FOR THE TRAP ABOVE, because no page in PAGES has one yet.
+
+    /book-a-demo.html?plan=premium ships on the site today. If a legal page ever
+    links it, the two helpers must agree: internal, and resolving to a file that
+    exists. Asserted directly rather than waiting for a page to acquire one,
+    since the bug was invisible precisely because nothing exercised it."""
+    href = "/book-a-demo.html?plan=premium"
+    assert _is_internal_page(href), "a query-string .html link is not classified internal"
+    assert _page_path(href) == "book-a-demo.html", \
+        f"_page_path kept the query string: {_page_path(href)!r}"
+    assert (HERE / _page_path(href)).is_file(), \
+        "book-a-demo.html is gone; re-point this control at a real query-string link"
+    assert _page_path("/msa.html#s1") == "msa.html"
+    assert _page_path("/msa.html?a=1#s1") == "msa.html", \
+        "a href carrying BOTH a query and a fragment does not resolve"
 
 
 @pytest.mark.parametrize("page", [p for p in PAGES if (HERE / p).is_file()])
@@ -132,16 +163,30 @@ def test_every_cross_page_fragment_lands_on_a_real_anchor(page):
     convention. `s1`..`s14` is a convention these pages happen to follow, and a
     guard that assumed it would pass for /msa.html#s15."""
     dom = _dom(page)
-    broken = []
+    broken, skipped = [], []
     for a in dom.links:
         href = a["href"]
         if not _is_internal_page(href) or "#" not in href:
             continue
-        target, frag = href.lstrip("/").split("#", 1)
+        # ⚠ THE TARGET IS TAKEN FROM _page_path, NOT FROM split("#"). A href with
+        # a query BEFORE the fragment would otherwise yield a target of
+        # "x.html?a=1", which is not a file — and the `continue` below would then
+        # skip a link this guard is supposed to check, silently.
+        target = _page_path(href)
+        frag = href.split("#", 1)[1]
         if not (HERE / target).is_file():
-            continue                      # the forward guard above owns this one
+            skipped.append(href)          # the forward guard above owns this one
+            continue
         if frag not in _dom(target).ids:
             broken.append(f"{href} (no id={frag!r} on {target})")
+    # ⚠ A SKIP IS A PASS. Anything handed to the forward guard is named, so this
+    # one cannot go quiet by classifying every link as somebody else's problem.
+    dead = {a["href"] for a in dom.links
+            if _is_internal_page(a["href"])
+            and not (HERE / _page_path(a["href"])).is_file()}
+    assert set(skipped) <= dead, (
+        f"{page}: these fragment links were skipped but their target files exist, "
+        f"so nothing checked them: {sorted(set(skipped) - dead)}")
     assert not broken, (
         f"{page} links to anchors that do not exist: {sorted(broken)}. The link "
         "loads the page and scrolls nowhere, so it looks like it works.")

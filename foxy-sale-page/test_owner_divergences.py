@@ -470,11 +470,16 @@ def test_201a_the_terms_yield_to_a_signed_msa(terms, msa):
     # the Privacy Policy and Terms of Use too. msa.html §1 supersedes only "the
     # public Terms of Service", and the MSA incorporates only the DPA and SLA —
     # so the wide reading made the carve-out claim more than the MSA does.
-    assert "govern instead" not in t, _why15(
+    #
+    # ⚠ MEASURED ON THE §15 SLICE, NOT ON terms.text. The ban first ran page-wide
+    # while the correctly scoped slice was built two lines below it — so any
+    # OTHER section of the Terms growing the phrase would have failed this, and
+    # a reader of the failure would have been sent to §15 to look for it.
+    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
+    assert "govern instead" not in s15, _why15(
         "#201a", "terms.html §15's carve-out is unqualified again. 'govern "
                  "instead' displaces the Privacy Policy and Terms of Use as well, "
                  "which msa.html §1 does not do")
-    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
     for survivor in ("Privacy Policy", "Terms of Use"):
         assert survivor in s15, _why15(
             "#201a", f"§15 stopped enumerating the {survivor}; the narrowed "
@@ -571,10 +576,17 @@ def test_201c_the_terms_really_do_incorporate_the_dpa(terms, dpa):
             "incorporated into these Terms by reference") in t, _why15(
         "#201c", "terms.html no longer incorporates the DPA, so the DPA's "
                  "fallback clause claims a relationship its parent does not make")
-    s5 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(5)))
+    s5_src = terms.section(5)
+    s5 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s5_src))
     assert "Data Processing Agreement" in s5, _why15(
         "#201c", "the incorporation left §5, which is the section the DPA's "
                  "fallback cites by number")
+    # ⚠ THE LINK IS ASSERTED IN §5, NOT PAGE-WIDE. §15 also links the DPA now, so
+    # a page-wide check would stay green with §5's anchor removed — and §5 is the
+    # section dpa.html cites by number, so it is the one a reader lands on.
+    assert 'href="/dpa.html"' in s5_src, _why15(
+        "#201c", "terms.html §5 incorporates the DPA in prose without linking it; "
+                 "the DPA's fallback sends readers to this section by number")
     s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
     assert "Data Processing Agreement" in s15, _why15(
         "#201c", "terms.html §15's entire-agreement clause stopped enumerating "
@@ -614,6 +626,17 @@ def test_201c_the_precedence_clauses_resolve_against_each_other(dpa, msa):
     assert ("regarding the processing of personal data, this DPA prevails") in s14, \
         _why15("#201c", "DPA §14 lost the operative rule that applies to BOTH "
                         "populations; only the MSA-conditioned sentence remains")
+
+    # ⚠ THE RANKING NAMES ITS REFERENT. It read "which otherwise ranks IT above
+    # this DPA", where "it" could be Section 1 or the agreement Section 1 belongs
+    # to. A precedence clause is the one place an antecedent cannot be left to
+    # the reader, since the whole sentence exists to say which document wins.
+    assert "ranks the Master Service Agreement above this DPA" in s14, _why15(
+        "#201c", "DPA §14's ranking no longer names what it ranks. A bare "
+                 "pronoun here ('ranks it above this DPA') is ambiguous between "
+                 "Section 1 and the agreement it sits in")
+    assert "ranks it above" not in s14, _why15(
+        "#201c", "DPA §14 uses a bare pronoun for the document it ranks")
     assert ("except that on the processing of personal data the DPA prevails "
             "over this Agreement") in msa.text, \
         _why15("#201c", "MSA §1's ladder dropped the carve-out, so it ranks the MSA "
@@ -701,17 +724,26 @@ def test_200_the_msa_notices_bullet_cites_customer_side_notice_provisions(msa):
     bullet = re.search(r"<li><strong>Notices:</strong>(.*?)</li>", msa.src, re.S)
     assert bullet, _why15("#200", "msa.html's Notices bullet is gone")
     cited = re.findall(r'href="#s(\d+)"', bullet.group(1))
-    assert cited == ["4", "13"], _why15(
-        "#200", f"the Notices bullet cites Sections {cited}; the customer-side "
-                "notice provisions are 4 (non-renewal) and 13 (breach)")
+    assert cited, _why15("#200", "the Notices bullet cites no sections at all")
+
+    # ⚠ THE PROPERTY IS CHECKED BEFORE THE LITERAL, AND THAT ORDER IS THE POINT.
+    # `cited == ["4", "13"]` used to run first, so this loop was unreachable for
+    # any other citation and the §3 check below was dead code. The equality alone
+    # would pass a future citation that is wrong-but-different, and the check
+    # that could tell wrong from right never ran. Now every cited section is
+    # tested for the property first; the literal is the last word, not the gate.
     for n in cited:
         body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", msa.section(int(n))))
         assert re.search(r"either party", body, re.I), _why15(
             "#200", f"§{n} is cited as a route for notice TO Foxy Audit, but its "
-                    "notice provision is not bilateral — re-read it before citing it")
-    assert 'href="#s3"' not in bullet.group(1), _why15(
+                    f"notice provision is not bilateral — §{n} reads {body[:160]!r}. "
+                    "Re-read it before citing it")
+    assert "3" not in cited, _why15(
         "#200", "the Notices bullet cites §3 again. §3's notice runs Foxy Audit → "
                 "Customer only, so it is not a provision the customer serves under")
+    assert cited == ["4", "13"], _why15(
+        "#200", f"the Notices bullet cites Sections {cited}; the customer-side "
+                "notice provisions are 4 (non-renewal) and 13 (breach)")
 
 
 def test_200_the_mailbox_matches_the_map_the_other_pages_use():

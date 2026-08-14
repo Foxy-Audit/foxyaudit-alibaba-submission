@@ -350,8 +350,10 @@ def test_terms_html_now_yields_to_the_msa_in_its_entire_agreement_clause(legal_d
     assert "govern instead" not in s15, (
         "§15's carve-out is unqualified again — 'govern instead' displaces the "
         "Privacy Policy and Terms of Use too, which msa.html §1 does not do")
-    assert 'href="/msa.html"' in dom_terms.src, \
-        "terms.html names the MSA but no longer links it"
+    # ⚠ SCOPED TO §15. A page-wide check would be satisfied by any other MSA link
+    # the page acquires — and §15 is the clause whose carve-out needs the anchor.
+    assert 'href="/msa.html"' in dom_terms.section(15), \
+        "terms.html §15 names the MSA but no longer links it from the carve-out"
 
     # ⚠ THE §14 MENTION IS A DIFFERENT CLAUSE ABOUT A DIFFERENT THING. Pinned so
     # a future edit cannot satisfy #201a by rewording the forum sentence.

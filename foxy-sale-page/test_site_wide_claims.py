@@ -480,6 +480,51 @@ SELF_SERVE_DOWNGRADE = re.compile(
     r"without any response target|reasonable endeavours only", re.I)
 
 
+def _pricing_plan_features() -> dict[str, list[str]]:
+    """plan name -> the `<li>` items of THAT plan's own price card.
+
+    ⚠ SLICED PER CARD, because a page-wide search for "support" on pricing.html
+    is answered by the FAQ. The cards are delimited by `<div class="price-card`
+    and each carries one `<p class="price-name">` and one `<ul class="price-list">`."""
+    src = (HERE / "pricing.html").read_text(encoding="utf-8")
+    cards: dict[str, list[str]] = {}
+    for chunk in re.split(r'<div class="price-card', src)[1:]:
+        name = re.search(r'<p class="price-name">([^<]+)</p>', chunk)
+        items = re.search(r'<ul class="price-list">(.*?)</ul>', chunk, re.S)
+        if name and items:
+            cards[name.group(1).strip()] = re.findall(r"<li[^>]*>(.*?)</li>",
+                                                      items.group(1), re.S)
+    assert cards, "pricing.html's price cards could not be sliced; the markup changed"
+    return cards
+
+
+def _contact_support_rows() -> tuple[dict[str, list[str]], int]:
+    """contact.html's support table as {plan: [cells]}, plus the header count.
+
+    ⚠ THE CLASS IS MATCHED AS A TOKEN, NOT AS A STRING. `class="sla-row"` matched
+    exactly, so contact.html's own header — `class="sla-row sla-head"` — never
+    matched, and neither would a plan row that gained any extra class. A new row
+    with `class="sla-row sla-new"` was invisible to both directions of this
+    guard, which is the failure mode it exists to prevent.
+
+    The header is now matched and then excluded BY NAME, and the count of
+    headers is returned so the exclusion itself can be asserted rather than
+    silently matching nothing."""
+    src = (HERE / "contact.html").read_text(encoding="utf-8")
+    rows, headers = {}, 0
+    for classes, body in re.findall(r'<div class="([^"]*\bsla-row\b[^"]*)">(.*?)</div>',
+                                    src, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<span>(.*?)</span>", body, re.S)]
+        if not cells:
+            continue
+        if "sla-head" in classes.split():
+            headers += 1
+            continue
+        rows[cells[0]] = cells[1:]
+    return rows, headers
+
+
 def _sla_section_5() -> str:
     """sla.html §5, tags stripped. Bounded by §6, not by the end of the card."""
     from conftest import load
@@ -534,13 +579,11 @@ def test_the_pages_the_sla_defers_to_actually_publish_that_plans_support(plan):
     assert re.search(rf"\b{plan}\b", s5), \
         f"sla.html §5 no longer keys off {plan!r}; the overload may be gone"
 
-    contact = (HERE / "contact.html").read_text(encoding="utf-8")
-    rows = {re.sub(r"<[^>]+>", "", c[0]).strip():
-            [re.sub(r"<[^>]+>", "", x).strip() for x in c[1:]]
-            for c in (re.findall(r"<span>(.*?)</span>", r)
-                      for r in re.findall(r'<div class="sla-row">(.*?)</div>',
-                                          contact, re.S))
-            if len(c) >= 3}
+    rows, headers = _contact_support_rows()
+    assert headers == 1, (
+        f"contact.html's support table has {headers} header rows (expected 1). "
+        "The header is matched and excluded by its 'sla-head' class token; if it "
+        "stopped carrying that token the plan set below would silently gain 'Plan'")
     assert plan in rows, (
         f"contact.html no longer publishes a support row for {plan!r}, but "
         f"sla.html §5 defers self-serve customers to it")
@@ -548,10 +591,21 @@ def test_the_pages_the_sla_defers_to_actually_publish_that_plans_support(plan):
     assert response and channel, \
         f"contact.html's {plan!r} row publishes an empty commitment: {rows[plan]}"
 
-    pricing = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ",
-                     (HERE / "pricing.html").read_text(encoding="utf-8")))
-    assert re.search(r"\bsupport\b", pricing, re.I), \
-        "pricing.html no longer sells support at all, and sla.html §5 points at it"
+    # ⚠ BOUND TO THE PLAN'S OWN FEATURE LIST. This half first grepped
+    # `\bsupport\b` over the whole of pricing.html, which the FAQ's "support
+    # requests" satisfies on its own. Measured: gutting BOTH plan support
+    # bullets left all five of these tests green — a vacuous version of the very
+    # guard that exists because a support downgrade got past review.
+    cards = _pricing_plan_features()
+    assert plan in cards, (
+        f"pricing.html no longer has a price card for {plan!r}, but sla.html §5 "
+        f"defers self-serve customers to that page for {plan}'s support")
+    sold = [re.sub(r"<[^>]+>", " ", li) for li in cards[plan]
+            if re.search(r"\bsupport\b", li, re.I)]
+    assert sold, (
+        f"pricing.html's {plan!r} card no longer sells support in its own feature "
+        f"list: {[re.sub(chr(60) + '[^>]+>', ' ', li).strip() for li in cards[plan]]}. "
+        "sla.html §5 points self-serve customers at this page for exactly that.")
 
 
 def test_no_self_serve_plan_is_sold_support_the_sla_has_never_heard_of():
@@ -561,13 +615,19 @@ def test_no_self_serve_plan_is_sold_support_the_sla_has_never_heard_of():
 
     ⚠ "Free trial" IS EXPECTED AND IS NOT A FAILURE. It is sold "Community"
     support and appears in no Order Form, so it is self-serve-only by design —
-    pinned by name so a NEW unknown plan is what fails, rather than this one."""
-    contact = (HERE / "contact.html").read_text(encoding="utf-8")
-    plans = {re.sub(r"<[^>]+>", "", re.findall(r"<span>(.*?)</span>", r)[0]).strip()
-             for r in re.findall(r'<div class="sla-row">(.*?)</div>', contact, re.S)
-             if re.findall(r"<span>(.*?)</span>", r)}
-    known = set(OVERLOADED_PLANS) | {"Free trial", "Plan"}
-    unknown = plans - known
+    pinned by name so a NEW unknown plan is what fails, rather than this one.
+
+    ⚠ THE ROW MATCH IS A CLASS TOKEN. It was an exact `class="sla-row"` string,
+    so a new row carrying any additional class was invisible to this check — the
+    one direction it exists to cover. "Plan" is no longer in the known set,
+    because the header is now excluded by its own 'sla-head' token instead of
+    being waved through by name."""
+    rows, headers = _contact_support_rows()
+    assert headers == 1, \
+        f"contact.html's support table has {headers} header rows (expected 1)"
+    assert rows, "contact.html's support table has no plan rows at all"
+    known = set(OVERLOADED_PLANS) | {"Free trial"}
+    unknown = set(rows) - known
     assert not unknown, (
         f"contact.html publishes support for {sorted(unknown)}, which sla.html §5 "
         "does not key off. Either §5's tables or its scope line is now incomplete.")
