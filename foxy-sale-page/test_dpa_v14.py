@@ -192,26 +192,42 @@ def test_section_6_says_what_is_true_of_each_of_the_three_trails(dom):
         assert measure in t, f"the measures list lost {measure!r}"
 
 
-def test_the_sub_processor_delta_is_still_exactly_what_was_reported(dom, legal_dom):
-    """⚠ REPORTED, NOT FIXED — and pinned so the report cannot go stale.
+def test_the_sub_processor_delta_is_closed(dom, legal_dom):
+    """⚠ CLOSED (#198, OWNER DECISION 2026-08-14). L10 reported the delta and
+    pinned it; this is that guard re-aimed at zero.
 
-    §5 is a GENERAL AUTHORIZATION whose parenthetical names five sub-processors
-    while incorporating Privacy Policy Section 8, which names six. If someone
-    later fixes either side, this fails and the L10 report must be revisited
-    rather than quietly becoming wrong."""
+    §5 is a GENERAL AUTHORIZATION whose parenthetical named five sub-processors
+    while incorporating Privacy Policy Section 8, which named six. Payoneer was
+    absent, and the sixth was a generic "infrastructure/hosting provider" where
+    privacy.html and trust.html both name Google Cloud. Both are corrected.
+
+    ⚠ THE REAL DIFF IS NOT HERE. This guard is DPA-scoped, and a DPA-scoped
+    guard is what let the drift happen: privacy.html and trust.html each had
+    their own green list. The three-way comparison lives in
+    test_site_wide_claims.py — see test_no_page_names_a_sub_processor_the_others_do_not.
+    This one keeps the DPA's end of it and the bridge that makes §5 operative.
+
+    See test_owner_divergences.py and the vault note it names."""
     dpa, privacy = dom.text, _privacy(legal_dom).text
-    named_in_dpa = {n for n in ("Google LLC", "OpenAI", "Paddle", "Google Identity",
-                                "Brevo", "Payoneer", "Google Cloud") if n in dpa}
-    named_in_privacy = {n for n in ("Google LLC", "OpenAI", "Paddle", "Google Identity",
-                                    "Brevo", "Payoneer", "Google Cloud") if n in privacy}
-    assert named_in_privacy - named_in_dpa == {"Payoneer", "Google Cloud"}, (
-        "the sub-processor delta between dpa.html and privacy.html changed — "
-        f"dpa={sorted(named_in_dpa)}, privacy={sorted(named_in_privacy)}. "
-        "The L10 report describes the old delta; re-check it.")
-    assert "infrastructure/hosting provider" in dpa, \
-        "§5 no longer uses the generic hosting wording the delta was reported about"
-    assert "listed in Privacy Policy Section 8" in dpa, \
-        "§5 stopped incorporating the Privacy Policy list — the delta now has no bridge"
+    NAMES = ("Google LLC", "OpenAI", "Paddle", "Google Identity",
+             "Brevo", "Payoneer", "Google Cloud")
+    named_in_dpa = {n for n in NAMES if n in dpa}
+    named_in_privacy = {n for n in NAMES if n in privacy}
+    assert named_in_privacy - named_in_dpa == set(), (
+        "dpa.html §5 is short of privacy.html §8 again: missing "
+        f"{sorted(named_in_privacy - named_in_dpa)}. #198 closed this delta.")
+    assert named_in_dpa - named_in_privacy == set(), (
+        "dpa.html §5 names a sub-processor privacy.html §8 does not: "
+        f"{sorted(named_in_dpa - named_in_privacy)}")
+    assert "infrastructure/hosting provider" not in dpa, (
+        "§5 uses the generic hosting wording again — #198 replaced it with "
+        "Google Cloud (Ubuntu VM), the entity the other two pages name")
+    assert "Google Cloud (Ubuntu VM)" in dpa, \
+        "§5 no longer names the hosting entity the other two pages name"
+    assert "Payoneer, Inc." in dpa, "§5 dropped Payoneer again"
+    assert "listed in Privacy Policy Section 8" in dpa, (
+        "§5 stopped incorporating the Privacy Policy list — the authorization "
+        "now has no bridge to the list it authorizes")
 
 
 # ── 3. THE CROSS-REFERENCES ──────────────────────────────────────────────────
@@ -241,17 +257,34 @@ def test_no_reference_points_past_the_end_of_the_privacy_policy(dom, legal_dom):
 
 
 # ── 4. CONTACT DETAILS: THE ABSENCE IS THE FINDING ───────────────────────────
-def test_no_contact_route_was_invented(dom):
-    """⚠ NOTHING WAS ADDED. The document gives no email and no phone, which is a
-    real gap in an Article 28 agreement — reported, not patched. This guard's job
-    is to make sure the gap stays honest: an invented address would look like a
-    fix and be a fabrication."""
-    text, html = dom.text, dom.src
-    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text), \
-        f"an email address appeared in the DPA: {re.findall(r'[a-z.+-]+@[a-z.]+', text, re.I)}"
-    assert "mailto:" not in html, "a mailto: link appeared in the DPA"
+def test_the_notice_route_is_the_legal_mailbox_and_nothing_else(dom):
+    """⚠ THE GAP IS CLOSED (#200, OWNER DECISION 2026-08-14) — BY ONE ADDRESS.
+
+    L10 reported the missing contact route as a real gap in an Article 28
+    agreement and refused to patch it, because an invented address looks like a
+    fix and is a fabrication. The owner has now supplied the mailbox from the
+    documents' own map (legal@ for contracts) and nothing else.
+
+    The prohibitions all survive: no phone, no postal address, no second
+    mailbox. Only the email assertion flipped from "none" to "exactly this one",
+    which is a narrower requirement than the one it replaced, not a looser one.
+
+    See test_owner_divergences.py and the vault note it names."""
+    text = dom.text
+    assert dom.addresses == {"legal@foxyaudit.tech"}, \
+        f"unexpected addresses in the DPA: {dom.addresses} — #200 authorised legal@ alone"
+    # ⚠ THE TRAILING PERIOD IS SENTENCE PUNCTUATION, NOT PART OF THE ADDRESS.
+    # conftest's docstring names this exact trap and this guard still walked
+    # into it. dom.addresses (parsed from the href) is the authority; this sweep
+    # only exists to catch an address in PROSE that never became a link.
+    found = {a.rstrip(".") for a in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", text)}
+    assert found == {"legal@foxyaudit.tech"}, \
+        f"an unauthorised email address appeared in the DPA: {found}"
+    assert "written notices, instructions and requests to Foxy Audit under this DPA" in text, \
+        "the notices line lost the sentence that makes the address operative"
     assert not re.search(r"\+\d[\d\s()-]{7,}", text), "a phone number appeared in the DPA"
     assert not POSTAL_ADDRESS.search(text), "a postal address appeared in the DPA"
+    assert "gmail.com" not in dom.src.lower(), "a personal mailbox is published"
 
 
 def test_the_entity_line_survived_character_for_character(dom):

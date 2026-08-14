@@ -253,8 +253,8 @@ def test_terms_section_six_is_the_paddle_section_the_order_form_names(legal_dom)
         "terms.html §6 no longer states the merchant-of-record arrangement"
 
 
-def test_the_support_tier_evidence_for_the_open_scope_finding(legal_dom):
-    """⚠ THE MOST USEFUL THING THIS PHASE PRODUCED — evidence for #201.
+def test_the_support_tier_scope_finding_is_resolved_the_way_the_evidence_argued(legal_dom):
+    """⚠ THE MOST USEFUL THING L12 PRODUCED — evidence for #201, now spent.
 
     L9 found sla.html §5 keys support off PLAN NAMES (Pro / Max / Premium) while
     the SLA's scope sentence limits it to Order Form customers, so a card-paying
@@ -273,19 +273,33 @@ def test_the_support_tier_evidence_for_the_open_scope_finding(legal_dom):
     directly, not through the card checkout", i.e. inherently an Order Form
     customer — while Pro and Max are one-click purchases.
 
-    This guard pins the three facts that make that argument, so the evidence is
-    still there when the owner settles it."""
+    ⚠ THE OWNER HAS NOW SETTLED IT (SLA §5, DECISION 2026-08-14), AND THE
+    ARGUMENT ABOVE IS WHY IT WAS SETTLED THIS WAY. §5 stays plan-keyed, because
+    the Order Form template points at it to resolve a plan name and re-keying it
+    would break the document that depends on it. What §5 gained is a scope line
+    stating who the targets bind: Order Form customers, with self-serve plans on
+    best-effort support. The overloaded names stay; the ambiguity about which
+    population is in scope does not.
+
+    The three facts stay pinned, because they are the reasoning the resolution
+    rests on rather than evidence for a question that is now closed."""
     sla_src = (HERE / "sla.html").read_text(encoding="utf-8")
     m = re.search(r'<h2 id="s5">(.*?)(?=<h2\b)', sla_src, re.S)
     assert m, "sla.html §5 could not be isolated"
     s5 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(1)))
 
-    # (1) §5 keys off plan names, and mentions no Order Form at all
+    # (1) §5 still keys off plan names — the Order Form template resolves through it
     for plan in ("Pro", "Max", "Premium"):
         assert re.search(rf"\b{plan}\b", s5), f"SLA §5 stopped naming {plan}"
-    assert "Order Form" not in s5, (
-        "SLA §5 now mentions the Order Form — the #201 finding may have been "
-        "resolved from this side; re-read the L12 report before trusting it")
+
+    # (1b) …and now says which population those plan-keyed targets bind.
+    # ⚠ THIS REPLACED AN `"Order Form" not in s5` ASSERTION, WHICH HELD THE
+    # FINDING OPEN. Deleting it without putting the resolution in its place
+    # would have left §5's scope with no guard at all.
+    assert ("These response targets apply to Order Form customers. Self-serve "
+            "plans receive best-effort support via support@foxyaudit.tech") in s5, (
+        "SLA §5 lost its scope line, so the plan-keyed tables again read as a "
+        "promise to the self-serve customers the SLA's own header excludes")
 
     # (2) the scope sentence still limits the SLA to Order Form customers
     sla_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sla_src))

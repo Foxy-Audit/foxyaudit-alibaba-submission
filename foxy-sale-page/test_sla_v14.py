@@ -78,29 +78,41 @@ def test_the_terms_carve_out_still_matches_this_page(dom):
     assert "active paid Order Form referencing this SLA" in dom.text
 
 
-def test_the_support_table_and_the_scope_still_disagree(dom):
-    """⚠ RECORDED, NOT RESOLVED — and it is the one thing on this page a
-    self-serve customer could fairly hold the company to.
+def test_the_support_table_now_states_which_customers_it_binds(dom):
+    """⚠ RESOLVED (SLA §5, OWNER DECISION 2026-08-14). This was the one thing on
+    this page a self-serve customer could fairly hold the company to.
 
     The header scopes the whole document to Order Form customers. §5's tables
-    are keyed by PLAN NAME — Pro, Max, Premium — which are the self-serve tiers
-    (PRODUCT.md: free 500/mo, pro 25k, max 250k, premium by contract). A Pro
-    customer paying by card reads "Pro | Email | 4 business hours" and has no
-    reason to think it is not theirs.
+    are keyed by PLAN NAME — Pro, Max, Premium — which are also the self-serve
+    tiers (PRODUCT.md: free 500/mo, pro 25k, max 250k, premium by contract). A
+    Pro customer paying by card read "Pro | Email | 4 business hours" and had no
+    reason to think it was not theirs.
 
-    The availability half is unambiguous; the support half is not. Both halves
-    are pinned so neither drifts while the owner decides.
+    §5 keeps its plan keys, because the Order Form template resolves a plan name
+    through §5 (see test_order_form_l12.py). It gains one scope line instead.
 
-    ⚠ WHEN IT IS RESOLVED, THIS FAILS. That is the design."""
+    ⚠ THIS GUARD'S OLD DOCSTRING SAID "WHEN IT IS RESOLVED, THIS FAILS. That is
+    the design." IT DID NOT FAIL. Every assertion it made — the scope sentence,
+    the plan names, the pricing cross-check — stayed true when the scope line
+    was added, because none of them asserted the ABSENCE the finding was about.
+    The guard that did fire was in test_order_form_l12.py, which asserted
+    `"Order Form" not in s5`. Recorded here because a docstring promising a
+    failure it cannot produce is worse than no promise: it was believed."""
     t = dom.text
     assert "active paid Order Form referencing this SLA" in t
     for plan in ("Pro", "Max, Premium"):
         assert plan in t, f"the support table no longer keys off the plan name {plan!r}"
     assert "Max / Premium" in t, "the response-target table no longer keys off plan names"
-    # the plan names really are the self-serve tiers
+    # the plan names really are the self-serve tiers, which is why §5 had to say
+    # which population its targets bind rather than assume the header covered it
     pricing = (HERE / "pricing.html").read_text(encoding="utf-8")
     assert re.search(r"\bPro\b", pricing) and re.search(r"\bMax\b", pricing), \
-        "Pro/Max are no longer self-serve plan names — the ambiguity may be gone"
+        "Pro/Max are no longer self-serve plan names — re-check whether §5's " \
+        "scope line still has a population to exclude"
+    assert "These response targets apply to Order Form customers." in t, \
+        "§5 lost the sentence that resolves the overlap"
+    assert "Self-serve plans receive best-effort support" in t, \
+        "§5 no longer says what a self-serve customer actually gets"
 
 
 # ── 2. EVERY COMMITMENT NUMBER, GUARDED ON ITS OWN ──────────────────────────
@@ -143,6 +155,31 @@ def test_each_commitment_survives(dom, commitment):
     """The claim window, the cap, the maintenance notice, the support hours.
     Each is separately actionable, so each fails separately."""
     assert commitment in dom.text, f"a commitment changed or was lost: {commitment!r}"
+
+
+@pytest.mark.parametrize("plan,channel", [
+    ("Pro", "Email"),
+    ("Max, Premium", "Email + priority queue"),
+])
+def test_each_support_channel_keeps_its_plan(dom, plan, channel):
+    """⚠ THE OTHER TABLE IN §5, AND IT WAS NOT PINNED PER-CELL. L9 bound the
+    response-target table row by row and left this one on a page-wide substring
+    search for the plan names.
+
+    That is not the same check. Both tables key off "Pro", so re-keying THIS
+    table to "Order Form customers" left every assertion green — the page-level
+    search was answered by the response-target table's column header two
+    elements further down. Found by mutation while resolving §5's scope, not by
+    reading, and it is register #184 yet again: a guard satisfied by a
+    neighbour.
+
+    Bound to the row now, so the plan and the channel it buys fail together."""
+    row = re.search(rf"<tr><td>{re.escape(plan)}</td><td>(.*?)</td></tr>", dom.src)
+    assert row, (
+        f"the {plan!r} support-channel row is gone. §5's first table must stay "
+        "keyed by plan name — the Order Form template resolves a plan through it")
+    assert row.group(1) == channel, \
+        f"{plan} now gets {row.group(1)!r} as its support channel, not {channel!r}"
 
 
 @pytest.mark.parametrize("severity,pro,max_premium", [

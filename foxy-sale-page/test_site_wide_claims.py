@@ -355,3 +355,97 @@ def test_the_project_phrase_is_unlocked_by_anchoring_and_the_strong_word_is_not(
         assert not hits, (
             f"{page.name} overclaims ({hits}) with anchoring={anchored}. There is "
             "no anchoring state that permits it.")
+
+
+# ── #198 — THE SUB-PROCESSOR ROSTER, DIFFED THREE WAYS ──────────────────────
+#
+# ⚠ THIS GUARD DID NOT EXIST, WHICH IS WHY THE THREE LISTS DRIFTED.
+#
+# The same roster is published in three places, in three different shapes:
+# privacy.html §8 as bullets, trust.html §6 as table rows, dpa.html §5 as a
+# parenthetical inside one sentence. Each page had its own guards and each was
+# green, because every one of them asked whether ITS page was internally
+# consistent. Nothing compared them, so dpa.html sat two entities short —
+# missing Payoneer, and naming a generic "infrastructure/hosting provider" where
+# the other two name Google Cloud — for as long as the three have existed.
+#
+# That is register #184 again, one level up: a guard scoped to a page is not a
+# guard on a roster that lives on three of them. This is the comparison.
+
+#: The entities, as the three pages must all name them. #198, owner decision
+#: 2026-08-14. Six list items; Google and OpenAI share the first one.
+SUB_PROCESSORS = ("Google LLC", "OpenAI, L.L.C.", "Paddle.com Market Ltd",
+                  "Payoneer, Inc.", "Google Identity", "Brevo SAS", "Google Cloud")
+
+#: Where each page keeps the roster.
+ROSTER_SECTIONS = {"privacy.html": 8, "trust.html": 6, "dpa.html": 5}
+
+#: ⚠ THE HALF A FIXED ROSTER CANNOT DO. Checking that seven known names appear
+#: on all three pages says nothing about an EIGHTH appearing on one of them. A
+#: new sub-processor is a company, and a company arrives with a legal suffix, so
+#: the suffixes are counted as a multiset and compared across the three.
+CORPORATE_SUFFIX = re.compile(
+    r"(?<![\w.])(?:Inc\.|L\.L\.C\.|LLC|Ltd|SAS|GmbH|B\.V\.|S\.A\.|Corp\.|"
+    r"PBC|AG|Pty|Oy|AB)(?!\w)")
+
+
+def _roster_text(page: str) -> str:
+    """The roster section of `page`, tags stripped, whitespace flattened.
+
+    ⚠ SECTION-SLICED, NOT PAGE-SCOPED. privacy.html names Paddle again in §6 and
+    Google again in §10; a page-wide search would be answered by those and would
+    call a deleted §8 bullet present."""
+    from conftest import load
+    blob = load(page).section(ROSTER_SECTIONS[page])
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", blob))
+
+
+@pytest.mark.parametrize("page", sorted(ROSTER_SECTIONS))
+def test_every_page_names_the_whole_sub_processor_roster(page):
+    """Entity for entity, all three lists, one failure per page that drifts."""
+    text = _roster_text(page)
+    missing = [e for e in SUB_PROCESSORS if e not in text]
+    assert not missing, (
+        f"{page}'s sub-processor list is missing {missing}. All three lists "
+        f"(privacy.html §8, trust.html §6, dpa.html §5) must name the same "
+        f"entities — that is #198, owner decision 2026-08-14.")
+
+
+def test_no_page_names_a_sub_processor_the_others_do_not():
+    """⚠ THE DIRECTION THE ROSTER ABOVE IS BLIND TO.
+
+    A fixed list of expected names can only find deletions. This finds an
+    ADDITION on one page by comparing what each list actually contains: the
+    multiset of corporate suffixes must be identical across the three, so a new
+    "Acme Ltd" on one page and not the others is a failure even though no
+    expected name went missing."""
+    found = {page: sorted(CORPORATE_SUFFIX.findall(_roster_text(page)))
+             for page in sorted(ROSTER_SECTIONS)}
+    distinct = {tuple(v) for v in found.values()}
+    assert len(distinct) == 1, (
+        f"the three sub-processor lists name different companies: {found}. "
+        "One page gained or lost an entity the others did not.")
+    # …and the one shape they agree on is the roster's, not some other set
+    expected = sorted(CORPORATE_SUFFIX.findall(" ".join(SUB_PROCESSORS)))
+    assert distinct.pop() == tuple(expected), (
+        f"the three lists agree with each other but not with SUB_PROCESSORS "
+        f"({expected}) — update the roster deliberately, or a company was added "
+        "to all three at once without anyone deciding it")
+
+
+def test_the_three_lists_are_the_same_length():
+    """⚠ SUFFIXES MISS A SUFFIX-LESS BRAND. "Google Identity" and "Google Cloud"
+    carry none, so a seventh bullet naming another such brand would pass both
+    checks above. The item count catches it, and it is counted from each page's
+    own markup rather than from a shared helper."""
+    from conftest import load
+    privacy = len(re.findall(r"<li>", load("privacy.html").section(8)))
+    trust = len(re.findall(r"<tr><td>", load("trust.html").section(6)))
+    # dpa.html §5's roster is one parenthetical; its items are semicolon-separated
+    paren = re.search(r"\(currently: (.*?)\)\. Foxy Audit will:",
+                      _roster_text("dpa.html"))
+    assert paren, "dpa.html §5's sub-processor parenthetical is gone or was reshaped"
+    dpa = len(paren.group(1).split(";"))
+    assert privacy == trust == dpa == 6, (
+        f"the three sub-processor lists have different lengths: "
+        f"privacy.html={privacy}, trust.html={trust}, dpa.html={dpa} (expected 6 each)")

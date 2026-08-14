@@ -152,23 +152,52 @@ def test_governing_law_keeps_its_order_form_escape_hatch(dom):
         "governing law became unconditional — the Order Form can no longer vary it"
 
 
-def test_the_survival_list_is_reproduced_including_its_defect(dom):
-    """⚠ REPRODUCED, NOT REPAIRED, AND PINNED SO THE REPORT CANNOT GO STALE.
+def test_the_survival_list_now_names_sections_that_exist(dom):
+    """⚠ REPAIRED (#201b, OWNER DECISION 2026-08-14). L11 reproduced the defect
+    and pinned it; this is the same guard re-aimed at the repair.
 
-    §13 survives "Sections 8 (Confidentiality), 9 (IP), 12 (Liability), and 15
-    (Governing Law)". There is no Section 15 — the document ends at 14, and
-    governing law is §14's first bullet. Renumbering a survival clause silently
-    is not a conversion decision; it changes which obligations outlive the
-    contract. If someone corrects it upstream, this fails and the L11 report
-    must be revisited."""
+    §13 used to survive "Sections 8 (Confidentiality), 9 (IP), 12 (Liability),
+    and 15 (Governing Law)". There is no Section 15 — the document ends at 14,
+    and governing law is §14's first bullet. Renumbering a survival clause is
+    not a conversion decision, which is why L11 refused to do it and why it took
+    an owner decision.
+
+    ⚠ THE NUMBER WAS VERIFIED AGAINST THE PAGE'S OWN HEADINGS, NOT THE .docx —
+    and the heading disagrees with how the decision described it. The owner's
+    note calls §14 "Governing Law"; the page calls it "General provisions", with
+    governing law as its first bullet. The page wins, so the list reads "14
+    (General provisions, including governing law)". Every assertion below
+    re-derives the numbers from the headings rather than restating the string.
+
+    See test_owner_divergences.py and the vault note it names."""
     t = dom.text
-    assert "Sections 8 (Confidentiality), 9 (IP), 12 (Liability), and 15 (Governing Law) survive termination" in t
-    headings = re.findall(r"<h2 id=\"s(\d+)\">", dom.src)
-    assert headings == [str(n) for n in range(1, 15)], \
-        f"the section count changed: {headings}"
-    assert "15" not in headings, (
-        "a Section 15 now exists — the survival clause may no longer be defective, "
-        "so re-check the L11 finding")
+    headings = re.findall(r"<h2 id=\"s(\d+)\">(.*?)</h2>", dom.src)
+    numbers = [n for n, _ in headings]
+    assert numbers == [str(n) for n in range(1, 15)], \
+        f"the section count changed: {numbers}"
+
+    # ⚠ THE CITED NUMBERS ARE READ OUT OF THE CLAUSE AND CHECKED AGAINST THE
+    # HEADINGS. A guard that asserted the finished sentence would be green by
+    # construction and would not notice a NEW dangling number.
+    clause = re.search(r"Sections ([^.]+?) survive termination", t)
+    assert clause, "§13's survival clause is gone or was reworded past recognition"
+    cited = re.findall(r"\b(\d+)\b(?=\s*\()", clause.group(1))
+    assert cited == ["8", "9", "12", "14"], \
+        f"the survival list cites {cited}; #201b settled 8, 9, 12, 14"
+    assert "15" not in cited, (
+        "the survival clause cites Section 15 again, which does not exist — "
+        "#201b (owner decision 2026-08-14) renumbered it to 14")
+    for n in cited:
+        assert n in numbers, \
+            f"§13 survives Section {n}, which the page has no heading for"
+
+    # the label each number carries still matches the heading it points at
+    titles = {n: h for n, h in headings}
+    assert "General provisions" in titles["14"], \
+        f"§14 is now titled {titles['14']!r} — re-check the survival clause's label"
+    assert "General provisions, including governing law" in t, (
+        "§13's label for Section 14 changed; it must name the heading the page "
+        "actually has, not the .docx's 'Governing Law'")
     assert "Governing law:" in t, "governing law is still a §14 bullet, not a section"
 
 
@@ -231,48 +260,109 @@ def test_refund_html_defers_to_a_signed_msa(legal_dom):
         "refund.html no longer defers to the MSA — that contradicts msa.html §1"
 
 
-def test_the_dpa_still_names_the_wrong_parent(legal_dom, dom):
-    """⚠ REPORTED, NOT FIXED. Pinned so the report cannot silently become wrong.
+def test_the_dpa_and_the_msa_now_agree_on_the_parent(legal_dom, dom):
+    """⚠ FIXED (#201c, OWNER DECISION 2026-08-14). L11's guard pinned the
+    disagreement; this is it re-aimed at the agreement.
 
-    MSA §1(b) and §6 incorporate the DPA INTO THE MSA. dpa.html says it is
-    incorporated into the TERMS OF SERVICE and never mentions the MSA. Both
-    documents then define "the Agreement" as their own parent, and dpa.html §14
-    ("this DPA prevails" over "the Agreement") therefore resolves against a
-    different document depending on which page you are reading.
+    MSA §1(b) and §6 incorporate the DPA INTO THE MSA. dpa.html used to say it
+    was incorporated into the TERMS OF SERVICE and never mentioned the MSA. Both
+    documents then defined "the Agreement" as their own parent, so dpa.html §14
+    ("this DPA prevails" over "the Agreement") resolved against a different
+    document depending on which page you were reading. The DPA's parent is now
+    the MSA, matching the two clauses that were already there.
 
-    If either side is corrected, this fails and the L11 report must be redone."""
+    See test_owner_divergences.py and the vault note it names."""
     dpa = _text(legal_dom, "dpa.html")
-    assert "forms part of, and is incorporated by reference into, the Terms of Service" in dpa, \
-        "dpa.html's parent clause changed — re-check the L11 precedence finding"
-    assert "Master Service Agreement" not in dpa, (
-        "dpa.html now mentions the MSA — the one-way incorporation may be fixed, "
-        "so re-check the L11 finding")
-    # the MSA's side of the disagreement
+    assert "forms part of, and is incorporated by reference into, the Master Service Agreement" in dpa, \
+        "dpa.html's parent clause changed — #201c settled it on the MSA"
+    assert "incorporated by reference into, the Terms of Service" not in dpa, (
+        "dpa.html names the Terms of Service as its parent again, which "
+        "contradicts MSA §1(b) and §6")
+    # ⚠ THE SELF-SERVE HALF. A customer who never signed an MSA still needs a
+    # parent, and the decision required the DPA to say which one.
+    assert "Where Customer has not signed a Master Service Agreement" in dpa, \
+        "the DPA no longer says how a self-serve customer reaches it"
+    assert '"the Agreement" means those Terms' in dpa, \
+        "the DPA stopped defining 'the Agreement' for self-serve customers"
+    # the MSA's side, which never moved
     assert "Data Processing Agreement (DPA)</a></strong>, incorporated by reference" in dom.src
     assert "governed by the <a href=\"/dpa.html\">DPA</a>, incorporated into this Agreement by reference" in dom.src
 
 
-def test_terms_html_never_acknowledges_being_superseded(legal_dom, dom):
-    """⚠ REPORTED, NOT FIXED, AND THIS IS THE SHARPEST OF THE FOUR.
+def test_the_two_precedence_clauses_no_longer_contradict_each_other(legal_dom, dom):
+    """⚠ THE HALF #201c's OWN WARNING POINTED AT, AND IT DID NOT RESOLVE ITSELF.
+
+    Re-parenting the DPA to the MSA put two precedence rules in direct conflict
+    for the first time: MSA §1 ranks "Order Form, then this Agreement, then the
+    DPA/SLA", while DPA §14 says the DPA prevails over "the Agreement". Under
+    the old parent those two never met, because §14 resolved against the ToS.
+
+    Neither clause was dropped. §14 is now stated as the express exception to
+    §1's ladder, and §1 names the exception, so a reader arriving from either
+    page gets the same answer: the DPA wins on the processing of personal data,
+    the MSA wins on everything else.
+
+    ⚠ BOTH SIDES ARE ASSERTED. One-sided wording is what created the defect."""
+    dpa, msa = _text(legal_dom, "dpa.html"), dom.text
+    assert ("In the event of a conflict between this DPA and the Agreement "
+            "regarding the processing of personal data, this DPA prevails") in dpa, \
+        "DPA §14's operative rule changed"
+    assert "express exception to the general order of precedence" in dpa, (
+        "DPA §14 no longer reconciles itself with MSA §1's ladder, so the two "
+        "clauses compete again")
+    assert "on every other subject matter that order governs" in dpa, \
+        "DPA §14 stopped conceding everything outside data protection to the MSA"
+    assert ("except that on the processing of personal data the DPA prevails "
+            "over this Agreement") in msa, (
+        "MSA §1's ladder no longer carries the carve-out, so it reads as ranking "
+        "the MSA above the DPA without qualification")
+    assert 'href="/dpa.html#s14"' in dom.src, \
+        "MSA §1 names the exception but no longer links the clause that states it"
+
+
+def test_terms_html_now_yields_to_the_msa_in_its_entire_agreement_clause(legal_dom, dom):
+    """⚠ FIXED (#201a, OWNER DECISION 2026-08-14). L11 called this the sharpest
+    of the four findings; this is its guard re-aimed at the fix.
 
     msa.html §1 says it supersedes the public Terms for signing Customers.
-    terms.html mentions an MSA exactly once, and only about the FORUM. Its §15
-    entire-agreement clause names a different set of documents and carves out
-    nobody. Two live entire-agreement clauses with non-overlapping membership is
-    the first thing a counterparty's lawyer will mark up."""
-    terms = _text(legal_dom, "terms.html")
-    mentions = re.findall(r"\bMSA\b|\bMaster Service Agreement\b", terms)
-    assert mentions == ["MSA"], (
-        f"terms.html's references to the MSA changed ({mentions}) — it may now "
-        "acknowledge supersession; re-check the L11 finding")
-    assert "absent a signed Order Form or MSA saying otherwise" in terms, \
-        "the single MSA mention in terms.html moved or changed"
-    assert "constitute the entire agreement" in terms, \
-        "terms.html's entire-agreement clause changed"
+    terms.html used to mention an MSA exactly once, and only about the FORUM —
+    its §15 entire-agreement clause named a different set of documents and
+    carved out nobody. Two live entire-agreement clauses with non-overlapping
+    membership is the first thing a counterparty's lawyer marks up. §15 now
+    carries the carve-out, so only one of them is live for any given customer.
+
+    ⚠ ASSERTED INSIDE §15, NOT PAGE-WIDE. The forum sentence in §14 already said
+    "absent a signed Order Form or MSA", so a page-level search for "MSA" was
+    answered by a clause that does not govern the entire agreement at all. Both
+    mentions are pinned, each to its own section.
+
+    See test_owner_divergences.py and the vault note it names."""
+    dom_terms = legal_dom("terms.html")
+    terms = dom_terms.text
+    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dom_terms.section(15)))
+
+    assert "constitute the entire agreement" in s15, \
+        "terms.html's entire-agreement clause left §15"
+    assert ("For customers with a signed Master Service Agreement, that agreement "
+            "and its Order Forms govern instead") in s15, (
+        "terms.html §15 no longer yields to the MSA, so two entire-agreement "
+        "clauses compete again (#201a)")
+    assert 'href="/msa.html"' in dom_terms.src, \
+        "terms.html names the MSA but no longer links it"
+
+    # ⚠ THE §14 MENTION IS A DIFFERENT CLAUSE ABOUT A DIFFERENT THING. Pinned so
+    # a future edit cannot satisfy #201a by rewording the forum sentence.
+    s14 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dom_terms.section(14)))
+    assert "absent a signed Order Form or MSA saying otherwise" in s14, \
+        "the forum sentence's MSA mention moved or changed"
+    assert "entire agreement" not in s14, \
+        "§14 grew an entire-agreement clause; there must be exactly one, in §15"
+
+    # the MSA's side of the relationship, which never moved
     assert "is the entire agreement between the parties regarding the Service" in dom.text, \
         "msa.html's entire-agreement clause changed"
-    assert "supersede" not in terms.lower().replace("supersedes prior", ""), \
-        "terms.html now uses 'supersede' — check whether it acknowledges the MSA"
+    assert "which this Agreement supersedes for signing Customers" in dom.text, \
+        "msa.html §1 stopped claiming supersession — #201a's carve-out answers it"
 
 
 def test_the_service_definition_this_page_cites_does_not_say_what_it_claims(legal_dom, dom):
@@ -342,18 +432,39 @@ def test_the_three_liability_caps_govern_three_different_relationships(legal_dom
 
 
 # ── 3. CONTACT DETAILS: THE ABSENCE IS THE FINDING (#200, SECOND TIME) ───────
-def test_no_notice_address_was_invented(dom):
-    """⚠ NOTHING WAS ADDED. The document gives no email, no phone and no postal
-    address, while §3 requires 10 days' WRITTEN NOTICE of suspension and §13
-    requires 30 days' WRITTEN NOTICE of breach. A contract with notice provisions
-    and no notice address is a real gap — the DPA has the same one. Reported;
-    this guard keeps the gap honest rather than papering it over."""
+def test_the_notice_address_is_the_legal_mailbox_and_nothing_else(dom):
+    """⚠ THE GAP IS CLOSED (#200, OWNER DECISION 2026-08-14) — BUT ONLY BY ONE
+    ADDRESS. L11 reported an email, a phone and a postal address all missing
+    while §3 requires 10 days' WRITTEN NOTICE of suspension and §13 requires 30
+    days' WRITTEN NOTICE of breach. The owner authorised the mailbox from the
+    documents' own map (legal@ for contracts) and NOTHING ELSE.
+
+    So this guard did not become weaker: it kept every prohibition it had and
+    replaced one of them with an exact-match requirement. A postal address is
+    still a fabrication — none is decided — and so is a phone number.
+
+    ⚠ THE ADDRESS IS ASSERTED AS AN EXACT SET, not a substring. "an email
+    appeared" and "the RIGHT email appeared" are different claims, and a
+    substring check passes for both legal@ and legal@foxyaudit.tech.example.
+
+    See test_owner_divergences.py and the vault note it names."""
     text, src = dom.text, dom.src
-    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text), \
-        f"an email address appeared: {re.findall(r'[a-z.+-]+@[a-z.]+', text, re.I)}"
-    assert "mailto:" not in src, "a mailto: link appeared"
+    assert dom.addresses == {"legal@foxyaudit.tech"}, \
+        f"unexpected addresses: {dom.addresses} — #200 authorised legal@ alone"
+    # ⚠ THE TRAILING PERIOD IS SENTENCE PUNCTUATION, NOT PART OF THE ADDRESS —
+    # conftest's own docstring names this trap, and this guard walked into it:
+    # the naive pattern matched "legal@foxyaudit.tech." and reported an
+    # unauthorised mailbox. dom.addresses (parsed from the href) is the
+    # authority; this sweep exists only to catch an address in PROSE that never
+    # became a link, so it is normalised the way a reader would read it.
+    found = {a.rstrip(".") for a in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", text)}
+    assert found == {"legal@foxyaudit.tech"}, \
+        f"an unauthorised email address appeared in the MSA text: {found}"
+    assert "written notice to Foxy Audit under this Agreement" in text, \
+        "the notices provision lost the sentence that makes the address operative"
     assert not re.search(r"\+\d[\d\s()-]{7,}", text), "a phone number appeared"
     assert not POSTAL_ADDRESS.search(text), "a postal address appeared"
+    assert "gmail.com" not in src.lower(), "a personal mailbox is published"
 
 
 def test_the_entity_line_survived(dom):

@@ -31,6 +31,8 @@ import re
 
 import pytest
 
+from conftest import POSTAL_ADDRESS
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 
@@ -396,3 +398,240 @@ def test_a1_the_ban_does_not_depend_on_the_chain_being_unanchored():
         "A1", "the code-reading detector was deleted. It still has a job — the "
               "weaker-to-project-phrase upgrade — even though it no longer "
               "unlocks the strong word")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# L15 — THE 2026-08-14 DECISIONS: THE CONTRACTS STOP CONTRADICTING EACH OTHER
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# ⚠ THESE SIX ARE A DIFFERENT KIND OF DIVERGENCE FROM THE SIX ABOVE.
+#
+# The 2026-08-13 set made a page say something its .docx does not. This set
+# resolves places where TWO PUBLISHED DOCUMENTS said different things — an
+# entire-agreement clause competing with another, a survival list citing a
+# section that does not exist, a DPA whose parent disagreed with the MSA that
+# claimed it, three sub-processor rosters that had drifted apart, two contracts
+# with notice provisions and no notice address, and a support table that never
+# said whom it bound.
+#
+# That makes the failure mode worse, not better. Restoring one side of a
+# reconciled pair looks locally correct — the .docx agrees with you — and
+# silently re-opens the contradiction on a page you are not looking at. Every
+# guard below therefore names BOTH sides.
+#
+# L11 and L12 reported four of these and refused to fix them, because deciding
+# which of two legal documents governs is an owner's call. It was made on
+# 2026-08-14 and is written down in the same vault note as the first six.
+
+NOTE_L15 = ('OWNER DECISION 2026-08-14, recorded in the Obsidian vault at '
+            '"Foxy Audit/Owner-authorised divergences from the policy documents.md". '
+            'Two published documents disagreed and the owner chose which governs. '
+            'Read that note before changing this')
+
+
+def _why15(n: str, what: str) -> str:
+    return f"[{n}] {what}\n\n{NOTE_L15}."
+
+
+@pytest.fixture(scope="module")
+def dpa(legal_dom):
+    return legal_dom("dpa.html")
+
+
+@pytest.fixture(scope="module")
+def msa(legal_dom):
+    return legal_dom("msa.html")
+
+
+@pytest.fixture(scope="module")
+def terms(legal_dom):
+    return legal_dom("terms.html")
+
+
+# ── #201a — TWO ENTIRE-AGREEMENT CLAUSES ────────────────────────────────────
+def test_201a_the_terms_yield_to_a_signed_msa(terms, msa):
+    """msa.html §1 supersedes the public Terms for signing Customers. terms.html
+    §15 constituted "the entire agreement" and carved out nobody, so both were
+    live at once for the same customer. §15 now yields.
+
+    ⚠ BOTH CLAUSES ARE ASSERTED. Deleting either one also "resolves" the
+    conflict, and would be the wrong resolution: the public Terms still govern
+    every self-serve customer, and the MSA still governs every signed one."""
+    t = terms.text
+    assert "constitute the entire agreement between you and us regarding the Service" in t, \
+        _why15("#201a", "terms.html §15's entire-agreement clause is gone")
+    assert ("For customers with a signed Master Service Agreement, that agreement "
+            "and its Order Forms govern instead") in t, \
+        _why15("#201a", "terms.html §15 no longer yields to a signed MSA, so two "
+                        "entire-agreement clauses govern the same customer again")
+    assert "is the entire agreement between the parties regarding the Service" in msa.text, \
+        _why15("#201a", "msa.html's entire-agreement clause is gone — the carve-out "
+                        "in terms.html now points at nothing")
+    assert 'href="/msa.html"' in terms.src, \
+        _why15("#201a", "terms.html names the MSA without linking it; a reader "
+                        "cannot reach the agreement that displaces these Terms")
+
+
+# ── #201b — A SURVIVAL LIST CITING A SECTION THAT DOES NOT EXIST ────────────
+def test_201b_every_surviving_section_exists(msa):
+    """msa.html §13 survived "15 (Governing Law)". The document ends at 14.
+
+    ⚠ THE NUMBERS COME FROM THE PAGE'S HEADINGS, NOT FROM THE .docx AND NOT FROM
+    THE DECISION'S OWN WORDING. The owner's note describes §14 as "Governing
+    Law"; the page titles it "General provisions", with governing law as its
+    first bullet. The page is what a customer reads, so the page won."""
+    numbered = dict(re.findall(r'<h2 id="s(\d+)">(.*?)</h2>', msa.src))
+    clause = re.search(r"Sections ([^.]+?) survive termination", msa.text)
+    assert clause, _why15("#201b", "msa.html §13's survival clause is gone")
+    cited = re.findall(r"\b(\d+)\b(?=\s*\()", clause.group(1))
+    assert cited, _why15("#201b", "the survival clause cites no sections at all")
+    dangling = [n for n in cited if n not in numbered]
+    assert not dangling, _why15(
+        "#201b", f"msa.html §13 survives Section(s) {dangling}, which the document "
+                 f"has no heading for. It ends at {max(numbered, key=int)}")
+    assert cited == ["8", "9", "12", "14"], _why15(
+        "#201b", f"the survival list changed to {cited}; the decision settled 8, 9, "
+                 "12, 14 — which obligations outlive the contract is not a "
+                 "renumbering detail")
+    assert "General provisions" in numbered["14"], _why15(
+        "#201b", f"§14 is titled {numbered['14']!r} now — §13's label for it must "
+                 "match the heading the page actually carries")
+
+
+# ── #201c — THE DPA'S PARENT ────────────────────────────────────────────────
+def test_201c_the_dpa_and_the_msa_name_the_same_parent(dpa, msa):
+    """MSA §1(b) and §6 incorporated the DPA into the MSA while the DPA said it
+    was part of the Terms of Service. "The Agreement" meant different documents
+    on the two pages, so DPA §14 resolved differently depending on which page
+    you read. The DPA's parent is now the MSA."""
+    d = dpa.text
+    assert "forms part of, and is incorporated by reference into, the Master Service Agreement" in d, \
+        _why15("#201c", "dpa.html no longer names the MSA as its parent, "
+                        "contradicting msa.html §1(b) and §6")
+    assert "Data Processing Agreement (DPA)</a></strong>, incorporated by reference" in msa.src, \
+        _why15("#201c", "msa.html §1(b) stopped incorporating the DPA — the DPA's "
+                        "new parent clause now has nothing to match")
+    # the self-serve route, which is the half that keeps the change honest
+    assert "Where Customer has not signed a Master Service Agreement" in d, \
+        _why15("#201c", "the DPA stopped saying which document is 'the Agreement' "
+                        "for a customer who never signed an MSA")
+    assert 'href="/terms.html"' in dpa.src, \
+        _why15("#201c", "the DPA names the self-serve route without linking it")
+
+
+def test_201c_the_precedence_clauses_resolve_against_each_other(dpa, msa):
+    """⚠ THE WARNING ATTACHED TO #201c, AND IT WAS A REAL ONE.
+
+    Re-parenting the DPA put two precedence rules in conflict for the first
+    time. MSA §1 ranks "Order Form, then this Agreement, then the DPA/SLA"; DPA
+    §14 says the DPA prevails over "the Agreement". Under the old parent they
+    never met, because §14 resolved against the Terms of Service.
+
+    Both survive, each naming the other: §14 as the express exception, §1 as the
+    ladder that carries it. A reader arriving from either page gets one answer.
+
+    ⚠ ONE-SIDED WORDING IS WHAT CREATED THE DEFECT, so a one-sided fix fails."""
+    assert "express exception to the general order of precedence" in dpa.text, \
+        _why15("#201c", "DPA §14 no longer reconciles itself with MSA §1's ladder; "
+                        "the two clauses each claim to win")
+    assert ("except that on the processing of personal data the DPA prevails "
+            "over this Agreement") in msa.text, \
+        _why15("#201c", "MSA §1's ladder dropped the carve-out, so it ranks the MSA "
+                        "above the DPA without qualification while DPA §14 says the "
+                        "opposite")
+
+
+# ── #198 — THREE SUB-PROCESSOR LISTS ────────────────────────────────────────
+def test_198_the_dpa_names_the_two_entities_it_was_missing(dpa):
+    """privacy.html §8 and trust.html both named Payoneer and Google Cloud;
+    dpa.html §5 named neither, calling the sixth an "infrastructure/hosting
+    provider". The three-way comparison that would have caught this lives in
+    test_site_wide_claims.py and did not exist until now — which is the actual
+    finding. This pins the DPA's end of the decision."""
+    d = dpa.text
+    assert "Payoneer, Inc." in d, \
+        _why15("#198", "dpa.html §5 dropped Payoneer again, so the DPA authorises "
+                       "fewer sub-processors than the Privacy Policy discloses")
+    assert "Google Cloud (Ubuntu VM)" in d, \
+        _why15("#198", "dpa.html §5 no longer names the hosting entity by name")
+    assert "infrastructure/hosting provider" not in d, \
+        _why15("#198", "dpa.html §5 is generic about hosting again while the other "
+                       "two pages name Google Cloud")
+
+
+def test_198_the_three_way_guard_that_did_not_exist_now_does():
+    """⚠ THE POINT OF #198 IS THE GUARD, NOT THE TWO NAMES.
+
+    Three pages published one roster and each had its own green per-page checks.
+    Nothing compared them, so they drifted and stayed drifted. If the comparison
+    is ever deleted the roster silently becomes unguarded again, and the next
+    drift will be as invisible as this one was.
+
+    Read as source rather than imported, so deleting a function fails here even
+    if the module still imports cleanly."""
+    guard = (HERE / "test_site_wide_claims.py").read_text(encoding="utf-8")
+    for fn in ("test_every_page_names_the_whole_sub_processor_roster",
+               "test_no_page_names_a_sub_processor_the_others_do_not",
+               "test_the_three_lists_are_the_same_length"):
+        assert f"def {fn}(" in guard, _why15(
+            "#198", f"{fn} was deleted. The three sub-processor rosters are "
+                    "unguarded against each other again, which is exactly the "
+                    "condition that let them drift")
+    assert "ROSTER_SECTIONS" in guard and "dpa.html" in guard, _why15(
+        "#198", "the three-way roster guard no longer covers all three pages")
+
+
+# ── #200 — TWO CONTRACTS WITH NOTICE PROVISIONS AND NO NOTICE ADDRESS ───────
+@pytest.mark.parametrize("page", ["dpa.html", "msa.html"])
+def test_200_each_contract_states_where_notice_is_given(legal_dom, page):
+    """MSA §3 requires 10 days' written notice of suspension and §13 requires 30
+    days' of breach; the DPA takes written instructions, requests and objections
+    throughout. Neither said where to send them. Both now name legal@, which is
+    the mailbox these documents' own map assigns to contracts.
+
+    ⚠ THE ADDRESS IS AN EXACT SET. Nothing else was authorised — in particular
+    no postal address, because none is decided, and inventing one would look
+    like completeness and be a fabrication."""
+    dom = legal_dom(page)
+    assert dom.addresses == {"legal@foxyaudit.tech"}, _why15(
+        "#200", f"{page} publishes {sorted(dom.addresses)}. The decision "
+                "authorised legal@foxyaudit.tech and nothing else")
+    assert not POSTAL_ADDRESS.search(dom.text), _why15(
+        "#200", f"{page} publishes a postal address; no registered office is "
+                "decided, so any address on this page is invented")
+    assert not re.search(r"\+\d[\d\s()-]{7,}", dom.text), _why15(
+        "#200", f"{page} publishes a phone number, which #200 did not authorise")
+
+
+def test_200_the_mailbox_matches_the_map_the_other_pages_use():
+    """The control. legal@ is not a new mailbox minted for these two pages — it
+    is the one the two Terms pages already use for contract questions. If that
+    ever changes, these two should move with it rather than be left behind."""
+    for page in ("terms.html", "terms-of-use.html"):
+        src = (HERE / page).read_text(encoding="utf-8")
+        assert "mailto:legal@foxyaudit.tech" in src, _why15(
+            "#200", f"{page} no longer uses legal@ for contract questions — the "
+                    "DPA and MSA were given that address to MATCH it")
+
+
+# ── SLA §5 — WHOM THE SUPPORT TARGETS BIND ──────────────────────────────────
+def test_sla_section_5_says_which_customers_its_targets_bind(legal_dom):
+    """The SLA's header limits it to Order Form customers while §5's tables are
+    keyed by plan names that pricing.html sells self-serve. L9 recorded it, L12
+    proved §5 must stay plan-keyed (the Order Form template resolves a plan name
+    through it), and the owner settled it with a scope line rather than a
+    re-keying.
+
+    ⚠ THE TABLES ARE UNTOUCHED AND STAY PINNED PER-CELL in test_sla_v14.py. This
+    asserts only the sentence that was added."""
+    t = legal_dom("sla.html").text
+    assert "These response targets apply to Order Form customers." in t, _why15(
+        "SLA §5", "the scope line is gone, so the plan-keyed tables again read as "
+                  "a promise to self-serve customers the SLA's header excludes")
+    assert "Self-serve plans receive best-effort support via support@foxyaudit.tech" in t, \
+        _why15("SLA §5", "the scope line no longer says what a self-serve customer "
+                         "actually gets, which is the half that makes it fair")
+    for plan in ("Pro", "Max, Premium", "Max / Premium"):
+        assert plan in t, _why15(
+            "SLA §5", f"§5 stopped keying off {plan!r}. The resolution KEPT the "
+                      "plan keys — the Order Form template resolves through them")
