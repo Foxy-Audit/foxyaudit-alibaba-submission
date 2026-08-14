@@ -108,6 +108,22 @@ jobs:
           pip install pytest
       - name: SDK tests
         run: pytest sdk/tests -q
+      # The compliance testbed ships in the same wheel but is a SEPARATE package
+      # with a separate gate: `pytest sdk/tests -q` has a pinned baseline, and
+      # folding these in would move it for reasons that have nothing to do with
+      # the SDK. Register #55 is the other half of why this step exists at all —
+      # a guard suite nothing runs reads as coverage and is worse than none.
+      - name: Testbed guards
+        run: pytest sdk/tests_testbed -q
+      # And the scoreboards themselves, which are the actual product of T0. They
+      # run offline with no key against the deterministic mock provider, so a
+      # rule change in policy.py that silently stops catching a probe fails HERE,
+      # naming the probe, rather than being noticed by a prospect.
+      - name: Testbed probe scoreboards (offline, no key)
+        run: |
+          python -m foxy_testbed --sector healthcare --probe all
+          python -m foxy_testbed --sector finance   --probe all
+          python -m foxy_testbed --sector legal     --probe all
       - name: Hash-chain regression test
         run: pytest backend/tests/test_chain.py -q
       - name: Verifier tests (the second, independent implementation)

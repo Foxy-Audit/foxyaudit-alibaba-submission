@@ -67,4 +67,13 @@ test = ["httpx>=0.27", "pytest>=8"]
 pii = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/foxy_audit"]
+# foxy_testbed ships in the SAME wheel so that `pip install foxy-audit` is all a
+# prospect needs to run `python -m foxy_testbed`. It adds NO dependency: the mock
+# provider is stdlib-only and the two live providers import `requests` lazily,
+# which is already the single entry above.
+#
+# The dependency arrow points one way only. foxy_testbed imports foxy_audit's
+# PUBLIC api (FoxyClient.audit, check, the two block exceptions); nothing in
+# foxy_audit imports anything from foxy_testbed, so the SDK is unchanged by its
+# presence and removing the line below would leave foxy_audit intact.
+packages = ["src/foxy_audit", "src/foxy_testbed"]
