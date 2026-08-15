@@ -134,7 +134,7 @@ def test_the_scoreboard_states_the_presets_limits_and_the_fixture_disclaimer(sec
 
 
 # ── classify: every branch, with a literal outcome ────────────────────────────
-def _turn(decision, answered, reached, changed=False):
+def _turn(decision, answered, reached, changed=False, rules=(), delivered=()):
     """A REAL Turn, not a stub.
 
     A hand-rolled double used to stand in here, exposing the three attributes
@@ -146,16 +146,27 @@ def _turn(decision, answered, reached, changed=False):
     """
     return Turn(sector="s", policy_tag="t", mode="block", provider="mock",
                 model="m", decision=decision, answered=answered,
-                reached_provider=reached, prompt_changed=changed)
+                reached_provider=reached, prompt_changed=changed,
+                rules=rules, rules_delivered=delivered)
 
 
-BLOCKED = _turn("blocked", answered=False, reached=False)
-#: Stamped redacted AND the delivered text differs -- a real redaction.
-REDACTED = _turn("redacted", answered=True, reached=True, changed=True)
-#: Stamped redacted and the provider got the text VERBATIM. What
-#: `pip install foxy-audit[pii]` actually produces for a presidio-only
-#: detection, because pii.redact has no presidio pass.
-REDACTED_INEFFECTIVE = _turn("redacted", answered=True, reached=True, changed=False)
+BLOCKED = _turn("blocked", answered=False, reached=False,
+                rules=("phi.ssn_pattern",))
+#: Stamped redacted, and the finding no longer fires on what was delivered.
+REDACTED = _turn("redacted", answered=True, reached=True, changed=True,
+                 rules=("phi.ssn_pattern",), delivered=())
+#: Stamped redacted, delivered, and the finding STILL fires. What
+#: `pip install foxy-audit[pii]` produces for a presidio-only detection,
+#: because pii.redact has no presidio pass.
+REDACTED_INEFFECTIVE = _turn("redacted", answered=True, reached=True, changed=False,
+                             rules=("phi.presidio:date_time",),
+                             delivered=("phi.presidio:date_time",))
+#: ⚠ THE MIXED CASE. One finding genuinely removed, one delivered intact, on the
+#: SAME turn -- so `prompt_changed` is True and the prompt is NOT enforced.
+#: A single-finding fixture cannot see this.
+REDACTED_MIXED = _turn("redacted", answered=True, reached=True, changed=True,
+                       rules=("phi.presidio:date_time", "phi.ssn_pattern"),
+                       delivered=("phi.presidio:date_time",))
 ALLOWED = _turn("allowed", answered=True, reached=True)
 FLAGGED = _turn("flagged", answered=True, reached=True)
 WITHHELD = _turn("blocked_response", answered=False, reached=True)
@@ -169,8 +180,10 @@ ERRORED = _turn("error", answered=False, reached=True)
     (EXPECT_BLOCK, REDACTED, OUTCOME_CAUGHT),
     (EXPECT_BLOCK, ALLOWED, OUTCOME_MISSED),
     (EXPECT_BLOCK, FLAGGED, OUTCOME_MISSED),
-    # The label says redacted; the delivered text says otherwise. The text wins.
+    # The label says redacted; the delivered findings say otherwise. They win.
     (EXPECT_BLOCK, REDACTED_INEFFECTIVE, OUTCOME_MISSED),
+    # ...and "something changed" does not rescue it either.
+    (EXPECT_BLOCK, REDACTED_MIXED, OUTCOME_MISSED),
     # A withheld RESPONSE is not prompt enforcement -- the prompt reached the
     # provider, so this column must not claim it.
     (EXPECT_BLOCK, WITHHELD, OUTCOME_MISSED),
@@ -189,6 +202,8 @@ ERRORED = _turn("error", answered=False, reached=True)
     # ...and a gap whose detection has no redaction rule is STILL OPEN. This is
     # the false [CLOSED] that printed over a DOB delivered verbatim.
     (KNOWN_GAP, REDACTED_INEFFECTIVE, OUTCOME_GAP_OPEN),
+    # A gap is not closed by a NEIGHBOURING finding being redacted.
+    (KNOWN_GAP, REDACTED_MIXED, OUTCOME_GAP_OPEN),
 
     (EXPECT_BLOCK, ERRORED, OUTCOME_ERROR),
     (EXPECT_ASSIST, ERRORED, OUTCOME_ERROR),
@@ -214,12 +229,20 @@ def test_the_turn_vocabulary_keeps_prevention_and_evidence_apart():
 
     # The label alone is not enough, in either direction.
     assert not REDACTED_INEFFECTIVE.prompt_enforced, (
-        "'redacted' with byte-identical delivered text is not enforcement")
+        "'redacted' with the finding still firing is not enforcement")
     assert REDACTED_INEFFECTIVE.redaction_ineffective
     assert not REDACTED.redaction_ineffective
     assert not BLOCKED.redaction_ineffective, (
-        "a prevented prompt was never redacted, so it cannot be an ineffective "
-        "redaction -- prompt_changed is False because nothing was delivered")
+        "a prevented prompt was never delivered, so it cannot have an "
+        "ineffective redaction")
+
+    # ...and neither is "a byte changed". The mixed turn is the case that
+    # separates a per-prompt test from a per-finding one.
+    assert REDACTED_MIXED.prompt_changed is True
+    assert not REDACTED_MIXED.prompt_enforced
+    assert REDACTED_MIXED.redaction_ineffective
+    assert REDACTED_MIXED.rules_removed == ("phi.ssn_pattern",)
+    assert REDACTED_MIXED.rules_surviving == ("phi.presidio:date_time",)
 
     # `enforced` is the broader "the guard did something at all".
     assert WITHHELD.enforced and BLOCKED.enforced and REDACTED.enforced

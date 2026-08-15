@@ -37,7 +37,7 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 
-from .core import Assistant, DECISION_ERROR, DEFAULT_MODE, Turn
+from .core import Assistant, DEFAULT_MODE, PROVIDER_FAULTS, Turn
 from .sectors import EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, get_sector
 
 WIDTH = 78
@@ -82,10 +82,16 @@ def classify(probe, turn: Turn) -> str:
       probe's own ``reached the model: yes``.
     """
     # THE ONE DELIBERATE LABEL READ IN THIS FUNCTION, and it is not the same
-    # kind: DECISION_ERROR is stamped by THIS package from an exception IT
-    # caught, so the label and the observation are the same event. Every other
-    # branch below goes through a measured property.
-    if turn.decision == DECISION_ERROR:
+    # kind: both PROVIDER_FAULTS are stamped by THIS package from what it
+    # directly observed — an exception it caught, or an empty returned value —
+    # so the label and the observation are the same event. Every other branch
+    # below goes through a measured property.
+    #
+    # They are taken FIRST, before either column. A provider fault is not
+    # evidence about the guard: an empty completion used to reach the assistance
+    # column as `allowed` and score OVER-BLOCKED, which blamed the guard for a
+    # model returning nothing.
+    if turn.decision in PROVIDER_FAULTS:
         return OUTCOME_ERROR
     if probe.expect == EXPECT_BLOCK:
         return OUTCOME_CAUGHT if turn.prompt_enforced else OUTCOME_MISSED
@@ -213,10 +219,20 @@ _ASSISTANT_ARGS = ("mode", "provider", "api_key", "model")
 def _conflicting_args(*values) -> list:
     """Which of :data:`_ASSISTANT_ARGS` the caller actually supplied.
 
-    ``None`` means "not given". That is why the signature's defaults are None
-    rather than the real ones -- see the note in :func:`run_probes`.
+    ``None`` means "not given" -- that is why the signature's defaults are None
+    rather than the real ones, see the note in :func:`run_probes`.
+
+    ⚠ AN EMPTY STRING IS ALSO "NOT GIVEN", and that is the sentinel discipline
+    finished rather than a loophole. ``""`` states no configuration: there is no
+    api key it selects and no model it names, so it cannot conflict with an
+    assistant's. Treating it as supplied made a plain forwarding call raise --
+    ``__main__`` already produces ``api_key=""`` and ``model=""`` from its own
+    argparse defaults, so T1's REPL, holding one long-lived Assistant and
+    passing its parsed args straight through, would have hit AssistantConflict
+    on every run for arguments the user never typed.
     """
-    return [name for name, value in zip(_ASSISTANT_ARGS, values) if value is not None]
+    return [name for name, value in zip(_ASSISTANT_ARGS, values)
+            if value is not None and value != ""]
 
 
 def run_probes(sector, mode=None, provider=None, api_key=None,
@@ -334,8 +350,8 @@ def _probe_lines(result) -> list:
     probe, turn = result.probe, result.turn
     lines = ["  [{0}] {1}".format(result.outcome, probe.id)]
     lines += _wrap(probe.intent, 10)
-    if turn.decision == DECISION_ERROR:
-        lines += _wrap("error: " + turn.error, 10)
+    if turn.decision in PROVIDER_FAULTS:
+        lines += _wrap("{0}: {1}".format(turn.decision, turn.error), 10)
         return lines
     # " | " rather than runs of spaces: _wrap normalises whitespace, so any
     # column alignment built out of spaces is collapsed the moment a line wraps.
@@ -347,16 +363,27 @@ def _probe_lines(result) -> list:
     )
     lines += _wrap(detail, 10)
     if turn.redaction_ineffective:
-        # The loudest line this renderer produces, because it is the one a
-        # reader would otherwise never suspect: the SDK said "redacted" and the
-        # provider got the text unchanged. Silence here is what let a false
-        # [CLOSED] print over a DOB delivered verbatim.
+        # The loudest lines this renderer produces, because they are what a
+        # reader would otherwise never suspect. PER FINDING, and both lists:
+        # a mixed prompt has one rule genuinely enforced and another delivered
+        # intact, and reporting only the failure would understate the guard
+        # exactly as reporting only the success overstated it.
+        if turn.rules_removed:
+            lines += _wrap(
+                "PARTIALLY ENFORCED: {0} stopped firing against the delivered "
+                "text and really was removed.".format(", ".join(turn.rules_removed)),
+                10)
         lines += _wrap(
-            "REDACTION CHANGED NOTHING: the policy flagged this prompt and the "
-            "SDK stamped it 'redacted', but the text delivered to the provider "
-            "is byte-identical to the text submitted. A rule detected it that "
-            "no redaction rule can rewrite. Scored as NOT enforced, on the "
-            "measured text rather than the label.", 10)
+            "STILL PRESENT IN WHAT THE MODEL RECEIVED: {0}. The SDK stamped "
+            "this prompt 'redacted', but re-running the policy against the text "
+            "actually delivered shows {1} rule(s) still firing -- detected by a "
+            "rule that no redaction rule can rewrite. Scored as NOT enforced, "
+            "on the measured findings rather than the label.".format(
+                ", ".join(turn.rules_surviving), len(turn.rules_surviving)), 10)
+        if not turn.prompt_changed:
+            lines += _wrap(
+                "Nothing was rewritten at all: the delivered text is "
+                "byte-identical to the text submitted.", 10)
     if probe.gap_reason:
         lines += _wrap("why nothing catches it: " + probe.gap_reason, 10)
     return lines

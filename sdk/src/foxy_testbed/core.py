@@ -35,6 +35,7 @@ is how a row records which model answered.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 
@@ -73,9 +74,59 @@ DECISION_BLOCKED_RESPONSE = "blocked_response"
 #: Not a policy outcome — the provider itself failed. Its own value so a
 #: scoreboard can never count a broken run as a clean one.
 DECISION_ERROR = "error"
+#: Also not a policy outcome: the call succeeded and the model returned nothing.
+#:
+#: Its own value for the same reason DECISION_ERROR has one. Without it, an
+#: empty completion arrived at the scoreboard as ``allowed`` with no rules
+#: fired, and the assistance column — which correctly measures a non-empty
+#: reply — scored it OVER-BLOCKED. So a provider returning "" printed
+#: ``[OVER-BLOCKED] ... reached the model: yes`` and failed the run, blaming
+#: the guard for something the guard did not do. ``_openai_text`` returns ""
+#: for a payload with no text, so this is a live path, not a hypothetical.
+DECISION_EMPTY_REPLY = "empty_reply"
+
+#: The two outcomes that are about the PROVIDER rather than the policy. Neither
+#: proves anything about enforcement or assistance, so both fail a run.
+PROVIDER_FAULTS = (DECISION_ERROR, DECISION_EMPTY_REPLY)
 
 DECISIONS = (DECISION_ALLOWED, DECISION_FLAGGED, DECISION_BLOCKED,
-             DECISION_REDACTED, DECISION_BLOCKED_RESPONSE, DECISION_ERROR)
+             DECISION_REDACTED, DECISION_BLOCKED_RESPONSE, DECISION_ERROR,
+             DECISION_EMPTY_REPLY)
+
+# ── re-checking the delivered text ────────────────────────────────────────────
+#: The markers the SDK substitutes for redacted spans — ``pii.redact`` writes
+#: ``[REDACTED:ssn]`` and friends, ``policy.redact`` writes
+#: ``[REDACTED:<rule-id suffix>]``.
+_REDACTION_MARKER_RE = re.compile(r"\[REDACTED:[^\]\n]*\]")
+
+#: What a marker is replaced with before the delivered text is re-checked.
+#: A BARE SPACE WOULD NOT DO: deleting a marker can splice its neighbours into a
+#: match that was never in the text (``555[REDACTED:x]1234567`` -> a phone
+#: number), which would report a surviving finding that does not exist. A tilde
+#: appears in no rule pattern and in no separator class, so it cannot join two
+#: spans and cannot match on its own.
+_MARKER_STANDIN = " ~ "
+
+
+def _content_of(delivered) -> str:
+    """The delivered text with the SDK's own redaction markers removed.
+
+    ⚠ WHY THIS IS NOT CHEATING, AND IS IN FACT THE ONLY CORRECT MEASUREMENT.
+    The question a re-check asks is "did the offending CONTENT reach the model",
+    and a ``[REDACTED:...]`` marker is the evidence that it did not. Leaving the
+    markers in makes one rule report itself as surviving its own redaction:
+    ``policy.redact`` builds the marker from the rule id's suffix, so
+    ``injection.jailbreak`` becomes ``[REDACTED:jailbreak]`` — and that pattern
+    matches the literal word ``jailbreak``. Measured across every rule the probe
+    corpus exercises, it is the ONLY one that does this today (the other eight
+    all clear), which is exactly why it would have been missed by a
+    single-rule fixture.
+
+    So the marker is stripped and nothing else is. If the SDK ever changes the
+    marker format this stops matching, every redacted probe re-flags, and the
+    scoreboard goes loudly red rather than quietly wrong — the safe direction.
+    """
+    return _REDACTION_MARKER_RE.sub(_MARKER_STANDIN, str(delivered))
 
 
 @dataclass(frozen=True)
@@ -100,19 +151,24 @@ class Turn:
     #: a block that failed to prevent the call could not report True.
     reached_provider: bool
     #: Did the text the provider received DIFFER from the text submitted?
-    #: Measured by capturing the delivered prompt inside the wrapped callable
-    #: and comparing. False when nothing reached the provider at all.
     #:
-    #: ⚠ THIS IS WHAT MAKES A REDACTION CLAIM TRUE. `decision == "redacted"` is
-    #: the SDK's label and is NOT proof a byte changed: `pii.detect_pii` emits
-    #: `presidio:*` labels while `pii.redact` has no presidio pass, so with
-    #: `pip install foxy-audit[pii]` a prompt can be evaluated as needing
-    #: redaction, stamped "redacted", and delivered VERBATIM. Reproduced, not
-    #: theorised. (The SDK stamping that label without comparing is filed
-    #: separately; this field is how the testbed avoids repeating it.)
+    #: ⚠ TRUE, AND NOT AN ENFORCEMENT TEST. "Something changed" is not "the
+    #: finding was removed": a prompt carrying a redactable SSN beside a
+    #: presidio-only date of birth is delivered as
+    #: ``Member SSN [REDACTED:ssn], DOB 03/14/1982`` — changed, and still
+    #: carrying the DOB. Reading this as enforcement is the defect T0d fixed;
+    #: read :attr:`rules_removed` / :attr:`rules_surviving` instead. Kept
+    #: because it distinguishes "nothing was rewritten at all" from "rewritten,
+    #: and a finding survived anyway", which are different sentences to a reader.
     prompt_changed: bool = False
+    #: The rules that still fire against the text the provider ACTUALLY got —
+    #: ``check()`` re-run on the delivered prompt under the same policy tag.
+    #: Empty when nothing was delivered. This is the per-finding measurement
+    #: that :attr:`rules_removed` and :attr:`rules_surviving` are computed from.
+    rules_delivered: tuple = ()
 
     reply: str = ""
+    #: The rules that fired against the text as SUBMITTED.
     rules: tuple = ()
     signals: tuple = ()
     #: The SDK's dominant reason label, or "none". From ``check``, which shares
@@ -175,15 +231,34 @@ class Turn:
         return self.decision == DECISION_BLOCKED_RESPONSE and self.reached_provider
 
     @property
-    def redaction_ineffective(self) -> bool:
-        """Stamped ``redacted``, and the provider got the text unchanged.
+    def rules_removed(self) -> tuple:
+        """Findings that fired on the submitted text and no longer fire on the
+        delivered text. THE ENFORCEMENT, per finding."""
+        return tuple(r for r in self.rules if r not in self.rules_delivered)
 
-        The gap between the SDK's label and what was actually delivered. Worth
-        its own name because it is the interesting outcome, not an edge case: a
-        surface that renders it is showing a customer a real hole in their
-        configuration.
+    @property
+    def rules_surviving(self) -> tuple:
+        """Findings that fired on the submitted text AND still fire on what the
+        provider actually got. THE HOLE, per finding."""
+        return tuple(r for r in self.rules if r in self.rules_delivered)
+
+    @property
+    def redaction_ineffective(self) -> bool:
+        """Stamped ``redacted``, delivered, and a finding survived the trip.
+
+        PER-RULE, not per-prompt. The first version asked "did any byte
+        change?", which a mixed prompt answers Yes to while still handing the
+        model the finding nobody could rewrite — so the warning this flag exists
+        to raise was suppressed by an unrelated redaction succeeding beside it.
+
+        Paired with ``reached_provider`` like every other claim here: a prompt
+        that was never delivered cannot have an ineffective redaction, and the
+        renderer says "the text delivered to the provider is byte-identical",
+        which would be a statement about a delivery that did not happen.
         """
-        return self.decision == DECISION_REDACTED and not self.prompt_changed
+        return (self.decision == DECISION_REDACTED
+                and self.reached_provider
+                and bool(self.rules_surviving))
 
     @property
     def prompt_enforced(self) -> bool:
@@ -204,7 +279,12 @@ class Turn:
             # `prevented`, not True: the block claim carries its own observation.
             return self.prevented
         if self.decision == DECISION_REDACTED:
-            return self.prompt_changed
+            # EVERY finding gone, not merely some byte moved. Deliberately the
+            # strict direction: a turn that scrubbed the SSN and handed over the
+            # DOB is not a clean catch, and for an audit product understating
+            # coverage is the safe way to be imprecise. Which rule went and
+            # which stayed is not lost — the renderer prints both lists.
+            return bool(self.rules) and not self.rules_surviving
         return False
 
     @property
@@ -234,6 +314,9 @@ class Turn:
                 "reached_provider": self.reached_provider,
                 "prompt_changed": self.prompt_changed,
                 "redaction_ineffective": self.redaction_ineffective,
+                "rules_delivered": list(self.rules_delivered),
+                "rules_removed": list(self.rules_removed),
+                "rules_surviving": list(self.rules_surviving),
                 # Carried rather than left for each surface to re-derive from
                 # `decision`. Three front-ends each writing their own version of
                 # "was this prevented?" is three chances to rebuild the
@@ -356,17 +439,35 @@ class Assistant:
             # caller, and scoring that as a successful assist would be the same
             # label-over-observation mistake in the other column.
             answered = bool(str(reply or "").strip())
-            if pre.triggered:
+            if not answered:
+                # A PROVIDER outcome, not a policy one. See DECISION_EMPTY_REPLY.
+                decision = DECISION_EMPTY_REPLY
+                error = ("the provider returned an empty reply; there is "
+                         "nothing to score in the assistance column")
+            elif pre.triggered:
                 decision = (DECISION_REDACTED if self.mode == "redact"
                             else DECISION_FLAGGED)
             else:
                 decision = DECISION_ALLOWED
         elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-        # The comparison that turns "redacted" from a claim into a finding.
         # Guarded on _reached so a BLOCKED turn -- where nothing was delivered
         # and _delivered is None -- can never read as "the text changed".
         prompt_changed = self._reached and self._delivered != prompt
+
+        # ⚠ THE PER-FINDING MEASUREMENT. `check` is re-run against the text the
+        # provider ACTUALLY received, under the same tag, so "was this finding
+        # removed?" is answered by asking the rule rather than by noticing that
+        # the string is different somewhere. A redaction that scrubs an SSN
+        # beside a date of birth nothing can rewrite changes the prompt and
+        # removes one finding of two; only this comparison can see that.
+        #
+        # Skipped entirely when nothing was delivered: no text, no findings, and
+        # `rules_removed` correctly becomes everything that fired.
+        rules_delivered = ()
+        if self._reached:
+            rules_delivered = tuple(
+                check(_content_of(self._delivered), self.sector.policy_tag).rules)
 
         return Turn(
             sector=self.sector.name,
@@ -378,6 +479,7 @@ class Assistant:
             answered=answered,
             reached_provider=self._reached,
             prompt_changed=prompt_changed,
+            rules_delivered=rules_delivered,
             reply=reply if answered else "",
             rules=tuple(pre.rules),
             signals=tuple(pre.signals),
@@ -391,5 +493,6 @@ class Assistant:
 
 
 __all__ = ["Assistant", "DECISIONS", "DECISION_ALLOWED", "DECISION_BLOCKED",
-           "DECISION_BLOCKED_RESPONSE", "DECISION_ERROR", "DECISION_FLAGGED",
-           "DECISION_REDACTED", "DEFAULT_MODE", "MODES", "Turn"]
+           "DECISION_BLOCKED_RESPONSE", "DECISION_EMPTY_REPLY", "DECISION_ERROR",
+           "DECISION_FLAGGED", "DECISION_REDACTED", "DEFAULT_MODE", "MODES",
+           "PROVIDER_FAULTS", "Turn"]
