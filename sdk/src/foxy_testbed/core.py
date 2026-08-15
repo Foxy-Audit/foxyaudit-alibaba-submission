@@ -405,6 +405,32 @@ class Assistant:
             mode=self.mode,
         )(self._invoke)
 
+    def with_mode(self, mode: str) -> "Assistant":
+        """This assistant again, under a different preflight ``mode``.
+
+        ⚠ MODE IS FIXED AT CONSTRUCTION -- the guard decorator is built in
+        ``__init__`` and cannot be re-decorated -- so "switching" is rebuilding,
+        and rebuilding is where session state gets silently dropped. It already
+        did: T1's REPL rebuilt from sector/mode/provider alone, so ``/mode`` on a
+        KEYED session swapped the caller's ``client`` for a fresh keyless one and
+        stopped writing to their ledger, while printing that nothing but the mode
+        had changed.
+
+        It lives HERE rather than on the surface because this class is the only
+        thing that knows what an Assistant is made of. Three front-ends each
+        rebuilding one is three chances to drop a different field.
+
+        EVERYTHING THAT MATTERS IS CARRIED, and that is checkable rather than
+        hopeful. Of ``__init__``'s seven parameters, ``api_key`` and ``model``
+        feed ``build_provider`` ONLY, and ``desktop_ping`` feeds the
+        ``FoxyClient`` constructor ONLY -- so handing over the already-built
+        provider and the already-built client makes all three unreachable, by
+        construction. If a parameter is ever added, ``test_cli.py`` fails on the
+        signature rather than on a symptom six months later.
+        """
+        return Assistant(self.sector, mode=mode, provider=self.provider,
+                         client=self._client)
+
     # THE OBSERVATION POINT. This is the only place in the package that sees
     # what the provider was actually handed, which is why both of the
     # scoreboard's behavioural claims are taken here rather than read off a

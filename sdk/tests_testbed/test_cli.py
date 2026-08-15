@@ -272,6 +272,109 @@ def test_every_decision_has_a_rendering_of_its_own():
     assert label == "TELEPORTED" and "no rendering in the REPL yet" in sentence
 
 
+#: Every decision for which ``core.Turn`` exposes a property that PAIRS the
+#: label with the observation that would contradict it, and the two shapes that
+#: property separates. The values are (clean, contradicting).
+#:
+#: ⚠ THE THREE HERE ARE THE WHOLE SET, and that is a statement about
+#: ``core.Turn``, not a convenience. ``prevented``, ``response_withheld`` and
+#: ``prompt_enforced`` are the only properties core defines by pairing a label
+#: with ``reached_provider``; ``allowed``, ``flagged`` and ``error`` have no such
+#: property, and a renderer inventing a pairing for them would be the surface
+#: deciding what the engine meant -- the one thing this module must not do. If
+#: core ever grows a fourth, it belongs in this table the same day.
+PAIRED = {
+    DECISION_BLOCKED: (
+        {"reached_provider": False, "rules": ("phi.ssn_pattern",)},
+        {"reached_provider": True, "rules": ("phi.ssn_pattern",)},
+    ),
+    DECISION_BLOCKED_RESPONSE: (
+        {"reached_provider": True},
+        {"reached_provider": False},
+    ),
+    DECISION_REDACTED: (
+        {"reached_provider": True, "rules": ("phi.ssn_pattern",)},
+        {"reached_provider": True, "rules": ("phi.ssn_pattern",),
+         "rules_delivered": ("phi.ssn_pattern",)},
+    ),
+}
+
+
+@pytest.mark.parametrize("decision", sorted(PAIRED))
+def test_a_label_backed_by_an_observation_renders_the_contradiction(decision):
+    """THE RULE, STATED ONCE INSTEAD OF PER BRANCH -- and the guard that was
+    missing.
+
+    Two of the three families had a contradiction branch and were tested
+    individually; ``blocked_response`` had neither, and the per-decision guard
+    above pinned ``reached_provider: True`` for it, so the shape that mattered
+    was never constructed. A renderer that reads the label alone then printed
+    "the prompt DID reach the provider and tokens were spent" three lines above
+    "reached: no, the provider was never called".
+
+    Written over the table so that adding a family cannot quietly skip it: the
+    property under test is "when the paired observation disagrees, the reader is
+    told", and it is asserted for every member at once.
+    """
+    clean_shape, contradicting_shape = PAIRED[decision]
+
+    clean_label, _ = cli._headline(turn(decision=decision, **clean_shape))
+    broken_label, broken_sentence = cli._headline(
+        turn(decision=decision, **contradicting_shape))
+
+    assert clean_label != broken_label, (
+        "{0} renders identically whether or not the observation backs the "
+        "label".format(decision))
+    # And it says so, rather than merely picking a different noun.
+    assert any(word in broken_sentence.lower()
+               for word in ("disagree", "still firing")), broken_sentence
+
+
+def test_a_withheld_response_that_never_reached_the_provider_says_so():
+    """The specific shape, rendered whole -- the label alone is not the bug.
+
+    A headline that reads correctly above a detail block that contradicts it is
+    still a contradiction on screen, so this asserts against the full render
+    rather than against ``_headline``'s return value.
+    """
+    impossible = turn(decision=DECISION_BLOCKED_RESPONSE, reached_provider=False,
+                      rules=("phi.ssn_pattern",))
+    assert impossible.response_withheld is False
+
+    rendered = "\n".join(cli.turn_lines(impossible, provider_is_live=False))
+    assert "RESPONSE WITHHELD, BUT NOTHING WAS SENT" in rendered
+    assert "tokens were spent" not in rendered, (
+        "the render claimed a spend for a call that never happened")
+    assert "no, the provider was never called" in rendered
+
+    # The honest shape still renders as a plain withheld response.
+    real = turn(decision=DECISION_BLOCKED_RESPONSE, reached_provider=True)
+    real_rendered = "\n".join(cli.turn_lines(real, provider_is_live=False))
+    assert "\n  [RESPONSE WITHHELD]\n" in real_rendered
+    assert "tokens were spent" in real_rendered
+
+
+def test_the_reply_block_reads_no_decision_either():
+    """The same defect, one function further down, found looking for the first.
+
+    ``turn_lines`` ended its reply block on "everything else is a prompt that
+    was stopped before the provider was called" -- which is every withheld
+    RESPONSE, where the prompt reached the model and the tokens were spent.
+    ``reached_provider`` was available the whole time.
+    """
+    withheld = turn(decision=DECISION_BLOCKED_RESPONSE, reached_provider=True)
+    rendered = "\n".join(cli.turn_lines(withheld, provider_is_live=False))
+
+    assert "stopped before the provider was called" not in rendered
+    assert "the prompt reached the provider, and nothing came back to you" in rendered
+
+    # A genuinely prevented turn still gets the sentence that is true of it.
+    prevented = turn(decision=DECISION_BLOCKED, reached_provider=False,
+                     rules=("phi.ssn_pattern",))
+    assert "stopped before the provider was called" in "\n".join(
+        cli.turn_lines(prevented, provider_is_live=False))
+
+
 def test_a_block_that_reached_the_provider_is_not_rendered_as_a_block():
     """The label says prevented. The observation says delivered.
 
@@ -458,6 +561,35 @@ def test_ctrl_c_cancels_the_line_and_ctrl_d_ends_the_session():
     assert out.getvalue().rstrip().endswith("bye.")
 
 
+def test_ctrl_c_during_probe_abandons_the_command_and_not_the_session():
+    """The longest-running command was the one place with no interrupt guard.
+
+    ``read_line`` and ``ask`` were both protected; ``/probe`` was not, and
+    ``Assistant.ask`` catches ``Exception`` while ``KeyboardInterrupt`` is a
+    ``BaseException`` -- so a Ctrl-C partway through nine to eleven provider
+    calls escaped every handler and ended the session. On a live key each of
+    those calls can sit on a 30-second timeout, which makes it the command a
+    user is most likely to abandon.
+    """
+    class Impatient(Stub):
+        def complete(self, system, prompt):
+            self.calls += 1
+            if self.calls == 2:
+                raise KeyboardInterrupt
+            return "ok."
+
+    provider = Impatient(live=True)
+    code, text = drive(Assistant(get_sector("legal"), provider=provider),
+                       ["/probe", ASSIST_PROMPT, "/quit"])
+
+    assert code == 0, "the interrupt took the whole session with it"
+    assert "The command was abandoned partway" in " ".join(text.split())
+    # No half-scored board: a corpus scored halfway is not a score.
+    assert "enforcement" not in text
+    # And the session really did keep going -- the prompt after it was answered.
+    assert "[ALLOWED]" in text
+
+
 def test_a_provider_that_fails_is_reported_and_the_session_continues():
     """A provider fault is not evidence about the guard, and not fatal here.
 
@@ -528,6 +660,58 @@ def test_switching_mode_keeps_the_provider_and_the_sector():
     assert session.assistant.mode == "redact"
     assert session.assistant.provider is provider, "the provider was rebuilt"
     assert session.assistant.sector == get_sector("finance")
+
+
+def test_switching_mode_carries_the_whole_session_not_only_the_provider():
+    """⚠ ``/mode`` USED TO CHANGE WHICH LEDGER THE SESSION WROTE TO.
+
+    ``switch_mode`` rebuilt the Assistant from sector/mode/provider, so a
+    caller-supplied ``client`` -- a KEYED one, writing to their org's chain and
+    firing desktop pings -- was replaced by a fresh keyless ``FoxyClient``. The
+    session went on printing verdicts and silently stopped recording any of
+    them, under a message saying the sector, the policy tag and the provider
+    were unchanged.
+    """
+    class SpyClient:
+        def __init__(self):
+            self.audits = 0
+
+        def audit(self, **kwargs):
+            self.audits += 1
+            return lambda fn: fn
+
+    spy = SpyClient()
+    session = cli.Session(Assistant(get_sector("legal"), mode="block",
+                                    client=spy, desktop_ping=True))
+    assert session.assistant._client is spy
+
+    session.switch_mode("redact")
+
+    assert session.assistant._client is spy, (
+        "the caller's client was dropped: this session has changed ledgers")
+    assert spy.audits == 2, "the new assistant was decorated by the SAME client"
+    assert session.assistant.mode == "redact"
+
+
+def test_with_mode_carries_every_constructor_argument_that_can_matter():
+    """The completeness claim, checked against the constructor rather than
+    trusted.
+
+    ``with_mode`` passes sector, mode, provider and client, and argues that the
+    remaining three (``api_key``, ``model``, ``desktop_ping``) are unreachable
+    because each feeds only something already being handed over built. That
+    argument is true of TODAY's signature and says nothing about tomorrow's --
+    so an eighth parameter fails here, naming the decision to make, rather than
+    being dropped in silence the way ``client`` was.
+    """
+    import inspect
+
+    parameters = list(inspect.signature(Assistant.__init__).parameters)
+    assert parameters == ["self", "sector", "mode", "provider", "api_key",
+                          "model", "client", "desktop_ping"], (
+        "Assistant.__init__ changed. Decide whether with_mode must carry the "
+        "new parameter across, then update this list. Do not just widen it: "
+        "dropping `client` here is what made /mode change ledgers.")
 
 
 def test_an_unknown_mode_leaves_the_session_running_and_unchanged():
@@ -610,6 +794,63 @@ def test_no_probe_flag_now_starts_the_repl(monkeypatch, capsys):
     assert "{0}/policy".format(cli.PROMPT) in text
     assert "cardholder data and bank account numbers are NOT blocked here" in " ".join(
         text.split())
+
+
+class FakeTty(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_the_default_reader_writes_the_transcript_to_out_on_a_terminal_too(monkeypatch):
+    """⚠ THE TTY BRANCH IGNORED ``out`` ENTIRELY.
+
+    ``input(PROMPT)`` writes to ``sys.stdout`` and the terminal echoes what is
+    typed, so a caller on a terminal who passed ``out=`` a file got a transcript
+    with no prompts in it and none of their own input -- the exact failure the
+    non-tty branch was written to prevent, arrived at from the other side.
+
+    The real question is not "is this a terminal" but "does anything already
+    echo into ``out``", and that is true in exactly one combination.
+    """
+    typed = []
+
+    def fake_input(prompt=""):
+        typed.append(prompt)
+        return "hello there"
+
+    monkeypatch.setattr("sys.stdin", FakeTty())
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    # A terminal, but `out` is somewhere else: the prompt and the line both
+    # have to be written, or the transcript is empty.
+    elsewhere = io.StringIO()
+    assert cli._default_reader(elsewhere)() == "hello there"
+    assert elsewhere.getvalue() == cli.PROMPT + "hello there\n"
+    assert typed == [""], "input() must not also print the prompt"
+
+
+def test_the_default_reader_does_not_double_the_prompt_on_a_real_terminal(monkeypatch):
+    """The other half, or the fix above would print everything twice.
+
+    A terminal writing to THAT terminal is the one place something already
+    echoes: ``input()`` prints the prompt and the tty echoes the typed line.
+    """
+    typed = []
+
+    def fake_input(prompt=""):
+        typed.append(prompt)
+        return "hello there"
+
+    console = FakeTty()
+    monkeypatch.setattr("sys.stdin", FakeTty())
+    monkeypatch.setattr("sys.stdout", console)
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    import sys as _sys
+    assert cli._default_reader(_sys.stdout)() == "hello there"
+    assert typed == [cli.PROMPT], "input() should be printing the prompt here"
+    assert console.getvalue() == "", (
+        "the prompt or the line was written a second time")
 
 
 def test_a_session_that_cannot_start_still_exits_2(monkeypatch, capsys):

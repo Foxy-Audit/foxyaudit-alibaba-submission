@@ -98,30 +98,44 @@ def _write_all(out, lines) -> None:
 def _default_reader(out):
     """A line of input, and a readable transcript either way.
 
-    Two paths because they want opposite things. On a terminal, ``input()``
-    gives the platform's line editing (and GNU readline where it exists), and
-    the user can see what they typed. Off a terminal — a pipe, a heredoc, a
-    test, the CI path — nothing echoes, so a captured session would show the
-    prompts with no prompts in them. So the non-tty path writes the line back
-    out and the transcript reads as a session rather than as a monologue.
+    ⚠ THE QUESTION IS NOT "IS THIS A TERMINAL" BUT "DOES ANYTHING ALREADY ECHO
+    INTO ``out``", and conflating the two is what this got wrong. There is
+    exactly one combination where something does: a terminal writing to THAT
+    terminal, where the tty echoes the typed line and ``input()`` prints the
+    prompt. Writing either again there would double it.
+
+    In every other combination -- a pipe, a heredoc, a test, the CI path, or a
+    caller on a terminal who passed ``out=`` a file -- nothing reaches ``out``
+    on its own, and a transcript with no prompts and none of the user's own
+    input is not a transcript. The last of those was the defect: the tty branch
+    ignored ``out`` entirely and sent everything to ``sys.stdout``, which is the
+    same failure the non-tty branch exists to prevent, from the other side.
+
+    ``input()`` is still used wherever stdin is a terminal, because that is what
+    gives the platform's line editing (and GNU readline where it exists); it is
+    simply called bare when the prompt has already gone somewhere else.
     """
-    is_tty = False
     try:
         is_tty = bool(sys.stdin.isatty())
     except Exception:                                 # noqa: BLE001
         # A detached or replaced stdin (pythonw, some CI runners) has no
         # isatty. Not a terminal is the safe assumption: it echoes.
         is_tty = False
+    terminal_echoes = is_tty and out is sys.stdout
 
     def read_line() -> str:
-        if is_tty:
+        if terminal_echoes:
             return input(PROMPT)
+
         out.write(PROMPT)
         out.flush()
-        line = sys.stdin.readline()
-        if line == "":
-            raise EOFError
-        line = line.rstrip("\n").rstrip("\r")
+        if is_tty:
+            line = input()
+        else:
+            line = sys.stdin.readline()
+            if line == "":
+                raise EOFError
+            line = line.rstrip("\n").rstrip("\r")
         _write(out, line)
         return line
 
@@ -155,10 +169,25 @@ def _headline(turn):
                 "reached anyway. The label and the observation disagree; the "
                 "observation is that your text was delivered. Report this.")
     if turn.decision == DECISION_BLOCKED_RESPONSE:
-        return ("RESPONSE WITHHELD",
-                "the prompt DID reach the provider and tokens were spent; it "
-                "is the reply that was withheld from you. Real prevention of "
-                "what you would have received, not of what the model saw.")
+        if turn.response_withheld:
+            return ("RESPONSE WITHHELD",
+                    "the prompt DID reach the provider and tokens were spent; "
+                    "it is the reply that was withheld from you. Real "
+                    "prevention of what you would have received, not of what "
+                    "the model saw.")
+        # THE BRANCH THAT WAS MISSING, and it was the only decision family here
+        # without one. `response_withheld` pairs the label with
+        # `reached_provider` precisely because this outcome ASSERTS the call
+        # happened -- and reading the label alone printed "the prompt DID reach
+        # the provider and tokens were spent" three lines above "reached: no,
+        # the provider was never called", in the renderer whose whole argument
+        # is that a label never outranks an observation.
+        return ("RESPONSE WITHHELD, BUT NOTHING WAS SENT",
+                "the SDK stamped this turn as a withheld RESPONSE, which means "
+                "a reply came back and was kept from you -- and the provider "
+                "was never called, so there was no reply to withhold. The "
+                "label and the observation disagree and neither explains this "
+                "turn. Report this.")
     if turn.decision == DECISION_REDACTED:
         if turn.prompt_enforced:
             return ("REDACTED",
@@ -265,8 +294,17 @@ def turn_lines(turn, provider_is_live: bool) -> list:
         lines += _wrap("The provider returned an empty reply, so there is nothing "
                        "to show. What the guard did to your prompt is unaffected "
                        "and is reported above.", 2)
-    elif turn.decision == DECISION_ERROR:
+    # ⚠ NOT ONE DECISION READ IN THIS BLOCK, AND IT USED TO END ON ONE. The
+    # final branch said "the prompt was stopped before the provider was called"
+    # for everything that was not answered, not empty and not an error -- which
+    # includes a withheld RESPONSE, where the prompt reached the model and the
+    # tokens were spent. The same defect as the headline above it, one function
+    # further down, and `reached_provider` was sitting right there.
+    elif turn.error:
         lines += _wrap("No reply: the provider call failed.", 2)
+    elif turn.reached_provider:
+        lines += _wrap("No reply: the prompt reached the provider, and nothing "
+                       "came back to you.", 2)
     else:
         lines += _wrap("No reply: the prompt was stopped before the provider was "
                        "called.", 2)
@@ -342,9 +380,8 @@ class Session:
 
     ``/mode`` is the one thing that replaces it, and has to: the guard decorator
     is built in ``Assistant.__init__``, so the mode is fixed at construction and
-    cannot be reassigned afterwards. The PROVIDER object is carried across, so
-    switching mode does not re-read a live key and does not rebuild the fixture
-    map. Nothing else about the session moves.
+    cannot be reassigned afterwards. What survives that rebuild is
+    ``Assistant.with_mode``'s problem and not this class's -- see below.
     """
 
     def __init__(self, assistant) -> None:
@@ -353,13 +390,22 @@ class Session:
     def switch_mode(self, mode: str) -> None:
         """Rebuild the assistant under ``mode``. Raises ValueError on a typo.
 
-        The ValueError is the engine's, not a second validation written here:
-        ``Assistant.__init__`` refuses an unknown mode loudly rather than
+        ⚠ DELEGATED, AND THAT IS THE FIX. This method used to call the
+        ``Assistant`` constructor itself with sector/mode/provider, which
+        silently dropped a caller-supplied ``client`` and ``desktop_ping``: a
+        KEYED session stopped writing to the caller's ledger and stopped firing
+        desktop pings the moment somebody typed ``/mode``, while this same
+        command printed that the session was otherwise unchanged. A surface
+        cannot be trusted to know what an Assistant is made of, so it no longer
+        has to -- ``with_mode`` carries the state and the guard that keeps it
+        complete lives beside the constructor it mirrors.
+
+        The ValueError is the engine's too, not a second validation written
+        here: ``Assistant.__init__`` refuses an unknown mode loudly rather than
         falling back to observe, and a REPL that re-listed the valid modes would
         be a second place for that list to go stale.
         """
-        self.assistant = Assistant(self.assistant.sector, mode=mode,
-                                   provider=self.assistant.provider)
+        self.assistant = self.assistant.with_mode(mode)
 
 
 def _handle_command(session, text: str, out):
@@ -450,7 +496,23 @@ def repl(assistant, read_line=None, out=None, banner: bool = True) -> int:
             continue
 
         if text.startswith(COMMAND_PREFIX):
-            if _handle_command(session, text, out) is _QUIT:
+            try:
+                outcome = _handle_command(session, text, out)
+            except KeyboardInterrupt:
+                # ⚠ THE LONGEST-RUNNING THING IN THE REPL WAS THE ONE PLACE
+                # WITHOUT THIS. `read_line` and `ask` were both protected;
+                # `/probe` -- nine to eleven provider calls, each up to a 30s
+                # timeout on a live key -- was not, and `Assistant.ask` catches
+                # only Exception, so a Ctrl-C anywhere in the corpus escaped
+                # every handler and took the session with it. It is the command
+                # a user is most likely to abandon.
+                _write(out, "")
+                _write_all(out, _wrap(
+                    "Interrupted. The command was abandoned partway. Nothing "
+                    "partial is printed for it -- a corpus scored halfway is "
+                    "not a score -- and the session is still running.", 2))
+                continue
+            if outcome is _QUIT:
                 _write(out, "  bye.")
                 return 0
             continue
