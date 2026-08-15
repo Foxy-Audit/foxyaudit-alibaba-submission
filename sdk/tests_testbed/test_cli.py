@@ -583,11 +583,26 @@ def test_ctrl_c_during_probe_abandons_the_command_and_not_the_session():
                        ["/probe", ASSIST_PROMPT, "/quit"])
 
     assert code == 0, "the interrupt took the whole session with it"
-    assert "The command was abandoned partway" in " ".join(text.split())
+    flat = " ".join(text.split())
+    assert "The scoreboard is abandoned" in flat
     # No half-scored board: a corpus scored halfway is not a score.
     assert "enforcement" not in text
     # And the session really did keep going -- the prompt after it was answered.
     assert "[ALLOWED]" in text
+
+    # ⚠ AND IT DISCLOSES WHAT THE INTERRUPT DID NOT UNDO. Saying only that the
+    # command stopped reads as though nothing happened; two probes had already
+    # been sent, billed on a live key, and written through the SDK -- whose
+    # wrapper catches BaseException and records an event_type="exception" row
+    # before re-raising, so the abort is on the record too. The single-turn
+    # handler discloses the same class of thing, and this command makes nine to
+    # eleven calls.
+    assert provider.calls == 3, (
+        "two probes were sent before the abort -- the second one raised -- plus "
+        "the turn typed after it; the disclosure is about those first two")
+    assert "WHAT ALREADY RAN IS NOT UNDONE" in flat
+    assert "it was billed" in flat
+    assert "recorded too, as an exception event" in flat
 
 
 def test_a_provider_that_fails_is_reported_and_the_session_continues():
@@ -796,61 +811,94 @@ def test_no_probe_flag_now_starts_the_repl(monkeypatch, capsys):
         text.split())
 
 
-class FakeTty(io.StringIO):
-    def isatty(self):
-        return True
+class FakeStream(io.StringIO):
+    """A stream that can lie about being a terminal, in either direction."""
+
+    def __init__(self, tty=False, data="") -> None:
+        super().__init__(data)
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
 
 
-def test_the_default_reader_writes_the_transcript_to_out_on_a_terminal_too(monkeypatch):
-    """⚠ THE TTY BRANCH IGNORED ``out`` ENTIRELY.
+TYPED = "hello there"
 
-    ``input(PROMPT)`` writes to ``sys.stdout`` and the terminal echoes what is
-    typed, so a caller on a terminal who passed ``out=`` a file got a transcript
-    with no prompts in it and none of their own input -- the exact failure the
-    non-tty branch was written to prevent, arrived at from the other side.
+#: EVERY COMBINATION OF THE THREE THINGS THAT MATTER, because two rounds of
+#: single-case fixes each got the case they were named after right and its
+#: sibling wrong. The axes are independent and the code must treat them so:
+#:
+#:   stdin_tty     -- does the TERMINAL echo what is typed?
+#:   out_is_stdout -- does ``input()``'s prompt land in ``out``?
+#:   out_tty       -- is ``out`` the terminal that would be doing the echoing?
+#:
+#: The expectations are hand-written per row, not derived: a table whose
+#: expected values are computed from the same booleans the implementation reads
+#: proves only that two copies of one expression agree.
+#:
+#: (label, stdin_tty, out_is_stdout, out_tty, prompt passed to input(), out)
+READER_TABLE = [
+    ("terminal, stdout IS the terminal",
+     True, True, True, cli.PROMPT, ""),
+    ("terminal, stdout redirected to a file (`> transcript.txt`)",
+     True, True, False, "", cli.PROMPT + TYPED + "\n"),
+    ("terminal, out= another tty (`out=sys.stderr`)",
+     True, False, True, "", cli.PROMPT),
+    ("terminal, out= a caller's file",
+     True, False, False, "", cli.PROMPT + TYPED + "\n"),
+    ("piped stdin, stdout is a terminal",
+     False, True, True, None, cli.PROMPT + TYPED + "\n"),
+    ("piped stdin, stdout redirected (the CI path)",
+     False, True, False, None, cli.PROMPT + TYPED + "\n"),
+    ("piped stdin, out= another tty",
+     False, False, True, None, cli.PROMPT + TYPED + "\n"),
+    ("piped stdin, out= a caller's file",
+     False, False, False, None, cli.PROMPT + TYPED + "\n"),
+]
 
-    The real question is not "is this a terminal" but "does anything already
-    echo into ``out``", and that is true in exactly one combination.
+
+@pytest.mark.parametrize(
+    "label,stdin_tty,out_is_stdout,out_tty,expect_prompt,expect_out",
+    READER_TABLE, ids=[row[0] for row in READER_TABLE])
+def test_the_reader_produces_one_prompt_and_one_line_in_every_combination(
+        monkeypatch, label, stdin_tty, out_is_stdout, out_tty, expect_prompt,
+        expect_out):
+    """⚠ THE TWO SHAPES THAT SHIPPED BROKEN ARE ROWS 2 AND 3.
+
+    Row 2: ``out is sys.stdout`` was read as "the terminal is handling this",
+    but under ``> transcript.txt`` stdout is a FILE -- so ``input(PROMPT)`` put
+    the prompt in the file and the terminal echoed the typed line to the
+    screen, and the transcript was a column of prompts with nothing after them.
+
+    Row 3: the same test read ``out=sys.stderr`` as "nothing echoes", but
+    stderr IS the terminal, which echoes -- so every typed line printed twice.
+
+    One flag cannot answer both questions, and each previous fix was a third
+    single case. This is all eight.
     """
     typed = []
 
     def fake_input(prompt=""):
         typed.append(prompt)
-        return "hello there"
+        return TYPED
 
-    monkeypatch.setattr("sys.stdin", FakeTty())
+    stdin = FakeStream(tty=stdin_tty, data="" if stdin_tty else TYPED + "\n")
+    out = FakeStream(tty=out_tty)
+    monkeypatch.setattr("sys.stdin", stdin)
+    monkeypatch.setattr("sys.stdout", out if out_is_stdout else FakeStream(tty=True))
     monkeypatch.setattr("builtins.input", fake_input)
 
-    # A terminal, but `out` is somewhere else: the prompt and the line both
-    # have to be written, or the transcript is empty.
-    elsewhere = io.StringIO()
-    assert cli._default_reader(elsewhere)() == "hello there"
-    assert elsewhere.getvalue() == cli.PROMPT + "hello there\n"
-    assert typed == [""], "input() must not also print the prompt"
+    assert cli._default_reader(out)() == TYPED
+    assert out.getvalue() == expect_out, label
+    assert typed == ([] if expect_prompt is None else [expect_prompt]), label
 
-
-def test_the_default_reader_does_not_double_the_prompt_on_a_real_terminal(monkeypatch):
-    """The other half, or the fix above would print everything twice.
-
-    A terminal writing to THAT terminal is the one place something already
-    echoes: ``input()`` prints the prompt and the tty echoes the typed line.
-    """
-    typed = []
-
-    def fake_input(prompt=""):
-        typed.append(prompt)
-        return "hello there"
-
-    console = FakeTty()
-    monkeypatch.setattr("sys.stdin", FakeTty())
-    monkeypatch.setattr("sys.stdout", console)
-    monkeypatch.setattr("builtins.input", fake_input)
-
-    import sys as _sys
-    assert cli._default_reader(_sys.stdout)() == "hello there"
-    assert typed == [cli.PROMPT], "input() should be printing the prompt here"
-    assert console.getvalue() == "", (
-        "the prompt or the line was written a second time")
+    # THE PROPERTY THE TABLE IS AN INSTANCE OF, checked from the row's declared
+    # inputs: counting what the terminal itself puts on the screen, the user
+    # sees the prompt exactly once and their own line exactly once. Neither
+    # zero (a transcript that lost them) nor twice (a doubled line).
+    terminal_echoes_the_line = stdin_tty and out_tty
+    assert out.getvalue().count(cli.PROMPT) + int(expect_prompt == cli.PROMPT) == 1
+    assert out.getvalue().count(TYPED) + int(terminal_echoes_the_line) == 1
 
 
 def test_a_session_that_cannot_start_still_exits_2(monkeypatch, capsys):

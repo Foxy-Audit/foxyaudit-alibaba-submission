@@ -98,45 +98,63 @@ def _write_all(out, lines) -> None:
 def _default_reader(out):
     """A line of input, and a readable transcript either way.
 
-    ⚠ THE QUESTION IS NOT "IS THIS A TERMINAL" BUT "DOES ANYTHING ALREADY ECHO
-    INTO ``out``", and conflating the two is what this got wrong. There is
-    exactly one combination where something does: a terminal writing to THAT
-    terminal, where the tty echoes the typed line and ``input()`` prints the
-    prompt. Writing either again there would double it.
+    ⚠ THIS IS TWO INDEPENDENT QUESTIONS AND EVERY EARLIER VERSION ASKED ONE.
+    Collapsing them is what made each fix correct for the case it was named
+    after and wrong for that case's sibling, twice:
 
-    In every other combination -- a pipe, a heredoc, a test, the CI path, or a
-    caller on a terminal who passed ``out=`` a file -- nothing reaches ``out``
-    on its own, and a transcript with no prompts and none of the user's own
-    input is not a transcript. The last of those was the defect: the tty branch
-    ignored ``out`` entirely and sent everything to ``sys.stdout``, which is the
-    same failure the non-tty branch exists to prevent, from the other side.
+      Q1  Does the PROMPT already reach ``out``?  Only when ``input()`` writes
+          it there -- ``input`` prints to ``sys.stdout`` and nowhere else.
+      Q2  Does the TYPED LINE already reach ``out``?  Only when the terminal
+          echoes it there, which needs stdin to BE a terminal and ``out`` to be
+          that same terminal.
 
-    ``input()`` is still used wherever stdin is a terminal, because that is what
-    gives the platform's line editing (and GNU readline where it exists); it is
-    simply called bare when the prompt has already gone somewhere else.
+    They come apart in both directions, and both were shipped broken:
+
+      * ``python -m foxy_testbed > transcript.txt`` from a terminal. ``out`` IS
+        ``sys.stdout``, so an identity test says "the terminal handles it" --
+        but stdout is a FILE. ``input(PROMPT)`` wrote the prompt into the file
+        and the terminal echoed the typed line to the screen, so the transcript
+        was a column of ``you> `` with nothing after them.
+      * ``repl(out=sys.stderr)`` on a terminal. ``out`` is not ``sys.stdout``,
+        so the same test says "nothing echoes" -- but stderr IS the terminal,
+        which echoes the typed line, and writing it again printed every line
+        twice.
+
+    So ``out is sys.stdout`` answers Q1 and ``isatty`` answers Q2, and neither
+    answers the other. ``input()`` is still used wherever stdin is a terminal,
+    because that is what gives the platform's line editing (and GNU readline
+    where it exists); it is simply called bare when the prompt has already been
+    written somewhere else.
     """
-    try:
-        is_tty = bool(sys.stdin.isatty())
-    except Exception:                                 # noqa: BLE001
-        # A detached or replaced stdin (pythonw, some CI runners) has no
-        # isatty. Not a terminal is the safe assumption: it echoes.
-        is_tty = False
-    terminal_echoes = is_tty and out is sys.stdout
+    def _isatty(stream) -> bool:
+        # A detached or replaced stream (pythonw, some CI runners, a StringIO)
+        # may have no isatty at all. "Not a terminal" is the safe answer: it
+        # makes this echo, and a duplicated line is a worse transcript while a
+        # missing one is a broken record.
+        try:
+            return bool(stream.isatty())
+        except Exception:                             # noqa: BLE001
+            return False
+
+    is_tty = _isatty(sys.stdin)
+    prompt_via_input = is_tty and out is sys.stdout and _isatty(out)   # Q1
+    echo_the_line = not (is_tty and _isatty(out))                      # Q2
 
     def read_line() -> str:
-        if terminal_echoes:
-            return input(PROMPT)
-
-        out.write(PROMPT)
-        out.flush()
-        if is_tty:
-            line = input()
+        if prompt_via_input:
+            line = input(PROMPT)
         else:
-            line = sys.stdin.readline()
-            if line == "":
-                raise EOFError
-            line = line.rstrip("\n").rstrip("\r")
-        _write(out, line)
+            out.write(PROMPT)
+            out.flush()
+            if is_tty:
+                line = input()
+            else:
+                line = sys.stdin.readline()
+                if line == "":
+                    raise EOFError
+                line = line.rstrip("\n").rstrip("\r")
+        if echo_the_line:
+            _write(out, line)
         return line
 
     return read_line
@@ -506,11 +524,28 @@ def repl(assistant, read_line=None, out=None, banner: bool = True) -> int:
                 # only Exception, so a Ctrl-C anywhere in the corpus escaped
                 # every handler and took the session with it. It is the command
                 # a user is most likely to abandon.
+                # ⚠ WHAT ALREADY HAPPENED IS DISCLOSED, NOT JUST WHAT STOPPED.
+                # The first version said the command "was abandoned" and that
+                # nothing partial is printed, which reads as though the
+                # interrupt undid it. It did not: the probes that had already
+                # run were real provider calls, billable on a live key, and each
+                # went through the SDK wrapper like any other turn -- and the
+                # interrupt itself is recorded, because `client.py`'s wrapper
+                # catches BaseException and writes an event_type="exception"
+                # row before re-raising. The sibling handler below discloses the
+                # same class of thing about a single turn; a command that makes
+                # nine to eleven calls owes at least as much.
                 _write(out, "")
                 _write_all(out, _wrap(
-                    "Interrupted. The command was abandoned partway. Nothing "
+                    "Interrupted. The scoreboard is abandoned and nothing "
                     "partial is printed for it -- a corpus scored halfway is "
-                    "not a score -- and the session is still running.", 2))
+                    "not a score. WHAT ALREADY RAN IS NOT UNDONE: every probe "
+                    "up to the interrupt reached the provider, which on a live "
+                    "one means it was billed, and each was handled by the SDK "
+                    "exactly as any other turn -- rows in your ledger, if this "
+                    "session is keyed. The interrupt itself is recorded too, "
+                    "as an exception event. How many had run is not reported "
+                    "here. The session is still running.", 2))
                 continue
             if outcome is _QUIT:
                 _write(out, "  bye.")
