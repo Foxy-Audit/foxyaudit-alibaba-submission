@@ -75,15 +75,35 @@ PAN_SHAPES = sorted({context.format(_grouped(pan, sep))
                      for pan, sep, context
                      in itertools.product(REAL_PANS, ["", " ", "-"], _PAN_CONTEXTS)})
 
-#: Real, dialable numbers. ⚠ THE REPEATED-DIGIT AND INTERNATIONAL ONES ARE NOT
-#: DECORATION — a uniform-digit rule refused all of them, and ``+7 777`` is a
-#: live mobile prefix. 888-888-8888 is a real reachable number.
-REAL_PHONES = [
+#: ⚠ GENUINELY DIALABLE, and the ONLY numbers a "these are real" argument may
+#: cite. ``+7 777`` is a live Kazakh mobile prefix and ``888`` is a real NANP
+#: toll-free area code, so every one of these is an assignable number that
+#: happens to repeat a digit. A uniform-digit rule refused ALL 60 shapes built
+#: from them — see :data:`DIALABLE_PHONES` usage in test_policy_truth_1_9_0.py.
+DIALABLE_PHONES = [
+    "888-888-8888", "(888) 888-8888",
+    "+7 777 777 7777", "7777777777", "+7 (777) 777-7777",
+]
+
+#: RESERVED OR FICTIONAL, and labelled so on purpose. ``555-01xx`` is the NANP
+#: range set aside for fiction; ``555-5555``, ``111-1111`` and ``222-2222`` are
+#: placeholder patterns, not assignable numbers.
+#:
+#: ⚠ THEY ARE STILL OBLIGATIONS. A 555 number written in a clinical note is
+#: phone-shaped personal data, 1.8.0 detected it, and losing it would be a
+#: regression — the detector has no way to know a number is fictional and should
+#: not try. What they may NOT do is be counted as evidence that "real numbers"
+#: were lost. An earlier draft of this file called all fourteen "real, dialable",
+#: which inflated the justification figure for loosening the phone gate from
+#: 60/60 to 96/168. The decision was right; the number was not.
+FICTIONAL_PHONES = [
     "415-555-0134", "(415) 555-0134", "+1 415 555 0134", "4155550134",
     "415.555.0134", "1-800-555-0134",
-    "888-888-8888", "(888) 888-8888", "+7 777 777 7777", "7777777777",
-    "+7 (777) 777-7777", "555-555-5555", "111-111-1111", "(222) 222-2222",
+    "555-555-5555", "111-111-1111", "(222) 222-2222",
 ]
+
+#: Everything the phone detector must find, whatever its provenance.
+REAL_PHONES = DIALABLE_PHONES + FICTIONAL_PHONES
 
 _PHONE_CONTEXTS = ["{}", "call {} now", "Phone: {}.", "[{}]", '"{}"', "tel:{}",
                    "{},", "{}\n", "({})", "Fax: {}", "{}!", "{};"]
@@ -91,6 +111,12 @@ _PHONE_CONTEXTS = ["{}", "call {} now", "Phone: {}.", "[{}]", '"{}"', "tel:{}",
 #: Every phone, in every context. 168 shapes.
 PHONE_SHAPES = sorted({context.format(phone) for phone, context
                        in itertools.product(REAL_PHONES, _PHONE_CONTEXTS)})
+
+#: The 60 shapes built from genuinely dialable numbers. Split out so a claim
+#: about "real numbers lost" can be measured against real numbers only.
+DIALABLE_PHONE_SHAPES = sorted({context.format(phone) for phone, context
+                                in itertools.product(DIALABLE_PHONES,
+                                                     _PHONE_CONTEXTS)})
 
 
 # ── DIRECTION 2: things that must NOT be detected ────────────────────────────

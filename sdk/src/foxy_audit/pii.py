@@ -59,13 +59,16 @@ import re
 # populations — which every future change to either detector is measured against
 # before the rule is chosen. Do not measure a new boundary any other way.
 #
-# Measured on that set (540 PAN shapes, 168 phone shapes, 70 000+ identifiers):
+# Measured on that set — 540 PAN shapes, and the false-positive populations at
+# their checked-in sizes (sha256 20 000, random UUID 20 000, ZERO-HEAVY 10 057,
+# its strict subset 6 057, hyphenated ids 20 000). All four rows are one
+# measurement against the CURRENT corpora, so the columns are comparable:
 #
-#   card variant             PANs    sha256  rand uuid  ZERO-HEAVY  strict  hyph
-#   1.8.0                 504/540      90       33         2853      2461   2016
-#   letters+hyphen (S8)   324/540       0        0          411         0      0
-#   letters only  (S8b)   414/540       0        5         2627      2469   2016
-#   [1-9] lead + luhn     504/540       0        5            2         0   2016
+#   card variant           PANs    sha256  rand uuid  ZERO-HEAVY  strict   hyph
+#   1.8.0                 504/540      90       33        2849    2457    2016
+#   letters+hyphen (S8)   432/540       0        0         407     407       0
+#   letters only  (S8b)   504/540       0        5        2623    2457    2016
+#   [1-9] lead + luhn     504/540       0        5           2       0    2016
 #
 # The shipped row does not merely MATCH 1.8.0's count — it detects the IDENTICAL
 # SET of 540 shapes, asserted as a set difference in both directions, while every
@@ -74,8 +77,8 @@ import re
 #
 # THE CARD COST, STATED RATHER THAN HIDDEN: a PAN glued directly to a LETTER
 # (``4111111111111111x``) is not detected — 1.8.0 did not detect it either — and
-# 5 random UUIDs in 20 000 plus 2 of 10 120 zero-heavy ids still read as
-# ``credit_card`` (1.8.0: 33 and 2 853). Those residues are 16-digit,
+# 5 random UUIDs in 20 000 plus 2 of 10 057 zero-heavy ids still read as
+# ``credit_card`` (1.8.0: 33 and 2 849). Those residues are 16-digit,
 # 8-distinct-digit Luhn-passing runs no content-free rule separates from a PAN.
 _PHONE_BEFORE = r"(?<![0-9A-Za-z\-])"
 _PHONE_AFTER = r"(?![0-9A-Za-z\-])"
@@ -125,15 +128,19 @@ def _is_phone_number(digits: str) -> bool:
     ⚠ THIS WAS BRIEFLY ``not _is_uniform(digits)``, AND THAT DROPPED REAL
     NUMBERS. ``888-888-8888``, ``(888) 888-8888`` and ``+7 777 777 7777`` are all
     dialable — ``+7 777`` is a live mobile prefix — and a uniform-digit rule
-    refused every one of them. Measured: 96 of 168 real phone shapes lost.
+    refused every one of them. Measured on the shapes built from GENUINELY
+    DIALABLE repeated-digit numbers: 60 of 60 lost — all of them. (An earlier
+    figure of "96 of 168" counted reserved 555/111/222 numbers as real; the
+    decision was right, the number was inflated. See identifier_corpora.py.)
 
     The phone rule has no checksum, so any delimited 10-13 digit run is
     phone-shaped; that is correct, and is why ``4155550134`` is caught. The only
     run that is never a number in any plan is all zeros, which is the placeholder
     a developer types. So the test is exactly that and nothing wider.
 
-    Measured on the checked-in obligation set: 168/168 real phone shapes kept
-    (identical to 1.8.0), all-zero runs rejected, non-zero uniform runs kept.
+    Measured on the checked-in obligation set: all 168 phone shapes kept — the
+    identical SET 1.8.0 detected — all-zero runs rejected, non-zero uniform
+    runs kept.
     """
     return set(digits) != {"0"}
 
@@ -164,10 +171,10 @@ def _is_card_number(digits: str) -> bool:
       ``8888…`` pass Luhn at some lengths and are not card numbers. That is this
       function's whole job, and it is why it is not simply ``_luhn_ok``.
 
-    Measured over 10 120 zero-heavy ids (nil UUIDs, sequential UUIDs, zero-padded
-    counters, uniform runs): 2 853 fired on 1.8.0 and 2 here — and those 2 are
-    16-digit, 8-distinct-digit Luhn-passing runs that no content-free rule could
-    separate from a PAN. PAN recall is IDENTICAL to 1.8.0 — the same 504 of 540
+    Measured over 10 057 zero-heavy ids (nil UUIDs, sequential UUIDs, zero-padded
+    counters): 2 849 fired on 1.8.0 and 2 here — and those 2 are 16-digit,
+    8-distinct-digit Luhn-passing runs that no content-free rule could separate
+    from a PAN. PAN recall is IDENTICAL to 1.8.0 — the same 504 of 540
     obligation shapes, not merely the same count.
 
     Kept SEPARATE from :func:`_luhn_ok` on purpose. That function stays the plain

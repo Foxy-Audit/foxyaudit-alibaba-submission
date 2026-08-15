@@ -6,6 +6,18 @@ ruleset provenance exists to prevent. To change a rule, mint a NEW frozen module
 and point ruleset.CURRENT_VERSION at it; ruleset.drift() fails the suite if you
 edit a rule without doing so.
 
+⚠ THIS MODULE WAS REGENERATED IN PLACE THREE TIMES DURING 1.9.0's REVIEW, against
+the instruction directly above. That was defensible ONLY because the version was
+UNPUBLISHED: no tag existed, so no row anywhere named it and nothing could be
+made to lie. THE 1.9.0 TAG ENDS THAT. From the moment it is cut, this file is
+immutable like 2026.08.1 and 2026.08.2 before it, and any rule change — however
+small, however obviously a fix — mints 2026.08.4.
+
+The check that would have caught an in-place edit does not exist yet: explain()
+loads the definition a row NAMES but never compares the row's recorded
+`ruleset_hash` against `hash_of()` of what it loaded, so a silently edited
+registry replays as if nothing happened. Filed as SDK #220 in docs/known-issues.
+
 Supersedes 2026.08.2, which remains in the registry forever because rows name it.
 Three patterns moved and TWO VALIDATORS are now recorded, all in SDK 1.9.0, and
 the rule IDS are unchanged -- so a row stamped 2026.08.2 still resolves, it
@@ -21,7 +33,8 @@ simply resolves to the rules that were live when it was written:
   nothing. TWO BUILDS WITH THE SAME RULESET HASH EMITTED DIFFERENT RULE IDS,
   which is worse than having no hash. It rejects an all-zero run and NOTHING
   WIDER: `888-888-8888` and `+7 777 777 7777` are dialable numbers, and a
-  uniform-digit rule refused 96 of 168 real phone shapes.
+  uniform-digit rule refused all 60 shapes built from genuinely dialable
+  repeated-digit numbers.
 * `pii_detectors.credit_card` (SDK #215) -- the same boundary, but LETTERS ONLY,
   because excluding the hyphen deleted a fifth of the real PAN shapes
   (`card-4111111111111111`). The pattern now also leads with `[1-9]`, which is
@@ -29,7 +42,8 @@ simply resolves to the rules that were live when it was written:
   swept a preceding stray zero into the candidate and lost the PAN entirely
   (`ref 0 4111111111111111`). And a separator can only appear BETWEEN digits, so
   a redaction no longer eats the character after the number.
-  Measured: the IDENTICAL SET of 540 obligation shapes 1.8.0 detected.
+  Measured: the IDENTICAL SET 1.8.0 detected — 504 of the 540 obligation shapes,
+  with the same 36 missed by both (see SDK #219).
 * `pii_detectors.credit_card.validator` -- "luhn" becomes "luhn+distinct". Luhn
   alone accepts `0000000000000000` and `2222222222222222`; the candidate chains
   across a UUID's hyphens, so a NIL UUID reported `credit_card`. A NEW NAME

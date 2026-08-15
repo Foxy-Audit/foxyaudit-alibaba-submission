@@ -43,6 +43,7 @@ from pathlib import Path
 import pytest
 
 from foxy_audit import pii, policy
+from foxy_audit import ruleset as policy_module_ruleset
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -321,8 +322,9 @@ def test_215_the_phone_detects_the_IDENTICAL_SET_1_8_0_did():
     """The same obligation for the other detector, and the one that was missing.
 
     `888-888-8888`, `(888) 888-8888` and `+7 777 777 7777` are dialable numbers
-    that a uniform-digit rule refused — 96 of 168 shapes — while every
-    false-positive column looked better than ever.
+    that a uniform-digit rule refused — all 60 shapes built from genuinely
+    dialable repeated-digit numbers — while every false-positive column looked
+    better than ever.
     """
     old = _detected(OLD_PII, CORPORA.PHONE_SHAPES, "phone")
     new = _detected(pii, CORPORA.PHONE_SHAPES, "phone")
@@ -527,31 +529,64 @@ def test_215_the_card_redaction_eats_NEITHER_trailing_separator(sep, name):
     assert pii.redact("ref 6011-1111-1111-1117 ok") == "ref [REDACTED:credit_card] ok"
 
 
-@pytest.mark.parametrize(
-    "text",
-    CORPORA.NAMED_PLACEHOLDERS
-    # ⚠ THE UNIFORM RUNS ARE WHAT CATCHES IT NOW. Once the card pattern leads
-    # with `[1-9]`, a zero-led placeholder produces no candidate at all, so
-    # pointing redaction at plain `_luhn_ok` became invisible on those. A
-    # NON-ZERO uniform run still produces a candidate that only the VALIDATOR
-    # rejects, which is the one place the two can drift. Measured: without these
-    # the divergence mutation survives the entire suite.
-    + [t for t in CORPORA.UNIFORM_NONZERO_RUNS if len(t) >= 16])
-def test_215_REDACTION_agrees_with_detection_on_every_placeholder(text):
-    """The two must not drift, and only one of them was guarded.
+#: ⚠ ONE TABLE, EVERY GATED DETECTOR. Written this way because the same mistake
+#: has now been made three times in this phase: a fix covers the case it was
+#: reported against and misses the sibling detector that shares the mechanism.
+#:
+#: Each row is (label, inputs the gate must reject). Adding a gated detector
+#: means adding a row, and the property below is then asserted for it
+#: automatically — nobody has to remember to write a second test.
+_GATED_DETECTORS = [
+    # The card gate rejects a uniform run. Once the pattern leads with `[1-9]` a
+    # zero-led placeholder produces no candidate at all, so the NON-ZERO uniform
+    # runs are the only inputs where the validator is the thing doing the work —
+    # and therefore the only ones that can catch redaction skipping it.
+    ("credit_card", [t for t in CORPORA.UNIFORM_NONZERO_RUNS if len(t) >= 16]),
+    # The phone gate rejects an all-zero run, in every shape one is written.
+    ("phone", ["0000000000", "000-000-0000", "call 000-000-0000 now",
+               "(000) 000-0000", "0000000000000", "+0 000 000 0000"]),
+]
 
-    ``detect_pii`` and ``redact`` run the same regexes on purpose, but the GATES
-    are separate call sites — so redaction could rewrite a span detection never
-    reported. That hands the model a mangled prompt for a finding the ledger does
-    not contain: ``2222222222222222`` becomes ``[REDACTED:credit_card]`` and
+
+@pytest.mark.parametrize(
+    "label,text",
+    [(label, text) for label, texts in _GATED_DETECTORS for text in texts]
+    + [("credit_card", t) for t in CORPORA.NAMED_PLACEHOLDERS]
+    + [("phone", t) for t in CORPORA.NAMED_PLACEHOLDERS])
+def test_215_REDACTION_agrees_with_DETECTION_for_every_gated_detector(label, text):
+    """Neither detector may rewrite a span it did not report.
+
+    ``detect_pii`` and ``redact`` share their regexes on purpose, but each gate
+    is a SEPARATE CALL SITE — so redaction can rewrite something detection
+    rejected. That hands the model a mangled prompt for a finding the ledger does
+    not contain: the customer's ``000-000-0000`` becomes ``[REDACTED:phone]`` and
     nothing anywhere says why.
 
-    Measured as a mutation: pointing redaction at plain ``_luhn_ok`` while
-    leaving detection alone passed every other guard in this file.
+    ⚠ THIS GUARD WAS CARD-ONLY FOR ONE ROUND, AND THE HOLE WAS REAL. Dropping the
+    ``_is_phone_number`` gate from ``redact()`` left the whole 563-test suite
+    green while ``redact("call 000-000-0000 now")`` returned
+    ``"call [REDACTED:phone] now"`` against ``detect_pii() == []``. The card
+    equivalent failed three tests. Same property, one detector guarded.
     """
-    assert "credit_card" not in pii.detect_pii(text, ""), text
-    assert "[REDACTED:credit_card]" not in pii.redact(text), (
-        "redaction rewrote a card span detection did not report")
+    assert label not in pii.detect_pii(text, ""), text
+    assert f"[REDACTED:{label}]" not in pii.redact(text), (
+        f"redaction rewrote a {label} span detection did not report")
+
+
+def test_215_the_drift_table_covers_every_gate_the_module_has():
+    """CONTROL. A gate added without a row here is a gate nobody checks.
+
+    Derived from the module rather than eyeballed: every ``_is_*`` predicate
+    ``redact`` consults must appear in ``_GATED_DETECTORS``. That is what makes
+    "one table, every detector" a property instead of an intention.
+    """
+    gates = {name for name in dir(pii)
+             if name.startswith("_is_") and name != "_is_uniform"}
+    assert gates == {"_is_card_number", "_is_phone_number"}, (
+        f"pii gained or lost a gate: {sorted(gates)}. Add a row to "
+        f"_GATED_DETECTORS with inputs that gate REJECTS, or this property "
+        f"silently stops covering it.")
+    assert {label for label, _ in _GATED_DETECTORS} == {"credit_card", "phone"}
 
 
 def test_215_the_card_redaction_no_longer_eats_the_following_space():
@@ -1366,3 +1401,57 @@ def test_the_chain_blob_formula_is_untouched():
     source = chain.read_text(encoding="utf-8")
     assert '{org_id}|{prompt_hash}|{response_hash}|{token_count}|{policy_tag}|{seq}' \
         in source, "the V1 chain blob's field order moved"
+
+
+def test_S8e_an_unknown_validator_is_ANSWERED_not_raised(tmp_path):
+    """A definition can name a validator this build does not implement.
+
+    A partial upgrade, a hand-edited registry, a definition backported without
+    its code — and before this it escaped the PUBLIC `explain` path as a
+    KeyError traceback. The tool failing to say "I cannot" is the one outcome
+    introspect.py promises never to produce.
+    """
+    import json
+
+    from foxy_audit import hashing, introspect
+
+    prompt = "card 4111111111111111"
+    key = "k" * 32
+    row = {"event_id": "11111111-1111-4111-8111-111111111111",
+           "commitment_alg": "hmac-sha256",
+           "prompt_hash": hashing.commitment_hex(prompt, key, None),
+           "policy_tag": "hipaa",
+           "event_metadata": {"ruleset_version": "2026.08.3",
+                              "policy_rules": ["phi.credit_card"]}}
+    export = tmp_path / "logs.json"
+    export.write_text(json.dumps({"logs": [row]}), encoding="utf-8")
+
+    # A definition naming a validator nobody implements.
+    broken = json.loads(json.dumps(policy_module_ruleset.load("2026.08.3")))
+    broken["pii_detectors"]["credit_card"]["validator"] = "luhn+invented+2099"
+
+    # replay() is low level: it RAISES, so a caller can decide.
+    with pytest.raises(introspect.UnknownValidator):
+        introspect.replay(broken, prompt, "hipaa")
+
+    # explain() is public: it ANSWERS.
+    original = policy_module_ruleset.load
+    policy_module_ruleset.load = lambda v: broken if v == "2026.08.3" else original(v)
+    try:
+        result = introspect.explain(prompt, row["event_id"], str(export), key)
+    finally:
+        policy_module_ruleset.load = original
+
+    assert result.status == "unknown_ruleset", result.status
+    assert "luhn+invented+2099" in result.message
+    assert "Upgrade foxy-audit" in result.message
+    assert result.commitment_verified is True
+
+
+def test_S8e_a_KNOWN_validator_still_replays(tmp_path):
+    """CONTROL. "Answer instead of raising" must not have become "never replay"."""
+    from foxy_audit import introspect
+
+    definition = policy_module_ruleset.load("2026.08.3")
+    matches = introspect.replay(definition, "card 4111111111111111", "hipaa")
+    assert {m.rule_id for m in matches} == {"phi.credit_card"}

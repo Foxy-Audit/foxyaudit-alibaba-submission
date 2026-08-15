@@ -30,9 +30,11 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   (`Tel-4155550134`) is no longer detected, nor a card glued to a letter
   (`4111111111111111x` — 1.8.0 missed that one too); 5 random UUIDs in 20 000
   still read as `credit_card`, against 1.8.0's 33. **Detection of real card and
-  phone numbers is otherwise IDENTICAL to 1.8.0** — the same 540 card shapes and
-  168 phone shapes, asserted as a set rather than a count — and a card redaction
-  no longer eats the character after the number.
+  phone numbers is otherwise IDENTICAL to 1.8.0** — the same shapes, asserted as
+  a set difference in both directions rather than as a count (504 of 540 card
+  shapes and all 168 phone shapes in the test corpus; 1.8.0 missed the same 36,
+  see SDK #219) — and a card redaction no longer eats the character after the
+  number.
 - **`mode="redact"` now blocks when a finding survives its own redaction.** A
   finding redaction cannot act on — a Presidio match, a value in a non-string
   field — used to be stamped `redacted` while the content reached the model. The

@@ -237,15 +237,27 @@ def _luhn_ok(digits: str) -> bool:
 #: Redefining ``"luhn"`` to today's stricter gate would make those rows look like
 #: lies about themselves.
 #:
-#: A dict rather than a chain of ``if``s because an UNKNOWN name must be a loud
-#: KeyError, not a silent pass: a build asked to replay a validator it does not
-#: carry cannot honestly report anything, and :func:`explain` already has a
-#: ``unknown_ruleset`` answer for exactly that situation.
+#: A dict rather than a chain of ``if``s so an UNKNOWN name is a lookup failure
+#: rather than a silent pass. It is raised as :class:`UnknownValidator`, and the
+#: PUBLIC paths turn that into an answer — see :func:`explain`'s
+#: ``unknown_ruleset`` branch. A traceback out of ``foxy explain`` would be the
+#: tool failing to say "I cannot", which is the one thing this module promises.
 _VALIDATORS = {
     "luhn": lambda digits: _luhn_ok(digits),
     "luhn+distinct": lambda digits: _luhn_ok(digits) and len(set(digits)) > 1,
     "not-all-zero": lambda digits: set(digits) != {"0"},
 }
+
+
+class UnknownValidator(LookupError):
+    """A frozen definition names a validator this build does not implement.
+
+    Raised by :func:`replay`, which is a low-level function whose caller decides
+    how loud to be. :func:`explain` catches it and answers ``unknown_ruleset``:
+    a row written by a newer SDK cannot be replayed honestly by an older one, and
+    saying so is the correct outcome — the same answer that function already
+    gives when the VERSION itself is unknown.
+    """
 
 
 def replay(definition: dict, text: str, policy_tag: str) -> list:
@@ -271,23 +283,28 @@ def replay(definition: dict, text: str, policy_tag: str) -> list:
     if prefix:
         for label, entry in sorted(definition.get("pii_detectors", {}).items()):
             for found in _compile(entry).finditer(text):
-                # The definition NAMES the card detector's validator, so honour
-                # the one THIS ROW's ruleset recorded — otherwise the replay
-                # reports a match the SDK itself would have discarded, or
-                # discards one it kept.
+                # The definition NAMES each detector's validator, so honour the
+                # one THIS ROW's ruleset recorded — otherwise the replay reports
+                # a match the SDK itself would have discarded, or discards one it
+                # kept.
                 #
                 # ⚠ EACH NAME KEEPS ITS OWN MEANING FOREVER. Rows stamped
                 # 2026.08.1 / .2 record "luhn" and replay under the plain
                 # checksum, which is what ran on the day they were written —
                 # including its acceptance of `0000000000000000`. From 2026.08.3
-                # the gate also rejects a leading zero and a single repeated
-                # digit (pii._is_card_number), so it is a DIFFERENT name rather
-                # than a redefinition of the old one. An unknown name applies no
-                # validator, which over-reports rather than silently under-
-                # reporting: a replay from a newer SDK should look too eager, not
-                # falsely clean.
+                # the card gate ALSO rejects a single repeated digit, and the
+                # phone gate (recorded for the first time) rejects an all-zero
+                # run. Those are DIFFERENT names, never redefinitions.
+                #
+                # An unrecognised name RAISES rather than skipping the check.
+                # Applying no validator would over-report — a plausible-looking
+                # answer that is wrong — and this function's whole purpose is to
+                # replay what actually ran. `explain` turns it into an
+                # `unknown_ruleset` answer.
                 validator = entry.get("validator")
                 if validator:
+                    if validator not in _VALIDATORS:
+                        raise UnknownValidator(validator)
                     digits = re.sub(r"\D", "", found.group())
                     if not _VALIDATORS[validator](digits):
                         continue
@@ -385,7 +402,29 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             event_id=event_id, policy_tag=policy_tag,
             ruleset_version=str(version), commitment_verified=True)
 
-    matches = replay(definition, str(prompt), policy_tag)
+    try:
+        matches = replay(definition, str(prompt), policy_tag)
+    except UnknownValidator as unknown:
+        # ⚠ THE PUBLIC PATH ANSWERS; IT DOES NOT RAISE. A row can name a ruleset
+        # this build CARRIES while that definition names a VALIDATOR it does not
+        # implement — a partial upgrade, a hand-edited registry, a definition
+        # from a newer release backported without its code. Before this, that
+        # escaped `foxy explain` as a KeyError traceback: the tool failing to say
+        # "I cannot" is the one outcome this module promises never to produce.
+        #
+        # Reported as `unknown_ruleset` rather than a new outcome because it is
+        # the same situation from the caller's side — this SDK cannot honestly
+        # replay this row — and `OUTCOMES` is a documented vocabulary that
+        # surfaces (the CLI, ExplainResult consumers) already switch on.
+        return ExplainResult(
+            "unknown_ruleset",
+            f"Row {event_id} names ruleset {version!r}, whose definition uses "
+            f"the validator {str(unknown)!r} — this SDK does not implement it "
+            f"(it has: {', '.join(sorted(_VALIDATORS))}). Upgrade foxy-audit to "
+            f"replay this row. Replaying it without that validator would report "
+            f"matches the SDK which wrote the row had discarded.",
+            event_id=event_id, policy_tag=policy_tag,
+            ruleset_version=str(version), commitment_verified=True)
     recorded = list((metadata.get("policy_rules") or []))
     if not matches:
         return ExplainResult(

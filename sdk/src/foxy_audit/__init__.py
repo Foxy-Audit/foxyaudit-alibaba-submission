@@ -65,10 +65,13 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #       * a card number is not one repeated digit, and NEITHER detector accepts
 #         an all-zero run — in the validators. NOT "not one repeated digit" for
 #         the phone: 888-888-8888 and +7 777 777 7777 are dialable, and a
-#         uniform-digit rule refused 96 of 168 real phone shapes.
-#     Together they take the zero-heavy identifier class from 2 853 in 10 120
-#     to 2, with card and phone recall IDENTICAL to 1.8.0 — the same 540 and 168
-#     obligation shapes, asserted as sets rather than counts.
+#         uniform-digit rule refused all 60 shapes built from genuinely
+#         dialable repeated-digit numbers.
+#     Together they take the zero-heavy identifier class from 2 849 in 10 057
+#     to 2, with card and phone detection IDENTICAL to 1.8.0 — the same SETS,
+#     asserted as set differences in both directions rather than as counts.
+#     (Identical, not complete: 1.8.0 missed 36 of the 540 card shapes and this
+#     release misses the same 36. See SDK #219.)
 #     ⚠ THE COST: a PHONE glued directly to a hyphen with no separating space
 #     ("Tel-4155550134") is no longer detected; a CARD glued to a LETTER
 #     ("4111111111111111x") is not either, and 1.8.0 did not detect that one
