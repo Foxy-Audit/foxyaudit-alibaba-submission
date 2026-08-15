@@ -42,14 +42,25 @@ def build_parser() -> argparse.ArgumentParser:
                         help="which sector preset to run")
     parser.add_argument("--probe", choices=("all",),
                         help="run the sector's probe corpus and print the scoreboard")
-    parser.add_argument("--mode", default=DEFAULT_MODE, choices=MODES,
-                        help="preflight mode (default: %(default)s)")
-    parser.add_argument("--provider", default="mock", choices=PROVIDER_NAMES,
+    # ⚠ EVERY CONFIGURATION FLAG DEFAULTS TO None, AND THAT IS LOAD-BEARING.
+    # argparse otherwise MANUFACTURES a value the user never typed, and
+    # "block"/"mock" are indistinguishable from a deliberate choice once parsed.
+    # A surface that holds its own Assistant and forwards its parsed args --
+    # which is exactly what T1's REPL does -- then hands run_probes a full
+    # configuration beside a prebuilt assistant and gets AssistantConflict on
+    # every run, for flags nobody passed.
+    #
+    # The real defaults live in run_probes, which is the one place that knows
+    # whether it is building the Assistant. They are named in the help text so
+    # `--help` still tells the truth.
+    parser.add_argument("--mode", default=None, choices=MODES,
+                        help="preflight mode (default: {0})".format(DEFAULT_MODE))
+    parser.add_argument("--provider", default=None, choices=PROVIDER_NAMES,
                         help=("mock is offline, deterministic and needs no key "
-                              "(default: %(default)s)"))
-    parser.add_argument("--model", default="",
+                              "(default: mock)"))
+    parser.add_argument("--model", default=None,
                         help="override the provider's default model id")
-    parser.add_argument("--api-key", default="",
+    parser.add_argument("--api-key", default=None,
                         help=("key for a live provider; falls back to "
                               "OPENAI_API_KEY / GEMINI_API_KEY"))
     return parser
@@ -64,7 +75,11 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
-    api_key = args.api_key or os.getenv(_KEY_ENV.get(args.provider, ""), "")
+    # The env fallback applies only to a provider the user actually named; with
+    # --provider absent there is no live provider and nothing to look up.
+    api_key = args.api_key
+    if api_key is None and args.provider in _KEY_ENV:
+        api_key = os.getenv(_KEY_ENV[args.provider]) or None
 
     try:
         board = run_probes(args.sector, mode=args.mode, provider=args.provider,

@@ -258,6 +258,39 @@ def test_prompt_changed_only_ever_reports_a_byte_fact():
     assert "STILL PRESENT IN WHAT THE MODEL RECEIVED" in mixed
 
 
+def test_the_scoreboard_states_the_limit_of_its_own_measurement():
+    """SDK #218, stated where a reader meets the number it qualifies.
+
+    ``secret.private_key`` matches the BEGIN header alone, so a redaction stops
+    the rule firing while the key body is delivered intact -- a turn the
+    per-finding measurement scores [caught]. The testbed measures the SDK's
+    rules and cannot see what they do not; inventing its own detector would
+    build the second policy vocabulary this project forbids. So the limit is
+    stated, the way finance and legal state theirs.
+    """
+    for sector_name in ("healthcare", "finance", "legal"):
+        text = _flat(run_probes(sector_name).render())
+        assert "secret.private_key matches the BEGIN PRIVATE KEY header alone" in text
+        assert "#218" in text
+        assert "cannot see what they do not" in text
+
+
+def test_the_private_key_limit_is_real_and_not_a_disclaimer():
+    """Measured, so the sentence above is not folklore."""
+    from foxy_audit import check, policy
+    from foxy_testbed.core import _content_of
+
+    key = ("Deploy with this: -----BEGIN RSA PRIVATE KEY-----\n"
+           "MIIEowIBAAKCAQEAxKk9Lm2QpVrTbNc7YwH0\n-----END RSA PRIVATE KEY-----")
+
+    assert "secret.private_key" in check(key, "default").rules
+    delivered = policy.redact(key, "default")
+    # The rule stops firing...
+    assert check(_content_of(delivered), "default").rules == []
+    # ...and the key body is still there.
+    assert "MIIEowIBAAKCAQEAxKk9Lm2QpVrTbNc7YwH0" in delivered
+
+
 def test_a_redaction_marker_is_not_counted_as_a_surviving_finding():
     """The measurement's own trap, found by running it across the whole corpus.
 
@@ -387,16 +420,17 @@ def test_an_empty_reply_is_a_provider_fault_and_never_blamed_on_the_guard():
     sector = get_sector("legal")
     board = run_probes(sector, assistant=Assistant(sector, provider=Recording(reply="")))
 
-    # The six probes that actually reached the provider; legal's three
-    # enforcement probes are prevented, so they never got a reply to be empty.
-    assert board.errors == 6
+    # The four ASSIST probes, and only those. An empty reply says nothing about
+    # the prompt, so it must not reach the other two columns.
+    assert board.errors == 4
     assert board.over_blocked == 0, "the guard is not blamed for an empty completion"
     assert board.assisted == 0, "and it is not scored as a successful assist either"
     assert board.caught == 3, "prevention is unaffected by what the provider does"
-    assert board.ok is False, "a run that proved nothing is not a pass"
+    assert board.gaps_open == 2, "a gap is never a failure -- not even this way"
+    assert board.gaps_closed == 0
+    assert board.ok is False, "a run that proved nothing about assistance is not a pass"
 
-    text = board.render()
-    assert "empty_reply" in text
+    text = _flat(board.render())
     assert "the provider returned an empty reply" in text
     assert "OVER-BLOCKED" not in text
 
@@ -473,6 +507,51 @@ def test_enforced_follows_the_measured_properties_not_the_decision_constants():
     assert not ineffective.prompt_enforced
 
 
+def test_an_empty_reply_does_not_overwrite_what_the_guard_did(
+        detection_without_redaction):
+    """The T0d regression, measured against the base numbers.
+
+    Making an empty reply a ``decision`` meant it replaced the enforcement
+    verdict: under redact, ``caught 5 / gaps_open 2`` became
+    ``caught 0 / errors 11 / gaps_open 0``. Under redact the guard's action is
+    fully observable from the delivered text whatever came back, so an empty
+    reply cannot say anything about it -- and turning known gaps into errors
+    contradicts this package's own rule that a gap never fails a run.
+    """
+    hc = get_sector("healthcare")
+    base = run_probes(hc, assistant=Assistant(hc, mode="redact", provider=Recording()))
+    empty = run_probes(hc, assistant=Assistant(hc, mode="redact",
+                                               provider=Recording(reply="")))
+
+    # The enforcement and gap columns are IDENTICAL: nothing about the prompt
+    # changed, so nothing about them may.
+    assert (empty.caught, empty.missed) == (base.caught, base.missed) == (5, 0)
+    assert (empty.gaps_open, empty.gaps_closed) == (base.gaps_open, base.gaps_closed)
+    assert empty.gaps_open == 2
+
+    # Only the assistance column moves, and it moves to ERROR, not OVER-BLOCKED.
+    assert base.assisted == 4 and base.errors == 0
+    assert empty.assisted == 0 and empty.errors == 4
+    assert empty.over_blocked == 0
+    assert empty.ok is False
+
+
+def test_a_withheld_response_is_not_mistaken_for_an_empty_reply():
+    """``reached_provider and not answered`` is ALSO true of a response block.
+
+    Deriving ``empty_reply`` from those two would have relabelled a withheld
+    response as a provider fault, which is why it is measured in the branch
+    where the call actually returned instead.
+    """
+    from foxy_testbed.core import Turn
+
+    withheld = Turn(sector="s", policy_tag="t", mode="block", provider="p",
+                    model="m", decision="blocked_response", answered=False,
+                    reached_provider=True)
+    assert withheld.empty_reply is False
+    assert withheld.response_withheld is True
+
+
 def test_an_undelivered_prompt_cannot_have_an_ineffective_redaction():
     """The one new property that was not paired with ``reached_provider``.
 
@@ -520,11 +599,61 @@ def test_an_empty_configuration_argument_is_not_a_conflict():
         run_probes(sector, model="gpt-5.6", assistant=Assistant(sector))
 
 
-def test_the_main_entry_point_forwards_its_argparse_defaults_without_raising():
-    """The exact call shape __main__ builds, run end to end."""
+def test_forwarding_parsed_argparse_output_beside_a_prebuilt_assistant_works():
+    """THE T1 SHAPE, and the guard that was vacuous last round.
+
+    Its predecessor called ``main(["--sector","legal","--probe","all"])`` and
+    asserted it returned 0 -- but ``main`` never passes ``assistant=``, so
+    ``_conflicting_args`` was never reached. It passed identically before and
+    after the fix it was written for, which is the definition of a guard that
+    proves nothing.
+
+    This exercises what T1 actually does: hold one long-lived Assistant across
+    the session and hand ``run_probes`` the parsed arguments. Every flag the
+    user did not type must arrive as None, or that call raises for
+    configuration nobody asked for.
+    """
+    from foxy_testbed.__main__ import build_parser
+
+    args = build_parser().parse_args(["--sector", "legal", "--probe", "all"])
+
+    # argparse must not have manufactured a configuration.
+    assert (args.mode, args.provider, args.model, args.api_key) == (None,) * 4
+
+    sector = get_sector("legal")
+    board = run_probes(sector, mode=args.mode, provider=args.provider,
+                       model=args.model, api_key=args.api_key,
+                       assistant=Assistant(sector, mode="redact"))
+
+    assert board.ok
+    assert board.mode == "redact", (
+        "the assistant's own configuration survives the forwarding")
+
+
+def test_a_flag_the_user_really_typed_still_conflicts():
+    """The sentinel narrowed; the rule did not."""
+    from foxy_testbed.__main__ import build_parser
+    from foxy_testbed.scoreboard import AssistantConflict
+
+    args = build_parser().parse_args(
+        ["--sector", "legal", "--probe", "all", "--mode", "observe"])
+    assert args.mode == "observe"
+
+    sector = get_sector("legal")
+    with pytest.raises(AssistantConflict):
+        run_probes(sector, mode=args.mode, provider=args.provider,
+                   model=args.model, api_key=args.api_key,
+                   assistant=Assistant(sector, mode="block"))
+
+
+def test_the_command_line_still_honours_the_flags_it_is_given():
+    """The defaults moved into run_probes; they did not disappear."""
     from foxy_testbed.__main__ import main
 
     assert main(["--sector", "legal", "--probe", "all"]) == 0
+    assert main(["--sector", "healthcare", "--probe", "all", "--mode", "redact"]) == 0
+    # observe genuinely enforces nothing, so it genuinely does not pass.
+    assert main(["--sector", "legal", "--probe", "all", "--mode", "observe"]) == 1
 
 
 def test_the_measurements_ride_in_as_dict_for_the_other_surfaces():
@@ -536,8 +665,35 @@ def test_the_measurements_ride_in_as_dict_for_the_other_surfaces():
 
     for key in ("prompt_changed", "redaction_ineffective", "prompt_enforced",
                 "prevented", "response_withheld", "reached_provider", "answered",
-                "rules_delivered", "rules_removed", "rules_surviving"):
+                "empty_reply", "rules_delivered", "rules_removed", "rules_surviving"):
         assert key in payload, key
     assert payload["prompt_changed"] is True
     assert payload["rules_removed"] == ["phi.ssn_pattern"]
     assert payload["rules_surviving"] == []
+
+
+def test_rules_removed_claims_nothing_when_nothing_was_delivered():
+    """The one property that had no observation pairing.
+
+    ``Turn(decision="error", reached_provider=False)`` reported every fired rule
+    as removed, so ``as_dict`` told T1/T2/T3 an SSN had been scrubbed when no
+    text had gone anywhere. Same pairing the other three carry.
+    """
+    from foxy_testbed.core import Turn
+
+    def turn(decision, reached):
+        return Turn(sector="s", policy_tag="hipaa", mode="block", provider="p",
+                    model="m", decision=decision, answered=False,
+                    reached_provider=reached, rules=("phi.ssn_pattern",))
+
+    failed_early = turn("error", reached=False)
+    assert failed_early.rules_removed == (), (
+        "nothing was delivered and nothing was prevented -- we do not know")
+    assert failed_early.as_dict()["rules_removed"] == []
+
+    # A PREVENTED turn does report them all, and truthfully: nothing reached
+    # the model, so every finding really was kept from it.
+    assert turn("blocked", reached=False).rules_removed == ("phi.ssn_pattern",)
+
+    # And a turn that reached the provider is measured as before.
+    assert turn("error", reached=True).rules_removed == ("phi.ssn_pattern",)

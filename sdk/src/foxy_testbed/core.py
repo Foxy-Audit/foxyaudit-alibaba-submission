@@ -74,24 +74,23 @@ DECISION_BLOCKED_RESPONSE = "blocked_response"
 #: Not a policy outcome — the provider itself failed. Its own value so a
 #: scoreboard can never count a broken run as a clean one.
 DECISION_ERROR = "error"
-#: Also not a policy outcome: the call succeeded and the model returned nothing.
-#:
-#: Its own value for the same reason DECISION_ERROR has one. Without it, an
-#: empty completion arrived at the scoreboard as ``allowed`` with no rules
-#: fired, and the assistance column — which correctly measures a non-empty
-#: reply — scored it OVER-BLOCKED. So a provider returning "" printed
-#: ``[OVER-BLOCKED] ... reached the model: yes`` and failed the run, blaming
-#: the guard for something the guard did not do. ``_openai_text`` returns ""
-#: for a payload with no text, so this is a live path, not a hypothetical.
-DECISION_EMPTY_REPLY = "empty_reply"
+# ⚠ AN EMPTY REPLY IS NOT A DECISION, AND MAKING IT ONE WAS A REGRESSION.
+# It was briefly ``DECISION_EMPTY_REPLY``, which meant it OVERWROTE whatever the
+# guard had done. Measured: under redact, a provider returning "" turned
+# `caught 5 / gaps_open 2` into `caught 0 / errors 11 / gaps_open 0` — including
+# known-gap probes becoming errors, which contradicts this package's own rule
+# that a gap never fails a run.
+#
+# The reason it is wrong is that the two facts are independent. What the guard
+# did to the PROMPT is fully observable from the delivered text (`rules_delivered`)
+# no matter what came back, so an empty reply says nothing about enforcement. It
+# is an ASSISTANCE fact and lives in that column alone — see `Turn.empty_reply`.
 
-#: The two outcomes that are about the PROVIDER rather than the policy. Neither
-#: proves anything about enforcement or assistance, so both fail a run.
-PROVIDER_FAULTS = (DECISION_ERROR, DECISION_EMPTY_REPLY)
+#: The outcomes that are about the PROVIDER rather than the policy.
+PROVIDER_FAULTS = (DECISION_ERROR,)
 
 DECISIONS = (DECISION_ALLOWED, DECISION_FLAGGED, DECISION_BLOCKED,
-             DECISION_REDACTED, DECISION_BLOCKED_RESPONSE, DECISION_ERROR,
-             DECISION_EMPTY_REPLY)
+             DECISION_REDACTED, DECISION_BLOCKED_RESPONSE, DECISION_ERROR)
 
 # ── re-checking the delivered text ────────────────────────────────────────────
 #: The markers the SDK substitutes for redacted spans — ``pii.redact`` writes
@@ -161,6 +160,17 @@ class Turn:
     #: because it distinguishes "nothing was rewritten at all" from "rewritten,
     #: and a finding survived anyway", which are different sentences to a reader.
     prompt_changed: bool = False
+    #: The call returned normally and what came back was empty.
+    #:
+    #: AN ASSISTANCE FACT, and only that. Set where it is observed — in the
+    #: branch of ``ask`` where the wrapped call actually returned — rather than
+    #: derived from ``reached_provider and not answered``, which is also true of
+    #: a response WITHHELD by the response scan and would have mislabelled that
+    #: as a provider fault. It is not a ``decision`` value either: letting it
+    #: overwrite the decision erased five correct enforcement verdicts and
+    #: turned two known gaps into errors. ``_openai_text`` returns "" for a
+    #: payload with no text, so this is a live path.
+    empty_reply: bool = False
     #: The rules that still fire against the text the provider ACTUALLY got —
     #: ``check()`` re-run on the delivered prompt under the same policy tag.
     #: Empty when nothing was delivered. This is the per-finding measurement
@@ -187,8 +197,11 @@ class Turn:
     event_id: str = ""
 
     latency_ms: float = 0.0
-    #: Provider failure detail (type + status), never a response body. Empty
-    #: unless ``decision`` is "error".
+    #: The exception type and its message from a provider that RAISED, never a
+    #: response body — ``providers.ProviderError`` carries a status code and an
+    #: exception type by construction, so nothing the user typed can ride out
+    #: through here. Empty unless ``decision`` is "error"; an empty REPLY is not
+    #: a failure and leaves this empty (see :attr:`empty_reply`).
     error: str = ""
 
     # ── what the guard did, in four words that cannot be confused ─────────────
@@ -233,7 +246,20 @@ class Turn:
     @property
     def rules_removed(self) -> tuple:
         """Findings that fired on the submitted text and no longer fire on the
-        delivered text. THE ENFORCEMENT, per finding."""
+        delivered text. THE ENFORCEMENT, per finding.
+
+        ⚠ EMPTY WHEN NOTHING WAS DELIVERED AND NOTHING WAS PREVENTED, which is
+        the same pairing the other claims carry. Without it, a turn that failed
+        before the provider was called reported every fired rule as removed —
+        ``Turn(decision="error", reached_provider=False)`` told a surface an SSN
+        had been scrubbed when no text had gone anywhere. A prevented turn DOES
+        report them all, and truthfully: nothing reached the model.
+
+        (``rules_surviving`` needs no such pairing: with nothing delivered it is
+        already empty, which claims nothing.)
+        """
+        if not (self.reached_provider or self.prevented):
+            return ()
         return tuple(r for r in self.rules if r not in self.rules_delivered)
 
     @property
@@ -314,6 +340,7 @@ class Turn:
                 "reached_provider": self.reached_provider,
                 "prompt_changed": self.prompt_changed,
                 "redaction_ineffective": self.redaction_ineffective,
+                "empty_reply": self.empty_reply,
                 "rules_delivered": list(self.rules_delivered),
                 "rules_removed": list(self.rules_removed),
                 "rules_surviving": list(self.rules_surviving),
@@ -411,6 +438,7 @@ class Assistant:
         self._delivered = None
         started = time.perf_counter()
         reply, error = "", ""
+        empty_reply = False
         try:
             reply = self._guarded(
                 prompt=prompt,
@@ -438,13 +466,12 @@ class Assistant:
             # raised". A provider that returns "" delivered nothing to the
             # caller, and scoring that as a successful assist would be the same
             # label-over-observation mistake in the other column.
+            #
+            # It does NOT touch `decision`: what the guard did to the prompt is
+            # a separate, still-observable fact. See the note above DECISIONS.
             answered = bool(str(reply or "").strip())
-            if not answered:
-                # A PROVIDER outcome, not a policy one. See DECISION_EMPTY_REPLY.
-                decision = DECISION_EMPTY_REPLY
-                error = ("the provider returned an empty reply; there is "
-                         "nothing to score in the assistance column")
-            elif pre.triggered:
+            empty_reply = not answered
+            if pre.triggered:
                 decision = (DECISION_REDACTED if self.mode == "redact"
                             else DECISION_FLAGGED)
             else:
@@ -479,6 +506,7 @@ class Assistant:
             answered=answered,
             reached_provider=self._reached,
             prompt_changed=prompt_changed,
+            empty_reply=empty_reply,
             rules_delivered=rules_delivered,
             reply=reply if answered else "",
             rules=tuple(pre.rules),
@@ -493,6 +521,6 @@ class Assistant:
 
 
 __all__ = ["Assistant", "DECISIONS", "DECISION_ALLOWED", "DECISION_BLOCKED",
-           "DECISION_BLOCKED_RESPONSE", "DECISION_EMPTY_REPLY", "DECISION_ERROR",
-           "DECISION_FLAGGED", "DECISION_REDACTED", "DEFAULT_MODE", "MODES",
-           "PROVIDER_FAULTS", "Turn"]
+           "DECISION_BLOCKED_RESPONSE", "DECISION_ERROR", "DECISION_FLAGGED",
+           "DECISION_REDACTED", "DEFAULT_MODE", "MODES", "PROVIDER_FAULTS",
+           "Turn"]

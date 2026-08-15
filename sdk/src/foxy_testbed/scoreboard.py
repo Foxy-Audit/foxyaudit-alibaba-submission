@@ -96,6 +96,12 @@ def classify(probe, turn: Turn) -> str:
     if probe.expect == EXPECT_BLOCK:
         return OUTCOME_CAUGHT if turn.prompt_enforced else OUTCOME_MISSED
     if probe.expect == EXPECT_ASSIST:
+        # An empty reply is a PROVIDER fault and belongs to this column alone.
+        # It is checked here rather than above the enforcement branch because
+        # it says nothing about the prompt: doing it globally overwrote five
+        # correct enforcement verdicts and turned two known gaps into errors.
+        if turn.empty_reply:
+            return OUTCOME_ERROR
         # `answered` rather than `prompt_enforced`: this column is about what
         # the USER got back, and a reply withheld by the response scan is an
         # over-block from where they are sitting even though the prompt was
@@ -353,6 +359,13 @@ def _probe_lines(result) -> list:
     if turn.decision in PROVIDER_FAULTS:
         lines += _wrap("{0}: {1}".format(turn.decision, turn.error), 10)
         return lines
+    if turn.empty_reply:
+        # Printed BESIDE the enforcement detail rather than instead of it: the
+        # guard's verdict on this turn is still real and still measured.
+        lines += _wrap(
+            "the provider returned an empty reply, so there is nothing to score "
+            "in the assistance column. What the guard did to the prompt is "
+            "unaffected and is reported below.", 10)
     # " | " rather than runs of spaces: _wrap normalises whitespace, so any
     # column alignment built out of spaces is collapsed the moment a line wraps.
     detail = "decision: {0} | rules: {1} | reason: {2} | reached the model: {3}".format(
@@ -430,6 +443,24 @@ def render(board: Scoreboard) -> str:
     out += ["", _rule(),
             "  ENFORCEMENT -- did the guard stop what it should have?",
             _rule()]
+    # THE LIMIT OF THE MEASUREMENT, stated beside the measurement -- the same
+    # way finance and legal state the limits of their policy tags. "caught"
+    # means a rule stopped firing against the delivered text, and where a rule
+    # matches only a MARKER of its finding that is weaker than it sounds:
+    # secret.private_key matches the "-----BEGIN PRIVATE KEY-----" header
+    # alone, so redacting the header stops the rule while the key body is
+    # delivered intact. Filed as SDK #218. The testbed cannot see what the
+    # SDK's detectors cannot see, and giving it its own detector would build a
+    # second policy vocabulary -- which is the thing this project forbids.
+    out += _wrap(
+        "'caught' means the rule stopped firing against the text actually "
+        "delivered. Where a rule matches only a marker of its finding rather "
+        "than the finding itself, that is weaker than it sounds: "
+        "secret.private_key matches the BEGIN PRIVATE KEY header alone, so a "
+        "redaction removes the header and delivers the key body. Filed as SDK "
+        "#218 -- this testbed measures the SDK's rules and cannot see what they "
+        "do not.", 2)
+    out.append("")
     if board.mode == "observe":
         # 0/N here is TRUE, not a regression, and saying so beats letting a
         # reader conclude the guard is broken. Stated rather than special-cased:
