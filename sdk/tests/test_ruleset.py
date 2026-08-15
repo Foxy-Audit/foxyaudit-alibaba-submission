@@ -72,7 +72,7 @@ def test_the_named_version_survives_the_current_rules_changing():
 PUBLISHED = {
     "2026.08.1": "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0",
     "2026.08.2": "59888ec66b3e2b84f550412ec5f2372e9d90f4a8df66a9e5ad9193f7c17b1f62",
-    "2026.08.3": "aca4b85412e2103bfbce344a9fac0628584bdcb0f9457e7e4e627be253a4c662",
+    "2026.08.3": "46611104bead6e8a6292c83498c1c6ea2b2afa046bd065daf582bcde836f5936",
 }
 
 

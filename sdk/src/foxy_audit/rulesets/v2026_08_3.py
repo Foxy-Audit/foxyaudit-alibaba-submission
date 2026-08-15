@@ -29,14 +29,14 @@ string determines none of them. See the "WHAT THE HASH COVERS" section of
 ruleset.py. The guard for that change is
 tests/test_policy_truth_1_9_0.py::test_217_every_marker_is_inert_under_every_rule.
 
-sha256 over canonical JSON: aca4b85412e2103bfbce344a9fac0628584bdcb0f9457e7e4e627be253a4c662
+sha256 over canonical JSON: 46611104bead6e8a6292c83498c1c6ea2b2afa046bd065daf582bcde836f5936
 """
 
 VERSION = "2026.08.3"
 
 DEFINITION = {'pii_detectors': {'credit_card': {'flags': [],
-                                   'pattern': '(?<![0-9A-Za-z\\-])(?:\\d[ '
-                                              '\\-]?){13,19}(?![0-9A-Za-z\\-])',
+                                   'pattern': '(?<![0-9A-Za-z])(?:\\d[ '
+                                              '\\-]?){13,19}(?![0-9A-Za-z])',
                                    'validator': 'luhn'},
                    'email': {'flags': [], 'pattern': '[\\w.\\-]+@[\\w\\-]+\\.\\w+'},
                    'ip_address': {'flags': [],

@@ -189,9 +189,9 @@ class PolicyDecision:
 #: the marker still says which family was removed.
 #:
 #: The map is the data; the guard is
-#: ``tests/test_policy.py::test_every_redaction_marker_is_inert``, which builds
-#: every marker and re-evaluates it under every tag. A future rule that collides
-#: fails there instead of shipping.
+#: ``tests/test_policy_truth_1_9_0.py::test_217_every_marker_is_inert_under_every_rule``,
+#: which builds every marker and re-evaluates it under every tag. A future rule
+#: that collides fails there instead of shipping.
 _MARKER_OVERRIDE = {"injection.jailbreak": "prompt_injection"}
 
 
@@ -211,8 +211,36 @@ def _as_text(prompt) -> str:
         return str(prompt)
 
 
-#: The markers redaction substitutes for the spans it removes.
-_MARKER_RE = re.compile(r"\[REDACTED:[^\]\n]*\]")
+#: Every label that can appear inside a marker THIS SDK emits — the prompt rules'
+#: (via :func:`_marker`) and the personal-data detectors' (``pii``). DERIVED from
+#: the rule tables rather than typed out, so a rule added tomorrow is covered the
+#: day it exists.
+_MARKER_LABELS = frozenset(
+    [_MARKER_OVERRIDE.get(rule_id, rule_id.split(".", 1)[1])
+     for rule_id, _s, _r in _INJECTION_RULES + _SECRET_RULES]
+) | frozenset(pii.REDACTION_LABELS)
+
+#: ⚠ A CLOSED SET, AND THAT IS A SECURITY PROPERTY, NOT TIDINESS.
+#:
+#: This was ``\[REDACTED:[^\]\n]*\]`` — any bracketed span, CONTENT AND ALL. So
+#: :func:`surviving_rules` re-evaluated a copy of the prompt with that text
+#: deleted, and a customer could defeat the check by typing brackets around the
+#: offending value. Measured: under ``hipaa`` + ``mode="redact"``,
+#:
+#:     note [REDACTED: dob 03/14/1982] end
+#:
+#: fired ``phi.presidio:date_time``, was delivered BYTE-IDENTICAL, and
+#: ``surviving_rules`` returned ``[]`` — no block, date of birth to the model,
+#: row stamped ``redacted``. Exactly the defect #216 exists to close, reachable
+#: by anyone who guesses the marker format.
+#:
+#: Matching only the exact labels means the neutralised span can contain NOTHING
+#: BUT a fixed word from our own vocabulary. A customer may still type
+#: ``[REDACTED:ssn]`` verbatim, and it is then replaced by the stand-in — which
+#: is harmless, because there is no room inside for a finding to hide.
+_MARKER_RE = re.compile(
+    r"\[REDACTED:(?:{0})\]".format("|".join(re.escape(label)
+                                            for label in sorted(_MARKER_LABELS))))
 
 #: What a marker becomes before the redacted prompt is RE-EVALUATED.
 #:

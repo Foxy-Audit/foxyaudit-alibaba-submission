@@ -330,7 +330,8 @@ def test_resolve_does_not_rewrite_the_wire_tag():
     assert policy.resolve_policy_tag("nonsense") is None
     # The evidence-bearing field is untouched by any of this: policy.py exposes
     # no function that maps a tag to a replacement tag for emission, and the
-    # end-to-end proof lives in test_policy_tag_on_the_wire below.
+    # end-to-end proof lives in
+    # test_policy_tag_on_the_wire_is_not_rewritten_by_the_alias below.
 
 
 def test_response_side_resolves_the_same_aliases():

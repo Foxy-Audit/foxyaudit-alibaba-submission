@@ -16,9 +16,13 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   was flanked by another *digit* — so `sk-ABCDEF0123456789ABCDEFGH`, a bare
   UUID, a commit sha and **15.3% of real SHA-256 digests** reported `phone`
   under `hipaa`/`gdpr`, and `mode="block"` refused the prompt. They now require
-  a token boundary. *Cost:* a number glued straight to a hyphen with no space
-  (`Tel-4155550134`) is no longer detected; every phone shape that matched in a
-  delimited context still does.
+  a token boundary — a **letter or hyphen** for phones (the bare UUID's digit run
+  sits between hyphens), a **letter** for cards (no UUID group reaches the card's
+  13-digit minimum, and excluding hyphens there would drop
+  `card-4111111111111111`). *Cost:* a phone glued straight to a hyphen with no
+  space (`Tel-4155550134`) is no longer detected, nor a card glued to a letter
+  (`4111111111111111x`); 5 UUIDs in 20 000 still read as `credit_card`, against
+  1.8.0's 33. Every phone shape that matched in a delimited context still does.
 - **`mode="redact"` now blocks when a finding survives its own redaction.** A
   finding redaction cannot act on — a Presidio match, a value in a non-string
   field — used to be stamped `redacted` while the content reached the model. The
@@ -113,7 +117,7 @@ content-blind strings inside `event_metadata`:
 {"decision": "blocked", "blocked_reason": "prompt_injection",
  "policy_rules": ["injection.ignore_previous"],
  "ruleset_version": "2026.08.3",
- "ruleset_hash": "aca4b854…"}
+ "ruleset_hash": "46611104…"}
 ```
 
 `ruleset_version` names a **frozen** definition. The SDK ships one

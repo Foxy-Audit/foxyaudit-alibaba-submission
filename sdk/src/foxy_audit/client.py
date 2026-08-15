@@ -316,7 +316,12 @@ class FoxyClient:
         if effective_mode == "block":
             return {"kind": "block", "hash_prompt": prompt,
                     "rules": list(decision.rules), "signals": list(decision.signals),
-                    "reason": decision.reason, "org_tightened": org_tightened}
+                    "reason": decision.reason, "org_tightened": org_tightened,
+                    # Carried so _block_message can name the value the workspace
+                    # ACTUALLY set. When org_tightened is True this IS the org's
+                    # sdk_enforcement — see org_policy.resolve's two tightening
+                    # branches, which both return the org's own mode.
+                    "effective_mode": effective_mode}
         # redact_value scrubs string leaves in a prompt of ANY shape (str or a
         # structured messages= list/dict), so the wrapped fn receives a redacted
         # prompt of the same shape — never the raw original.
@@ -352,6 +357,7 @@ class FoxyClient:
             return {"kind": "block", "hash_prompt": prompt,
                     "rules": list(decision.rules), "signals": list(decision.signals),
                     "reason": decision.reason, "org_tightened": org_tightened,
+                    "effective_mode": effective_mode,
                     "redact_ineffective": surviving}
         new_args, new_kwargs = _replace_prompt(args, kwargs, redacted)
         return {"kind": "redact", "hash_prompt": prompt, "args": new_args, "kwargs": new_kwargs,
@@ -927,10 +933,18 @@ def _block_message(policy: str, plan: dict) -> str:
                  "record a redaction that did not remove the finding.".format(
                      ", ".join(plan["redact_ineffective"])))
     if plan.get("org_tightened"):
+        # NAMES THE VALUE THE WORKSPACE ACTUALLY SET, not a guess at it. This
+        # sentence hardcoded `sdk_enforcement=block`, which was true while a
+        # tightening could only ever produce a block. The redact-noop route made
+        # it reachable with `sdk_enforcement=redact` too — org_policy.resolve
+        # returns ("redact", True) when the local mode is unset — so it started
+        # telling customers a value their org had not set, which is the same
+        # wrong-place problem this message exists to prevent.
         base += (" This block came from your Foxy Audit workspace policy "
-                 "(sdk_enforcement=block), not from this code's own mode. "
+                 "(sdk_enforcement={0}), not from this code's own mode. "
                  "Change it in Settings, or set FOXY_ORG_POLICY=off to ignore "
-                 "workspace policy in this deployment.")
+                 "workspace policy in this deployment.".format(
+                     plan.get("effective_mode") or "block"))
     return base
 
 

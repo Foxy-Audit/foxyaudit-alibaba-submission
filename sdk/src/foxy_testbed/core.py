@@ -112,14 +112,22 @@ def _content_of(delivered) -> str:
 
     ⚠ WHY THIS IS NOT CHEATING, AND IS IN FACT THE ONLY CORRECT MEASUREMENT.
     The question a re-check asks is "did the offending CONTENT reach the model",
-    and a ``[REDACTED:...]`` marker is the evidence that it did not. Leaving the
-    markers in makes one rule report itself as surviving its own redaction:
-    ``policy.redact`` builds the marker from the rule id's suffix, so
-    ``injection.jailbreak`` becomes ``[REDACTED:jailbreak]`` — and that pattern
+    and a ``[REDACTED:...]`` marker is the evidence that it did not.
+
+    Leaving the markers in USED TO make one rule report itself as surviving its
+    own redaction: ``policy.redact`` built the marker from the rule id's suffix,
+    so ``injection.jailbreak`` became ``[REDACTED:jailbreak]`` — and that pattern
     matches the literal word ``jailbreak``. Measured across every rule the probe
-    corpus exercises, it is the ONLY one that does this today (the other eight
-    all clear), which is exactly why it would have been missed by a
-    single-rule fixture.
+    corpus exercises, it was the ONLY one that did it, which is exactly why a
+    single-rule fixture would have missed it.
+
+    ⚠ SDK #217 FIXED THAT IN 1.9.0. The marker is now
+    ``[REDACTED:prompt_injection]`` and every marker the SDK emits is inert, so
+    the collision this paragraph describes no longer happens. The stand-in STAYS
+    anyway, for two reasons that outlive the one rule: the testbed must not
+    depend on every FUTURE marker also being inert, and the SDK's own re-check
+    (``policy.surviving_rules``, #216) neutralises markers for exactly the same
+    reason. Two independent defences, deliberately.
 
     So the marker is stripped and nothing else is. If the SDK ever changes the
     marker format this stops matching, every redacted probe re-flags, and the
