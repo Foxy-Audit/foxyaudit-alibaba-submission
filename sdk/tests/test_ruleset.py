@@ -72,6 +72,7 @@ def test_the_named_version_survives_the_current_rules_changing():
 PUBLISHED = {
     "2026.08.1": "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0",
     "2026.08.2": "59888ec66b3e2b84f550412ec5f2372e9d90f4a8df66a9e5ad9193f7c17b1f62",
+    "2026.08.3": "aca4b85412e2103bfbce344a9fac0628584bdcb0f9457e7e4e627be253a4c662",
 }
 
 
@@ -154,6 +155,69 @@ def test_the_coverage_ids_specifically_resolve():
                      response_policy.adapters.COVERAGE_NONE):
         rule_id = response_policy.coverage_rule(coverage)
         assert rule_id in explained, rule_id
+
+
+def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_three_patterns():
+    """The ruleset identity claim for SDK 1.9.0, made checkable.
+
+    If rules change and the version does not, two different rule sets become
+    indistinguishable in the ledger. The converse matters too: a version that
+    moved further than its release notes say is just as unresolvable. So this
+    diffs 2026.08.2 against 2026.08.3 field by field and names the whole
+    difference — the three patterns #215 and #218 moved, and nothing else.
+
+    Rule IDS are asserted identical separately, because that is what decides
+    whether a row stamped 2026.08.2 still resolves at all.
+    """
+    old = ruleset.load("2026.08.2")
+    new = ruleset.load("2026.08.3")
+
+    def flatten(node, prefix=""):
+        if isinstance(node, dict):
+            out = {}
+            for key, value in node.items():
+                out.update(flatten(value, f"{prefix}.{key}" if prefix else str(key)))
+            return out
+        return {prefix: node}
+
+    moved = {path for path, value in flatten(old).items()
+             if flatten(new).get(path) != value}
+    assert moved == {
+        "pii_detectors.phone.pattern",
+        "pii_detectors.credit_card.pattern",
+        "prompt_rules.secret.secret.private_key.pattern",
+        # The RESPONSE side's copy, and it must be here. response_policy builds
+        # `response_secret.*` from `policy._SECRET_RULES` — the same compiled
+        # objects, re-identified — so the two can never disagree about what a
+        # private key looks like. Nothing about the response side's BEHAVIOUR
+        # moves: there is no response-side redaction, and a wider span does not
+        # change what `search` finds. What moves is the pattern this version
+        # records, which is exactly what an auditor replays.
+        "response_rules.always.response_secret.private_key.pattern",
+    }, sorted(moved)
+
+    assert set(flatten(old)) == set(flatten(new)), "a FIELD was added or removed"
+    assert ruleset.explained_ids(old) == ruleset.explained_ids(new), \
+        "the rule id vocabulary moved — a row naming 2026.08.2 may stop resolving"
+
+
+def test_a_row_naming_the_OLD_version_still_replays_against_the_old_rules():
+    """The whole point of freezing, exercised on the rules 1.9.0 changed.
+
+    `introspect.replay` recompiles from the definition a ROW names. A 2026.08.2
+    row that reported `phi.phone` on an identifier must keep reporting it — that
+    is what its evidence said on the day it was written — while the same text
+    under 2026.08.3 does not.
+    """
+    from foxy_audit import introspect
+
+    text = "550e8400-e29b-41d4-a716-446655440000"
+    old_hits = {m.rule_id for m in introspect.replay(ruleset.load("2026.08.2"),
+                                                     text, "hipaa")}
+    new_hits = {m.rule_id for m in introspect.replay(ruleset.load("2026.08.3"),
+                                                     text, "hipaa")}
+    assert "phi.phone" in old_hits, old_hits
+    assert "phi.phone" not in new_hits, new_hits
 
 
 def test_2026_08_1_is_still_the_version_that_could_not_explain_them():

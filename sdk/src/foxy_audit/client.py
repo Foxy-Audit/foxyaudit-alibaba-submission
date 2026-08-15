@@ -14,6 +14,27 @@ After the wrapped function returns, the SDK:
 The wrapped function's own return value is passed through unchanged, and the
 SDK's own bookkeeping can never raise into the host application.
 
+PROMPT REDACTION FAILS CLOSED, PER FINDING
+------------------------------------------
+Under ``mode="redact"``, a row is stamped ``decision="redacted"`` only when the
+findings that fired NO LONGER FIRE against the text that would be sent. The
+redacted prompt is evaluated a second time (with the ``[REDACTED:…]`` markers
+neutralised) and anything still matching means the call is BLOCKED instead, with
+a ``blocked`` event_type.
+
+The measurement is per finding, never per byte. "Did the text change?" is
+satisfied by a neighbouring redaction that DID work — an SSN scrubbed beside a
+Presidio-only date of birth — and the date of birth still reaches the model
+under a ``redacted`` label. Findings redaction cannot act on include a Presidio
+match with no regex to substitute, a match spanning a structured prompt's JSON
+envelope rather than any one string leaf, and a value held in a non-string field.
+
+The customer chose redact because they wanted that content kept away from the
+model; recording an enforcement action that did not occur, in a ledger whose
+whole claim is that its evidence is honest, is the one thing this must not do.
+See ``policy.surviving_rules`` and the ``redact_ineffective`` branch in
+:meth:`FoxyClient._evaluate_preflight`.
+
 RESPONSE SCANNING (OWASP LLM05) — WHAT IT PROMISES, AND WHAT IT DOES NOT
 -----------------------------------------------------------------------
 ``response_scan`` ("off" | "observe" | "block", default **observe**) inspects
@@ -300,6 +321,38 @@ class FoxyClient:
         # structured messages= list/dict), so the wrapped fn receives a redacted
         # prompt of the same shape — never the raw original.
         redacted = policy_engine.redact_value(prompt, policy)
+        surviving = policy_engine.surviving_rules(decision, redacted, policy)
+        if surviving:
+            # FAIL CLOSED. A rule that fired on the prompt STILL fires against
+            # the text that would be sent, so the finding the guard objected to
+            # would reach the model while the row said "redacted". This module's
+            # own docstring names the hazard, on the response side: "'redacted'
+            # would silently mean 'did nothing'". It was live on the PROMPT side.
+            #
+            # PER FINDING, never per byte. "Did the text change?" is satisfied by
+            # a neighbouring redaction that worked — an SSN scrubbed beside a
+            # Presidio-only date of birth — and the date of birth still goes.
+            # See policy.surviving_rules.
+            #
+            # Blocking, not allowing-and-relabelling: the customer chose redact
+            # BECAUSE they wanted that content kept away from the model.
+            #
+            # kind="block", so the emitted row is a block ROW: a "blocked"
+            # event_type from _emit_block, not this mode's "redacted" one
+            # carrying a blocked decision. The event_type differs per mode, and
+            # it is the TYPE — not the decision — that the Compliance Passport,
+            # /v1/stats and the judge routing read.
+            #
+            # policy_rules stays the FULL set that fired. Nothing was delivered,
+            # so every finding is honest evidence for this row; recording only
+            # the survivors would understate what the guard saw. Which ones
+            # survived is named in the exception, not on the wire — a new
+            # event_metadata key is validated per request and would 422 the whole
+            # batch against a backend that does not know it yet.
+            return {"kind": "block", "hash_prompt": prompt,
+                    "rules": list(decision.rules), "signals": list(decision.signals),
+                    "reason": decision.reason, "org_tightened": org_tightened,
+                    "redact_ineffective": surviving}
         new_args, new_kwargs = _replace_prompt(args, kwargs, redacted)
         return {"kind": "redact", "hash_prompt": prompt, "args": new_args, "kwargs": new_kwargs,
                 "decision": "redacted", "rules": list(decision.rules),
@@ -860,6 +913,19 @@ def _block_message(policy: str, plan: dict) -> str:
     the same wrong-place problem this message exists to prevent."""
     base = (f"Foxy Audit blocked a prompt under policy '{policy}' "
             f"(reason: {plan['reason']}). The wrapped function was not called.")
+    if plan.get("redact_ineffective"):
+        # A developer whose code says mode="redact" and who gets a BLOCK needs to
+        # know it was not a misconfiguration, and WHICH finding could not be
+        # removed — otherwise the only way to find out is to guess. Content-blind:
+        # rule ids are the same labels the row already carries in policy_rules,
+        # and nothing from the prompt appears.
+        base += (" mode='redact' was requested, but {0} still matched the "
+                 "redacted prompt, so the finding would have reached the model "
+                 "anyway (a finding with nothing to substitute — a Presidio "
+                 "match, a value in a non-string field, a match spanning a "
+                 "structured prompt's envelope). Foxy Audit blocks rather than "
+                 "record a redaction that did not remove the finding.".format(
+                     ", ".join(plan["redact_ineffective"])))
     if plan.get("org_tightened"):
         base += (" This block came from your Foxy Audit workspace policy "
                  "(sdk_enforcement=block), not from this code's own mode. "

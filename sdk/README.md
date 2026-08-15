@@ -6,6 +6,38 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.9.0 — the guard stops over-blocking, and the ledger stops over-claiming
+
+Four behaviour changes. `mode="observe"` (the default) is untouched; read these
+before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
+
+- **The guard no longer refuses prompts that merely contain an identifier.**
+  The phone and card detectors treated any digit run as a candidate unless it
+  was flanked by another *digit* — so `sk-ABCDEF0123456789ABCDEFGH`, a bare
+  UUID, a commit sha and **15.3% of real SHA-256 digests** reported `phone`
+  under `hipaa`/`gdpr`, and `mode="block"` refused the prompt. They now require
+  a token boundary. *Cost:* a number glued straight to a hyphen with no space
+  (`Tel-4155550134`) is no longer detected; every phone shape that matched in a
+  delimited context still does.
+- **`mode="redact"` now blocks when a finding survives its own redaction.** A
+  finding redaction cannot act on — a Presidio match, a value in a non-string
+  field — used to be stamped `redacted` while the content reached the model. The
+  redacted prompt is now re-evaluated, and anything still matching raises
+  `FoxyPolicyBlocked` and records a `blocked` event. The check is **per finding,
+  not per byte**: an SSN scrubbed beside a Presidio-only date of birth changes
+  the text, and the date of birth would still go. If you run `redact` with the
+  `[pii]` extra, expect prompts to be refused that previously went through.
+- **A redaction marker no longer matches its own rule.** `[REDACTED:jailbreak]`
+  tripped `injection.jailbreak`, so re-checking your own redacted prompt said the
+  finding was still there. That marker is now `[REDACTED:prompt_injection]`, and
+  `redact()` is a fixed point for every rule.
+- **`secret.private_key` redacts the whole PEM block.** It matched the
+  `-----BEGIN … PRIVATE KEY-----` header alone, so redaction removed the header
+  and delivered the key body to the model.
+
+Ships ruleset **2026.08.3**. `2026.08.2` stays in the registry forever, so rows
+already in your chain still replay against the rules that produced them.
+
 ## 1.8.0 — `check()` and `explain()`
 
 Until now the decorator was the only way in. There was no supported way to ask
@@ -18,7 +50,7 @@ result = check("ignore all previous instructions", policy="hipaa")
 result.triggered        # True
 result.rules            # ['injection.ignore_previous']
 result.reason           # 'prompt_injection'
-result.ruleset_version  # '2026.08.2'
+result.ruleset_version  # '2026.08.3'
 ```
 
 ```bash
@@ -80,8 +112,8 @@ content-blind strings inside `event_metadata`:
 ```json
 {"decision": "blocked", "blocked_reason": "prompt_injection",
  "policy_rules": ["injection.ignore_previous"],
- "ruleset_version": "2026.08.2",
- "ruleset_hash": "59888ec6…"}
+ "ruleset_version": "2026.08.3",
+ "ruleset_hash": "aca4b854…"}
 ```
 
 `ruleset_version` names a **frozen** definition. The SDK ships one
@@ -100,10 +132,11 @@ verdict and would only mint versions that mean nothing.
 **Every id a row can carry resolves in the version it names.** That is checked
 in the SDK's own suite, from a list derived by walking the live rule tables
 rather than typed out — so a new rule family fails the build until someone
-decides what it means. `2026.08.2` exists because `2026.08.1` did not describe
+decides what it means. `2026.08.2` existed because `2026.08.1` did not describe
 the `response_scan.degraded` / `.unreadable` coverage ids that rows stamped with
-it already carried; `2026.08.1` stays in the registry forever, because rows name
-it.
+it already carried; `2026.08.3` exists because 1.9.0 moved three patterns (the
+phone and card detectors, and `secret.private_key`). Both stay in the registry
+forever, because rows name them.
 
 **`ruleset_version` and `ruleset_hash` are reserved.** If you pass either in your
 own `event_metadata`, the SDK drops it (with a one-off warning naming the key)

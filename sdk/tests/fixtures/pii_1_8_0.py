@@ -12,45 +12,11 @@ from __future__ import annotations
 
 import re
 
-# A phone or card number is a STANDALONE TOKEN, not a fragment of a longer one.
-#
-# The old lookarounds — ``(?<!\d)`` / ``(?!\d)`` — excluded an adjacent DIGIT but
-# not an adjacent LETTER or HYPHEN, so a 10–13 digit run sitting inside an
-# alphanumeric identifier read as personal data. Measured on 1.8.0:
-#
-#   * ``sk-ABCDEF0123456789ABCDEFGH``          -> ['phone']
-#   * ``550e8400-e29b-41d4-a716-446655440000`` -> ['phone']  (a bare UUID)
-#   * 20 000 real SHA-256 digests -> 15.3% 'phone', 0.45% 'credit_card'
-#   * 20 000 random UUIDs         -> 2.8% flagged
-#
-# Under ``hipaa``/``gdpr`` in ``mode="block"`` every one of those REFUSED A
-# LEGITIMATE PROMPT before the model call — the guard over-blocking on an API
-# key, a request id or a commit sha.
-#
-# The fix tightens the LOOKAROUNDS and nothing else. No UUID/hex/base64
-# exclusion: each would be a new rule that can itself be wrong, and what was
-# actually wrong here is that a token boundary was defined as "not a digit" when
-# identifiers are made of letters and hyphens too.
-#
-# THE COST, STATED RATHER THAN HIDDEN: a number glued directly to a hyphen with
-# no separating space (``Tel-4155550134``) is no longer detected. Every shape the
-# old regex accepted in a DELIMITED context still matches — 56 448 generated
-# phone shapes across 21 surrounding contexts, zero lost. test_pii.py
-# regenerates that corpus rather than trusting this sentence.
-_TOKEN_BEFORE = r"(?<![0-9A-Za-z\-])"
-_TOKEN_AFTER = r"(?![0-9A-Za-z\-])"
-
 _EMAIL_RE = re.compile(r"[\w.\-]+@[\w\-]+\.\w+")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-_PHONE_RE = re.compile(
-    _TOKEN_BEFORE + r"(?:\+?\d{1,3}[ .\-]?)?\(?\d{3}\)?[ .\-]?\d{3}[ .\-]?\d{4}"
-    + _TOKEN_AFTER)
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[ .\-]?)?\(?\d{3}\)?[ .\-]?\d{3}[ .\-]?\d{4}(?!\d)")
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-# The card candidate carried the IDENTICAL lookarounds, and 0.45% of real
-# SHA-256 digests cleared Luhn on a run inside them. Fixing only the phone would
-# have left the same over-block firing under a different label.
-_CARD_CANDIDATE_RE = re.compile(
-    _TOKEN_BEFORE + r"(?:\d[ \-]?){13,19}" + _TOKEN_AFTER)
+_CARD_CANDIDATE_RE = re.compile(r"(?<!\d)(?:\d[ \-]?){13,19}(?!\d)")
 
 
 def _luhn_ok(digits: str) -> bool:

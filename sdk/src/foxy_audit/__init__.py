@@ -32,6 +32,71 @@ from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 from .introspect import CheckResult, ExplainResult, check, explain
 
+# 1.9.0 — S8. Four defects where the guard said something that was not true.
+#
+# MINOR, and every item below is a BEHAVIOUR CHANGE rather than a bug fix in the
+# invisible sense. Read them before upgrading a deployment that runs
+# mode="block" or mode="redact"; mode="observe" (the default) is untouched.
+#
+#   #215 — pii._PHONE_RE / pii._CARD_CANDIDATE_RE OVER-BLOCKED.
+#     Their lookarounds excluded an adjacent DIGIT but not an adjacent LETTER or
+#     HYPHEN, so a digit run inside an identifier read as personal data:
+#     `sk-ABCDEF0123456789ABCDEFGH`, a bare UUID, a commit sha, and 15.3% of real
+#     SHA-256 digests all reported `phone` (0.45% also cleared Luhn as
+#     `credit_card`). Under hipaa/gdpr in mode="block" each REFUSED A LEGITIMATE
+#     PROMPT before the model call. The lookarounds now require a token boundary.
+#     ⚠ THE COST: a number glued directly to a hyphen with no separating space
+#     ("Tel-4155550134") is no longer detected. Every phone shape the old regex
+#     accepted in a delimited context still matches — 56 448 generated shapes,
+#     zero lost. A card redaction also stops eating the space that follows it.
+#
+#   #216 — mode="redact" NOW BLOCKS when a finding survives its own redaction.
+#     The guard stamped decision="redacted" without ever checking that the
+#     finding had gone, so a rule redaction could not act on — a Presidio match,
+#     a match spanning a structured prompt's JSON envelope, a value in a
+#     non-string field — produced a ledger row claiming an enforcement action
+#     that did not occur while the content reached the model. The redacted prompt
+#     is now RE-EVALUATED (with the [REDACTED:…] markers neutralised), and
+#     anything still matching raises FoxyPolicyBlocked with a `blocked`
+#     event_type rather than a `redacted` one carrying a blocked decision.
+#
+#     PER FINDING, NEVER PER BYTE. "Did the text change?" is satisfied by a
+#     neighbouring redaction that worked: an SSN scrubbed beside a Presidio-only
+#     date of birth changes bytes, and the date of birth still goes. That is the
+#     same false claim, narrower.
+#     ⚠ A deployment on mode="redact" with the [pii] extra installed will see
+#     prompts refused that used to go through. That is the point: they were going
+#     through with the finding intact. Cost: one extra policy evaluation on the
+#     guarded redact path — never on a clean prompt, never under observe.
+#
+#   #217 — a redaction marker no longer matches its own rule.
+#     `injection.jailbreak` became `[REDACTED:jailbreak]`, which that rule's
+#     pattern matches, so a customer re-checking their own redacted prompt was
+#     told the finding was still there. Its marker is now
+#     `[REDACTED:prompt_injection]`; the other eight prompt rules are unchanged.
+#     Redaction is now a fixed point for every rule.
+#
+#   #218 — secret.private_key redacts the WHOLE PEM BLOCK.
+#     It matched the "-----BEGIN … PRIVATE KEY-----" header alone, so redaction
+#     removed the header and DELIVERED THE KEY BODY to the model. The span now
+#     runs header → footer, or header → end of text when there is no footer.
+#     Detection is unchanged; what a redaction removes is not.
+#
+# Ships ruleset 2026.08.3 — three patterns moved (#215's two detectors and
+# #218's rule, the last recorded on both the prompt and response sides), the
+# rule IDS are unchanged, and 2026.08.2 stays in the registry forever so rows
+# naming it still replay against the rules that produced them. #217 changed a
+# substitution string, which determines no rule id and is therefore outside what
+# the ruleset hash covers; its guard is
+# tests/test_policy_truth_1_9_0.py::test_217_every_marker_is_inert_under_every_rule.
+#
+# Proven against CHECKED-IN COPIES of the 1.8.0 policy and pii modules
+# (sdk/tests/fixtures/), not against goldens written on the branch: every input
+# that changed verdict is enumerated, and everything else is asserted identical
+# across eight policy tags. The chain's data_blob
+# (org_id|prompt_hash|response_hash|token_count|policy_tag|seq) is untouched, so
+# nothing here can move a hash.
+#
 # 1.8.0 — S5. check() and explain() become public API.
 #
 #   check(prompt, policy=...)  -> CheckResult. "Would this trip anything?"
@@ -132,7 +197,7 @@ from .introspect import CheckResult, ExplainResult, check, explain
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 __all__ = ["CheckResult", "ExplainResult", "FoxyClient", "FoxyConfig",
            "FoxyPolicyBlocked", "FoxyResponseBlocked", "audit", "check",
            "explain", "__version__"]

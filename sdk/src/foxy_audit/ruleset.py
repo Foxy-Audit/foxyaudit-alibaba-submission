@@ -64,7 +64,7 @@ log = logging.getLogger("foxy_audit")
 #: Bumped by hand when the rules change. Date-based rather than semver: this
 #: numbers a body of RULES, not an API, and "which rules were live in August
 #: 2026" is the question an auditor actually asks.
-CURRENT_VERSION = "2026.08.2"
+CURRENT_VERSION = "2026.08.3"
 
 _SCHEMA = "foxy-ruleset-v1"
 

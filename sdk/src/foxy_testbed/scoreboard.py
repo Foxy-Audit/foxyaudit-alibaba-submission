@@ -376,6 +376,13 @@ def _probe_lines(result) -> list:
     )
     lines += _wrap(detail, 10)
     if turn.redaction_ineffective:
+        # ⚠ TRIPWIRE — THIS BLOCK MUST NEVER RENDER AGAINST THE REAL SDK, AND IT
+        # IS NOT DEAD CODE. Since SDK 1.9.0 the guard re-evaluates the redacted
+        # prompt and BLOCKS when any finding survives (#216), so a turn reaching
+        # here is either an SDK older than 1.9.0 or a regression of that fix.
+        # Keep it: it costs nothing, it is the only thing that would SAY so, and
+        # it stays correct for a turn recorded by an older SDK.
+        #
         # The loudest lines this renderer produces, because they are what a
         # reader would otherwise never suspect. PER FINDING, and both lists:
         # a mixed prompt has one rule genuinely enforced and another delivered
@@ -394,9 +401,18 @@ def _probe_lines(result) -> list:
             "on the measured findings rather than the label.".format(
                 ", ".join(turn.rules_surviving), len(turn.rules_surviving)), 10)
         if not turn.prompt_changed:
+            # The narrower half of the same tripwire: not one byte moved, which
+            # is a different sentence to a reader from "rewritten, and a finding
+            # survived anyway".
             lines += _wrap(
                 "Nothing was rewritten at all: the delivered text is "
                 "byte-identical to the text submitted.", 10)
+        # 7-bit only -- a Windows console is cp1252 and this module's whole
+        # output contract is ASCII. See the module docstring.
+        lines += _wrap(
+            "NOTE: SDK >= 1.9.0 IS SUPPOSED TO BLOCK THIS TURN (SDK #216), so "
+            "these lines mean either an SDK older than 1.9.0 or a regression of "
+            "that fix -- not that this particular prompt was unlucky.", 10)
     if probe.gap_reason:
         lines += _wrap("why nothing catches it: " + probe.gap_reason, 10)
     return lines
@@ -444,22 +460,28 @@ def render(board: Scoreboard) -> str:
             "  ENFORCEMENT -- did the guard stop what it should have?",
             _rule()]
     # THE LIMIT OF THE MEASUREMENT, stated beside the measurement -- the same
-    # way finance and legal state the limits of their policy tags. "caught"
-    # means a rule stopped firing against the delivered text, and where a rule
-    # matches only a MARKER of its finding that is weaker than it sounds:
-    # secret.private_key matches the "-----BEGIN PRIVATE KEY-----" header
-    # alone, so redacting the header stops the rule while the key body is
-    # delivered intact. Filed as SDK #218. The testbed cannot see what the
-    # SDK's detectors cannot see, and giving it its own detector would build a
-    # second policy vocabulary -- which is the thing this project forbids.
+    # way finance and legal state the limits of their policy tags.
+    #
+    # This paragraph used to carry a second limit: that secret.private_key
+    # matched the "-----BEGIN PRIVATE KEY-----" header alone, so redacting the
+    # header stopped the rule while the key body was delivered intact. SDK #218
+    # fixed that in 1.9.0 -- the rule now spans the whole PEM block -- so
+    # repeating the caveat would state a limit this build does not have, which is
+    # its own kind of dishonest. It is replaced by the claim that is now true and
+    # by nothing more.
+    #
+    # What remains is the real limit, and it is not about markers: the testbed
+    # measures the SDK's rules and cannot see what those rules do not detect at
+    # all. Giving it its own detector would build a second policy vocabulary --
+    # the thing this project forbids.
     out += _wrap(
         "'caught' means the rule stopped firing against the text actually "
-        "delivered. Where a rule matches only a marker of its finding rather "
-        "than the finding itself, that is weaker than it sounds: "
-        "secret.private_key matches the BEGIN PRIVATE KEY header alone, so a "
-        "redaction removes the header and delivers the key body. Filed as SDK "
-        "#218 -- this testbed measures the SDK's rules and cannot see what they "
-        "do not.", 2)
+        "delivered, and -- since SDK 1.9.0 -- that the finding itself was "
+        "removed rather than a marker of it: secret.private_key used to match "
+        "the BEGIN PRIVATE KEY header alone, so a redaction removed the header "
+        "and delivered the key body (SDK #218, fixed). The limit that remains "
+        "is a different one: this testbed measures the SDK's rules and cannot "
+        "see what they do not detect at all.", 2)
     out.append("")
     if board.mode == "observe":
         # 0/N here is TRUE, not a regression, and saying so beats letting a

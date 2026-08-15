@@ -66,21 +66,7 @@ _INJECTION_RULES = (
 _SECRET_RULES = (
     ("secret.openai_key", "secret_key", re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}\b")),
     ("secret.aws_access_key", "secret_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    # THE WHOLE PEM BLOCK, not just the header. Matching the header alone meant
-    # `redact` replaced `-----BEGIN … PRIVATE KEY-----` and then DELIVERED THE
-    # KEY BODY to the model: the rule stopped firing while the secret went
-    # through, so the guard reported a redaction it had not performed.
-    #
-    # Detection is unchanged — `evaluate` only asks whether anything matched, and
-    # the header is still the thing that starts a match. What moves is the SPAN,
-    # and therefore what `redact` removes: header → footer, or header → end of
-    # text when there is no footer. Redacting to the end of an unterminated block
-    # is deliberate. If we cannot see where a private key stops, everything after
-    # it is suspect, and the alternative is guessing what a key body looks like —
-    # a new rule that can itself be wrong — or delivering it.
-    ("secret.private_key", "secret_key", re.compile(
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
-        r"[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)")),
+    ("secret.private_key", "secret_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("secret.bearer_token", "secret_key", re.compile(
         r"\bbearer\s+[A-Za-z0-9._\-]{20,}", re.IGNORECASE)),
 )
@@ -175,32 +161,6 @@ class PolicyDecision:
         return next(iter(families)) if families else "none"
 
 
-#: Rules whose marker cannot be derived from their own id.
-#:
-#: A redaction marker must be INERT — re-checking a redacted prompt must not
-#: report the finding as still present. The marker is normally the rule id's
-#: suffix, and ``injection.jailbreak``'s own pattern contains the literal word
-#: ``jailbreak``, so ``[REDACTED:jailbreak]`` MATCHED THE RULE THAT PRODUCED IT.
-#: A customer re-checking their own redacted prompt was told the finding had
-#: survived its own redaction.
-#:
-#: All nine prompt rules were swept; this is the only one. It is overridden to
-#: the rule's coarse SIGNAL label rather than renamed to something invented, so
-#: the marker still says which family was removed.
-#:
-#: The map is the data; the guard is
-#: ``tests/test_policy.py::test_every_redaction_marker_is_inert``, which builds
-#: every marker and re-evaluates it under every tag. A future rule that collides
-#: fails there instead of shipping.
-_MARKER_OVERRIDE = {"injection.jailbreak": "prompt_injection"}
-
-
-def _marker(rule_id: str) -> str:
-    """The ``[REDACTED:…]`` text that stands in for ``rule_id``'s match."""
-    return "[REDACTED:{0}]".format(
-        _MARKER_OVERRIDE.get(rule_id, rule_id.split(".", 1)[1]))
-
-
 def _as_text(prompt) -> str:
     """Coerce an extracted prompt (str or structured provider messages) to text."""
     if isinstance(prompt, str):
@@ -209,51 +169,6 @@ def _as_text(prompt) -> str:
         return hashing.canonical_json(prompt)
     except Exception:
         return str(prompt)
-
-
-#: The markers redaction substitutes for the spans it removes.
-_MARKER_RE = re.compile(r"\[REDACTED:[^\]\n]*\]")
-
-#: What a marker becomes before the redacted prompt is RE-EVALUATED.
-#:
-#: NOT a deletion. Deleting a marker splices its neighbours into a match that was
-#: never in the text — ``555[REDACTED:x]1234567`` becomes a ten-digit run — which
-#: would report a finding as surviving its own redaction when it did not. A tilde
-#: appears in no rule pattern and in no separator class, so it can neither join
-#: two spans nor match on its own.
-_MARKER_STANDIN = " ~ "
-
-
-def surviving_rules(decision, redacted_prompt, policy_tag: str = "default") -> list[str]:
-    """Which of ``decision``'s rules STILL fire against the redacted prompt.
-
-    THE MEASUREMENT THAT MATTERS IS PER FINDING, NEVER PER BYTE. "Did any byte
-    change?" is satisfied by a neighbouring redaction that DID work: a prompt
-    carrying a redactable SSN beside a Presidio-only date of birth has its SSN
-    scrubbed, so the text moved — and the date of birth still reaches the model
-    while the row says ``redacted``. That is the same false claim as a total
-    no-op, only narrower and harder to see.
-
-    So the redacted prompt is evaluated again and the result is INTERSECTED with
-    what fired originally. Intersected rather than taken whole: a rule that only
-    appears AFTER redaction was not the customer's finding, and blocking on it
-    would let the redaction machinery invent its own reasons to refuse a prompt.
-
-    ⚠ THE MARKERS ARE NEUTRALISED FIRST, and that is load-bearing rather than
-    cosmetic. A marker is the EVIDENCE the content was removed, so leaving one in
-    place lets a rule report itself as surviving its own redaction — which
-    ``injection.jailbreak`` did until 1.9.0 (see :data:`_MARKER_OVERRIDE`). That
-    rule is fixed and every marker is now inert, but a re-check that depended on
-    every FUTURE marker also being inert would block correctly-redacted prompts
-    the first time one was not. Two independent defences, deliberately.
-
-    COST: one extra :func:`evaluate` on the guarded redact path, which with the
-    ``[pii]`` extra installed means a second Presidio pass. It runs only when a
-    rule already fired under ``mode="redact"``, never on a clean prompt and never
-    under ``observe``.
-    """
-    text = _MARKER_RE.sub(_MARKER_STANDIN, _as_text(redacted_prompt))
-    return sorted(set(decision.rules) & set(evaluate(text, policy_tag).rules))
 
 
 def resolve_policy_tag(policy_tag: str) -> str | None:
@@ -352,11 +267,11 @@ def redact(prompt_text, policy_tag: str = "default") -> str:
 
     if "injection" in checks:
         for rule_id, _signal, regex in _INJECTION_RULES:
-            out = regex.sub(_marker(rule_id), out)
+            out = regex.sub(f"[REDACTED:{rule_id.split('.', 1)[1]}]", out)
 
     if "secrets" in checks:
         for rule_id, _signal, regex in _SECRET_RULES:
-            out = regex.sub(_marker(rule_id), out)
+            out = regex.sub(f"[REDACTED:{rule_id.split('.', 1)[1]}]", out)
 
     return out
 

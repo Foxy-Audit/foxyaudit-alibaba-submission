@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foxy-audit"
-version = "1.8.0"
+version = "1.9.0"
 description = "Governance-as-Code SDK for AI compliance: local customer-keyed commitments, durable capture, and tamper-evident audit telemetry without raw-text exfiltration."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -72,14 +72,15 @@ pii = ["presidio-analyzer>=2.2", "spacy>=3.7"]
 # the mock provider is stdlib-only and the two live providers import `requests`
 # lazily, which is already the single entry above.
 #
-# ⚠ FROM THE NEXT RELEASE, NOT TODAY. The version below is 1.8.0, which is
-# already tagged and published, so the wheel on PyPI right now does NOT contain
-# this package and a re-upload of 1.8.0 would be rejected. That is fine and
-# nothing here is broken: merging to main does not publish anything —
-# release.yml runs on a tag — so this line simply takes effect at the next
-# version bump. The bump belongs to a later testbed phase, and it is FOUR
-# strings: this file's `version`, foxy_audit/__init__.py's `__version__` and its
-# changelog block, and the repository-root VERSION file (the forgotten one).
+# ⚠ SHIPS FROM 1.9.0. Until this release the version here was 1.8.0, already
+# tagged and published, so the wheel on PyPI did not contain this package and a
+# re-upload of 1.8.0 would have been rejected. The 1.9.0 bump (S8) is what puts
+# it there. Merging to main still publishes nothing — release.yml runs on a TAG
+# — so nothing reaches PyPI until the tag is cut.
+#
+# The bump is FOUR strings, and the fourth is the one that gets forgotten: this
+# file's `version`, foxy_audit/__init__.py's `__version__` AND its changelog
+# block, and the repository-root VERSION file.
 #
 # The dependency arrow points one way only. foxy_testbed imports foxy_audit's
 # PUBLIC api (FoxyClient.audit, check, the two block exceptions); nothing in

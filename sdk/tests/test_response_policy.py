@@ -292,32 +292,49 @@ def test_block_message_says_the_model_ran():
 
 
 # ── a clean response comes back BYTE-IDENTICAL ───────────────────────────────
+#: A repr the scan still trips on, pinned so this file's controls stay real.
+#:
+#: It used to be ``<... object at 0x1234567890>`` — a bare memory address. That
+#: worked as a control because ``pii._PHONE_RE`` matched ANY ten-digit run, which
+#: is exactly the defect SDK #215 fixed in 1.9.0: the lookarounds now require a
+#: token boundary, so ``0x1234567890`` reads as the hex literal it is.
+#:
+#: The address was never the point. A repr is text the SDK composed ITSELF, so
+#: scanning one reports findings about our own coercion rather than about
+#: anything the provider sent. The control therefore now carries content a repr
+#: genuinely can carry — a dataclass-style repr echoes its field values — and it
+#: keeps tripping the scan however the detectors are later tuned.
+_REPR_WITH_PHI = "<_ProviderResponse text='Patient SSN 123-45-6789' at 0x1234567890>"
+
+
 class _ProviderResponse:
     """Stands in for an SDK object that is not a string and never should be.
 
     The repr is PINNED. With the default one this test was a coin flip: an
-    opaque object canonicalises to ``<... object at 0x...>``, and whether that
-    memory address happens to contain a ten-digit run decides whether the PHI
-    scan fires. That flake is the bug in `scan_text` — see the test below."""
+    opaque object canonicalises to ``<... object at 0x...>``, and under the
+    pre-1.9.0 phone regex whether that memory address happened to contain a
+    ten-digit run decided whether the PHI scan fired. That flake was the bug in
+    `scan_text` — see the test below."""
 
     def __init__(self, text: str) -> None:
         self.text = text
         self.model = "stub-model-1"
 
     def __repr__(self) -> str:
-        return "<_ProviderResponse object at 0x1234567890>"
+        return _REPR_WITH_PHI
 
 
 def test_an_unreachable_objects_repr_is_never_scanned():
-    """A memory address is a random digit run, and pii._PHONE_RE matches one
-    whenever it comes out the right length — so scanning a repr means blocking
-    real responses on a schedule set by the allocator.
+    """Coercing an unreachable object to its repr scans the WRONG TEXT.
+
+    A repr is a string the SDK built, not one the provider returned, and
+    whatever it happens to contain — an echoed field value, a class name, once
+    upon a time a memory address — becomes a finding about our own bookkeeping.
 
     The first assertion is the control: that exact string, AS A STRING, does
     trip the scan. So the second assertion is about the coercion, not about a
     regex that never matched anything."""
-    repr_text = "<_ProviderResponse object at 0x1234567890>"
-    assert response_policy.evaluate_response(repr_text, "hipaa").triggered
+    assert response_policy.evaluate_response(_REPR_WITH_PHI, "hipaa").triggered
     assert not response_policy.evaluate_response(
         _ProviderResponse(CLEAN_RESPONSE), "hipaa").triggered
 
@@ -990,8 +1007,12 @@ def test_an_unreadable_response_is_recorded_as_unread_not_as_clean(monkeypatch):
 def test_a_serialiser_that_RAISES_is_unreadable_not_a_repr():
     """`policy._as_text` catches a failing model_dump() and falls back to
     str(value) — so the repr hole was still open through that door. The first
-    assertion is the control: that repr, as a string, does trip the scan."""
-    repr_text = "<_Exploding object at 0x1234567890>"
+    assertion is the control: that repr, as a string, does trip the scan.
+
+    The control carries PHI rather than a memory address for the reason given at
+    ``_REPR_WITH_PHI``: SDK #215 stopped a hex literal reading as a phone number,
+    which is correct and which would have left this control vacuous."""
+    repr_text = "<_Exploding text='Patient SSN 123-45-6789' at 0x1234567890>"
     assert response_policy.evaluate_response(repr_text, "hipaa").triggered
 
     class _Exploding:

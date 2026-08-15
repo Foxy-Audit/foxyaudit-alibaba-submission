@@ -272,10 +272,27 @@ class Turn:
     def redaction_ineffective(self) -> bool:
         """Stamped ``redacted``, delivered, and a finding survived the trip.
 
-        PER-RULE, not per-prompt. The first version asked "did any byte
-        change?", which a mixed prompt answers Yes to while still handing the
-        model the finding nobody could rewrite — so the warning this flag exists
-        to raise was suppressed by an unrelated redaction succeeding beside it.
+        ⚠ TRIPWIRE. THIS MUST NEVER FIRE AGAINST THE REAL SDK. IF IT DOES,
+        SDK #216 HAS REGRESSED — DO NOT DELETE IT.
+
+        Since SDK 1.9.0 the guard re-evaluates the redacted prompt and BLOCKS
+        when any rule that fired still matches, so a turn where a finding
+        survived is stamped ``blocked`` and never reaches this. That makes the
+        property unreachable from a real run and turns it into the cheapest
+        possible regression detector for the fix: one sweep of the probe corpus
+        in redact mode asserts it stays False everywhere
+        (``test_the_SDK_can_no_longer_deliver_a_surviving_finding``).
+
+        A property that is impossible is worth more as an assertion than as a
+        deletion — and uncommented dead-looking code is how a detector gets
+        tidied away six months from now, which is why this paragraph exists.
+
+        PER-RULE, not per-prompt, and that is the whole history of the defect.
+        An earlier version asked "did any byte change?", which a mixed prompt
+        answers Yes to while still handing the model the finding nobody could
+        rewrite — so the warning this flag exists to raise was suppressed by an
+        unrelated redaction succeeding beside it. #216's first spec made the same
+        mistake in the SDK; the shipped one is per finding.
 
         Paired with ``reached_provider`` like every other claim here: a prompt
         that was never delivered cannot have an ineffective redaction, and the
@@ -310,6 +327,14 @@ class Turn:
             # DOB is not a clean catch, and for an audit product understating
             # coverage is the safe way to be imprecise. Which rule went and
             # which stayed is not lost — the renderer prints both lists.
+            #
+            # ⚠ TRIPWIRE, the `rules_surviving` half. AGAINST SDK >= 1.9.0 THIS
+            # CAN NO LONGER RETURN FALSE ON A REDACTED TURN: the guard blocks
+            # when a finding survives its own redaction (#216), so a turn that
+            # reaches here with survivors means that fix regressed. The strict
+            # test STAYS — do not simplify it to `bool(self.rules)`. It is what
+            # notices, and it is also what keeps this correct for a turn recorded
+            # by an SDK older than 1.9.0.
             return bool(self.rules) and not self.rules_surviving
         return False
 
@@ -339,6 +364,10 @@ class Turn:
                 "decision": self.decision, "answered": self.answered,
                 "reached_provider": self.reached_provider,
                 "prompt_changed": self.prompt_changed,
+                # ⚠ TRIPWIRE. Always False against SDK >= 1.9.0 — see the
+                # property. Serialised anyway, because a consumer that only ever
+                # sees the honest value has no way to notice the day it stops
+                # being one.
                 "redaction_ineffective": self.redaction_ineffective,
                 "empty_reply": self.empty_reply,
                 "rules_delivered": list(self.rules_delivered),
