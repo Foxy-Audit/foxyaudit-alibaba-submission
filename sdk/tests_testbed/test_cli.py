@@ -422,6 +422,14 @@ def test_an_ineffective_redaction_is_rendered_as_incomplete_and_names_the_findin
     # BOTH lists: the rule that really was scrubbed is reported too, or the
     # render understates the guard exactly as the old one overstated it.
     assert "removed" in rendered and "phi.ssn_pattern" in rendered
+    # ...AND IT SAYS THIS IS A REGRESSION. Since SDK 1.9.0 the guard blocks a
+    # turn whose finding survived its own redaction (SDK #216), so this render
+    # is unreachable from a real session -- `leaky` above is hand-built, which
+    # is precisely why it still works. A reader who somehow meets these lines
+    # must learn they mean the fix regressed, not that this prompt was unlucky.
+    assert "SDK #216" in rendered
+    assert "regression of that fix" in rendered
+    rendered.encode("ascii")           # 7-bit, like everything else here
 
     # A redaction that worked is still rendered as one.
     clean = turn(decision=DECISION_REDACTED, reached_provider=True, answered=True,

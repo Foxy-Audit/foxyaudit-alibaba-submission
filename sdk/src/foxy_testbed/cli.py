@@ -290,10 +290,22 @@ def turn_lines(turn, provider_is_live: bool) -> list:
         # The loudest line the REPL prints, because it is the one a reader
         # would otherwise never suspect: the SDK's own label says this prompt
         # was handled, and these findings were handed to the model anyway.
+        #
+        # ⚠ TRIPWIRE ON A `redacted` TURN, AND NOT DEAD CODE. Since SDK 1.9.0
+        # the guard re-evaluates the redacted prompt and BLOCKS when any finding
+        # still fires (SDK #216), so a redacted turn reaching this line means
+        # that fix regressed. Keep it: it costs nothing, it is the only thing
+        # that would SAY so, and on a PREVENTED turn `rules_surviving` is empty
+        # so this line does not print at all.
         lines += _field("STILL SENT", ", ".join(turn.rules_surviving))
     if turn.redaction_ineffective and not turn.prompt_changed:
+        # The narrower half of the same tripwire — see Turn.redaction_ineffective.
         lines += _wrap("Nothing was rewritten at all: the text delivered to the "
                        "provider is byte-identical to the text you typed.", 4)
+    if turn.redaction_ineffective:
+        lines += _wrap("NOTE: SDK >= 1.9.0 is supposed to BLOCK this turn (SDK "
+                       "#216), so this means either an SDK older than 1.9.0 or "
+                       "a regression of that fix.", 4)
     lines += _field("ruleset", turn.ruleset_version or "(not reported)")
     if turn.error:
         # ProviderError carries a type and a status by construction and never a
