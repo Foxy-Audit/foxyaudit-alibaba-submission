@@ -179,17 +179,57 @@ def test_every_cross_page_fragment_lands_on_a_real_anchor(page):
             continue
         if frag not in _dom(target).ids:
             broken.append(f"{href} (no id={frag!r} on {target})")
-    # ⚠ A SKIP IS A PASS. Anything handed to the forward guard is named, so this
-    # one cannot go quiet by classifying every link as somebody else's problem.
-    dead = {a["href"] for a in dom.links
-            if _is_internal_page(a["href"])
-            and not (HERE / _page_path(a["href"])).is_file()}
-    assert set(skipped) <= dead, (
-        f"{page}: these fragment links were skipped but their target files exist, "
-        f"so nothing checked them: {sorted(set(skipped) - dead)}")
+    # ⚠ THE ASSERTION THAT USED TO SIT HERE WAS TRUE BY CONSTRUCTION AND IS GONE.
+    #
+    # It read `assert set(skipped) <= dead`, where both sets were built from the
+    # same dom.links with the same predicate — `skipped` differing only by
+    # `"#" in href`. It could not fail for any input, which made it a comment
+    # wearing an assert's clothes. `skipped` is left as a local because it is
+    # genuinely the forward guard's territory; the real "is this guard doing
+    # anything" question is answered by the coverage pin below, which names the
+    # links it must be seeing.
+    del skipped
     assert not broken, (
         f"{page} links to anchors that do not exist: {sorted(broken)}. The link "
         "loads the page and scrolls nowhere, so it looks like it works.")
+
+
+#: The cross-page section citations this branch introduced. Each is a document
+#: pointing INTO another document at a numbered clause — the shape #201b got
+#: wrong. Named so the guard above cannot go quiet.
+KNOWN_FRAGMENT_CITATIONS = [
+    ("dpa.html", "/msa.html#s1"),      # §14's precedence carve-out
+    ("dpa.html", "/terms.html#s5"),    # the self-serve incorporation
+    ("msa.html", "/dpa.html#s14"),     # §1's ladder naming the exception
+]
+
+
+@pytest.mark.parametrize("page,href", KNOWN_FRAGMENT_CITATIONS,
+                         ids=[f"{p}-to-{h}" for p, h in KNOWN_FRAGMENT_CITATIONS])
+def test_the_fragment_guard_actually_sees_the_citations_it_exists_for(page, href):
+    """⚠ THE NON-VACUOUS REPLACEMENT FOR A TAUTOLOGY.
+
+    The guard above iterates whatever the page happens to link. If its predicate
+    ever stops matching — a classifier change, a markup change — it validates
+    nothing and reports success, which is exactly how the `endswith(".html")`
+    version hid every fragment on the site for as long as it existed.
+
+    This names the three citations that must be inside its net, and checks the
+    same two things the guard does, so a predicate that quietly stops selecting
+    them fails HERE with the link in the message."""
+    dom = _dom(page)
+    hrefs = [a["href"] for a in dom.links]
+    assert href in hrefs, (
+        f"{page} no longer links {href}. If the citation was deliberately "
+        "removed, remove it from KNOWN_FRAGMENT_CITATIONS in the same commit — "
+        "this list is what stops the fragment guard from silently checking nothing")
+    assert _is_internal_page(href), \
+        f"{href} is no longer classified as an internal page link, so the " \
+        "fragment guard skips it entirely"
+    target, frag = _page_path(href), href.split("#", 1)[1]
+    assert (HERE / target).is_file(), f"{href} points at a file that does not exist"
+    assert frag in _dom(target).ids, \
+        f"{href} points at an anchor {frag!r} that {target} does not have"
 
 
 @pytest.mark.parametrize("page,name,target", _PAIRS,

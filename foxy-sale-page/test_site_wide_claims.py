@@ -31,6 +31,8 @@ import re
 
 import pytest
 
+from conftest import tree
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 
@@ -437,10 +439,17 @@ def test_the_three_lists_are_the_same_length():
     """⚠ SUFFIXES MISS A SUFFIX-LESS BRAND. "Google Identity" and "Google Cloud"
     carry none, so a seventh bullet naming another such brand would pass both
     checks above. The item count catches it, and it is counted from each page's
-    own markup rather than from a shared helper."""
-    from conftest import load
-    privacy = len(re.findall(r"<li>", load("privacy.html").section(8)))
-    trust = len(re.findall(r"<tr><td>", load("trust.html").section(6)))
+    own markup rather than from a shared helper.
+
+    ⚠ COUNTED BY PARSING, NOT BY `<li>` AND `<tr><td>`. Those patterns require a
+    bare tag and exact adjacency, so `<li class="new">` was not counted at all —
+    an added bullet would leave the count at six and this guard green, which is
+    the one thing it exists to prevent. The header row is excluded by having
+    `th` children rather than by relying on `<tr><td>` not matching it."""
+    from conftest import ElementTree, load
+    privacy = len(ElementTree(load("privacy.html").section(8)).root.find(tag="li"))
+    trust = len([tr for tr in ElementTree(load("trust.html").section(6)).root.find(tag="tr")
+                 if tr.kids("td")])
     # dpa.html §5's roster is one parenthetical; its items are semicolon-separated
     paren = re.search(r"\(currently: (.*?)\)\. Foxy Audit will:",
                       _roster_text("dpa.html"))
@@ -481,44 +490,52 @@ SELF_SERVE_DOWNGRADE = re.compile(
 
 
 def _pricing_plan_features() -> dict[str, list[str]]:
-    """plan name -> the `<li>` items of THAT plan's own price card.
+    """plan name -> the RENDERED TEXT of each `<li>` in that plan's own card.
 
-    ⚠ SLICED PER CARD, because a page-wide search for "support" on pricing.html
-    is answered by the FAQ. The cards are delimited by `<div class="price-card`
-    and each carries one `<p class="price-name">` and one `<ul class="price-list">`."""
-    src = (HERE / "pricing.html").read_text(encoding="utf-8")
+    ⚠ TWO SEPARATE VACUITIES WERE MEASURED HERE, AND BOTH ARE FIXED BY PARSING.
+
+    (a) The card slice was `re.split(r'<div class="price-card', src)`, which
+        needs `class` to be the first, double-quoted attribute. `<div data-x
+        class="price-card">` matched nothing.
+
+    (b) The support search ran over the RAW `<li>` MARKUP, so an attribute
+        satisfied it. Measured: replacing Pro's "Email support" with
+        `<a href="/support.html">Docs</a>` leaves the card selling no support
+        and the whole suite green. Returning `.text` — tags stripped, inline
+        joined — is what makes the search read what a customer reads."""
     cards: dict[str, list[str]] = {}
-    for chunk in re.split(r'<div class="price-card', src)[1:]:
-        name = re.search(r'<p class="price-name">([^<]+)</p>', chunk)
-        items = re.search(r'<ul class="price-list">(.*?)</ul>', chunk, re.S)
-        if name and items:
-            cards[name.group(1).strip()] = re.findall(r"<li[^>]*>(.*?)</li>",
-                                                      items.group(1), re.S)
-    assert cards, "pricing.html's price cards could not be sliced; the markup changed"
+    for card in tree("pricing.html").find(cls="price-card"):
+        names = card.find(cls="price-name")
+        lists = card.find(cls="price-list")
+        if not names or not lists:
+            continue
+        cards[names[0].text] = [li.text for li in lists[0].kids("li")]
+    assert cards, "pricing.html has no parseable price cards; the markup changed"
     return cards
 
 
 def _contact_support_rows() -> tuple[dict[str, list[str]], int]:
     """contact.html's support table as {plan: [cells]}, plus the header count.
 
-    ⚠ THE CLASS IS MATCHED AS A TOKEN, NOT AS A STRING. `class="sla-row"` matched
-    exactly, so contact.html's own header — `class="sla-row sla-head"` — never
-    matched, and neither would a plan row that gained any extra class. A new row
-    with `class="sla-row sla-new"` was invisible to both directions of this
-    guard, which is the failure mode it exists to prevent.
+    ⚠ THE TAG IS PARSED, NOT PATTERN-MATCHED. This was
+    `<div class="([^"]*\bsla-row\b[^"]*)">`, which fixed the class to the first
+    double-quoted attribute ending in `">`. Matching the class as a TOKEN closed
+    the extra-CLASS half; `<div class="sla-row" data-plan="team">` is the
+    extra-ATTRIBUTE half, and it was measured keeping the entire file green
+    while contact.html advertised a plan sla.html §5 has never heard of.
 
-    The header is now matched and then excluded BY NAME, and the count of
-    headers is returned so the exclusion itself can be asserted rather than
+    Punctuation cannot be made to cover attribute order, quoting style and
+    spacing at once. A parser does not have to be.
+
+    The header is matched and then excluded by its own 'sla-head' token, and the
+    header count is returned so the exclusion can be asserted rather than
     silently matching nothing."""
-    src = (HERE / "contact.html").read_text(encoding="utf-8")
     rows, headers = {}, 0
-    for classes, body in re.findall(r'<div class="([^"]*\bsla-row\b[^"]*)">(.*?)</div>',
-                                    src, re.S):
-        cells = [re.sub(r"<[^>]+>", "", c).strip()
-                 for c in re.findall(r"<span>(.*?)</span>", body, re.S)]
+    for row in tree("contact.html").find(cls="sla-row"):
+        cells = [span.text for span in row.kids("span")]
         if not cells:
             continue
-        if "sla-head" in classes.split():
+        if "sla-head" in row.classes:
             headers += 1
             continue
         rows[cells[0]] = cells[1:]
@@ -526,9 +543,14 @@ def _contact_support_rows() -> tuple[dict[str, list[str]], int]:
 
 
 def _sla_section_5() -> str:
-    """sla.html §5, tags stripped. Bounded by §6, not by the end of the card."""
-    from conftest import load
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", load("sla.html").section(5)))
+    """sla.html §5 as a reader sees it. Bounded by §6, not by the end of the card.
+
+    ⚠ LegalDom, NOT A NAIVE STRIP. SELF_SERVE_DOWNGRADE is searched for ABSENCE,
+    and a stripper that spaces every tag turns `best-<em>effort</em>` into
+    "best- effort", which the pattern misses — the withdrawn wording could come
+    back in emphasised form and ship green."""
+    from conftest import LegalDom, load
+    return LegalDom(load("sla.html").section(5)).text
 
 
 def test_the_sla_does_not_state_a_self_serve_support_promise_of_its_own():
@@ -587,25 +609,33 @@ def test_the_pages_the_sla_defers_to_actually_publish_that_plans_support(plan):
     assert plan in rows, (
         f"contact.html no longer publishes a support row for {plan!r}, but "
         f"sla.html §5 defers self-serve customers to it")
+    # ⚠ THE SHAPE IS CHECKED BEFORE THE CELLS ARE READ. A `len(c) >= 3` filter
+    # used to drop short rows silently; removing it moved the failure to a bare
+    # IndexError on rows[plan][1], which is where the "publishes an empty
+    # commitment" message was supposed to fire. Neither is right: a short row is
+    # a real defect and it should say so in words.
+    assert len(rows[plan]) >= 2, (
+        f"contact.html's {plan!r} row has {len(rows[plan])} cells after the plan "
+        f"name ({rows[plan]}); it must publish both a response time and a channel")
     response, channel = rows[plan][0], rows[plan][1]
     assert response and channel, \
         f"contact.html's {plan!r} row publishes an empty commitment: {rows[plan]}"
 
-    # ⚠ BOUND TO THE PLAN'S OWN FEATURE LIST. This half first grepped
-    # `\bsupport\b` over the whole of pricing.html, which the FAQ's "support
-    # requests" satisfies on its own. Measured: gutting BOTH plan support
-    # bullets left all five of these tests green — a vacuous version of the very
-    # guard that exists because a support downgrade got past review.
+    # ⚠ BOUND TO THE PLAN'S OWN FEATURE LIST, AS RENDERED TEXT. This half first
+    # grepped `\bsupport\b` over the whole of pricing.html, which the FAQ's
+    # "support requests" satisfies; then over the raw `<li>` markup, which
+    # `<a href="/support.html">Docs</a>` satisfies. Both were measured green on
+    # a card selling no support. _pricing_plan_features returns .text, so what
+    # is searched is what a customer reads.
     cards = _pricing_plan_features()
     assert plan in cards, (
         f"pricing.html no longer has a price card for {plan!r}, but sla.html §5 "
         f"defers self-serve customers to that page for {plan}'s support")
-    sold = [re.sub(r"<[^>]+>", " ", li) for li in cards[plan]
-            if re.search(r"\bsupport\b", li, re.I)]
+    sold = [li for li in cards[plan] if re.search(r"\bsupport\b", li, re.I)]
     assert sold, (
         f"pricing.html's {plan!r} card no longer sells support in its own feature "
-        f"list: {[re.sub(chr(60) + '[^>]+>', ' ', li).strip() for li in cards[plan]]}. "
-        "sla.html §5 points self-serve customers at this page for exactly that.")
+        f"list: {cards[plan]}. sla.html §5 points self-serve customers at this "
+        "page for exactly that.")
 
 
 def test_no_self_serve_plan_is_sold_support_the_sla_has_never_heard_of():

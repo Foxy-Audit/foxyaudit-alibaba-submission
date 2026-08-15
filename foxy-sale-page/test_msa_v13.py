@@ -339,7 +339,13 @@ def test_terms_html_now_yields_to_the_msa_in_its_entire_agreement_clause(legal_d
     See test_owner_divergences.py and the vault note it names."""
     dom_terms = legal_dom("terms.html")
     terms = dom_terms.text
-    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dom_terms.section(15)))
+    # ⚠ LegalDom, NOT A NAIVE STRIP. The negative assertions below ("govern
+    # instead" / "entire agreement" must NOT appear) go silently green if the
+    # phrase is split by an inline tag, because a stripper that spaces every tag
+    # turns `<em>govern</em> instead` into "govern  instead". conftest exists to
+    # get this right; for a NEGATIVE assertion the naive version fails open.
+    from conftest import LegalDom
+    s15 = LegalDom(dom_terms.section(15)).text
 
     assert "constitute the entire agreement" in s15, \
         "terms.html's entire-agreement clause left §15"
@@ -357,7 +363,7 @@ def test_terms_html_now_yields_to_the_msa_in_its_entire_agreement_clause(legal_d
 
     # ⚠ THE §14 MENTION IS A DIFFERENT CLAUSE ABOUT A DIFFERENT THING. Pinned so
     # a future edit cannot satisfy #201a by rewording the forum sentence.
-    s14 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dom_terms.section(14)))
+    s14 = LegalDom(dom_terms.section(14)).text
     assert "absent a signed Order Form or MSA saying otherwise" in s14, \
         "the forum sentence's MSA mention moved or changed"
     assert "entire agreement" not in s14, \

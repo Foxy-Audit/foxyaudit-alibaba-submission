@@ -124,3 +124,122 @@ def legal_dom():
     """`legal_dom("terms.html")` — parsed once per session, per page."""
     cache: dict[str, LegalDom] = {}
     return lambda page: cache.setdefault(page, load(page))
+
+
+# ── AN ELEMENT TREE, FOR THE CHECKS THAT NEED STRUCTURE ─────────────────────
+#
+# ⚠ WHY THIS EXISTS, AND WHY IT IS HERE RATHER THAN IN A TEST MODULE.
+#
+# LegalDom answers "what does the page SAY". A second class of guard asks "what
+# does the page CONTAIN" — this card's own feature list, this table's plan rows —
+# and those were written as regexes over the markup. Every one of them matched
+# punctuation instead of structure, and every one of them was measured passing on
+# a page that had lost the thing it guarded:
+#
+#   · `<div class="price-card`               — needs `class` FIRST and
+#   · `<div class="([^"]*\bsla-row\b[^"]*)">`  double-quoted, ending in `">`.
+#     `<div class="sla-row" data-plan="team">` matched neither. Measured: a whole
+#     unknown plan row was invisible to the guard written to find unknown plans.
+#   · `\bsupport\b` over a raw `<li>`        — an ATTRIBUTE satisfies it.
+#     Measured: `<a href="/support.html">Docs</a>` sells no support and stayed
+#     green, which is the same vacuity as grepping the whole file, one level down.
+#
+# The lesson is the one this repo keeps re-learning at a new altitude: a check
+# that reads markup as a string is guessing. So the parser lives beside the other
+# one, under the same rule the module docstring already states — do not paste
+# another parser, use this one.
+
+
+#: HTML elements with no closing tag. `<br>` is in every footer; `<path>` and
+#: `<circle>` arrive self-closed inside the pricing page's inline SVG icons and
+#: are handled by handle_startendtag, but are listed so a bare `<path>` cannot
+#: swallow the rest of a card either.
+VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr", "path", "circle", "rect",
+        "line", "polyline", "polygon", "stop", "use"}
+
+
+class Element:
+    """One node. `classes` is a SET OF TOKENS, which is the whole point."""
+
+    __slots__ = ("tag", "attrs", "children", "_text")
+
+    def __init__(self, tag: str, attrs: dict) -> None:
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list = []
+        self._text: list = []          # str | Element, in document order
+
+    @property
+    def classes(self) -> set:
+        return set((self.attrs.get("class") or "").split())
+
+    @property
+    def text(self) -> str:
+        """Rendered text, inline tags joined and block tags spaced — the same
+        rule LegalDom uses, so a phrase compares equal across both parsers."""
+        parts = []
+        for item in self._text:
+            if isinstance(item, str):
+                parts.append(item)
+            else:
+                if item.tag not in _INLINE:
+                    parts.append(" ")
+                parts.append(item.text)
+                if item.tag not in _INLINE:
+                    parts.append(" ")
+        return re.sub(r"\s+", " ", "".join(parts)).strip()
+
+    def find(self, *, cls: str = None, tag: str = None) -> list:
+        """Every DESCENDANT matching a class token and/or a tag name."""
+        out = []
+        for child in self.children:
+            if (cls is None or cls in child.classes) and (tag is None or child.tag == tag):
+                out.append(child)
+            out.extend(child.find(cls=cls, tag=tag))
+        return out
+
+    def kids(self, tag: str) -> list:
+        """DIRECT children with this tag. Direct, so a nested list cannot answer
+        for the one being asked about."""
+        return [c for c in self.children if c.tag == tag]
+
+    def __repr__(self) -> str:                              # pragma: no cover
+        return f"<{self.tag} class={sorted(self.classes)} {self.text[:40]!r}>"
+
+
+class ElementTree(HTMLParser):
+    """A real tree. Malformed nesting is tolerated the way a browser tolerates
+    it: an end tag with no open match is ignored rather than raising."""
+
+    def __init__(self, src: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = Element("#document", {})
+        self._stack = [self.root]
+        self.feed(src)
+
+    def handle_starttag(self, tag, attrs):
+        node = Element(tag, dict(attrs))
+        self._stack[-1].children.append(node)
+        self._stack[-1]._text.append(node)
+        if tag not in VOID:
+            self._stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        node = Element(tag, dict(attrs))
+        self._stack[-1].children.append(node)
+        self._stack[-1]._text.append(node)
+
+    def handle_endtag(self, tag):
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i].tag == tag:
+                del self._stack[i:]
+                return
+
+    def handle_data(self, data):
+        self._stack[-1]._text.append(data)
+
+
+def tree(page: str) -> Element:
+    """`tree("pricing.html").find(cls="price-card")` — the document root."""
+    return ElementTree((HERE / page).read_text(encoding="utf-8")).root

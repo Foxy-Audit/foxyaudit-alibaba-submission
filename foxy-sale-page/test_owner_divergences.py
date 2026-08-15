@@ -471,15 +471,30 @@ def test_201a_the_terms_yield_to_a_signed_msa(terms, msa):
     # public Terms of Service", and the MSA incorporates only the DPA and SLA —
     # so the wide reading made the carve-out claim more than the MSA does.
     #
-    # ⚠ MEASURED ON THE §15 SLICE, NOT ON terms.text. The ban first ran page-wide
-    # while the correctly scoped slice was built two lines below it — so any
-    # OTHER section of the Terms growing the phrase would have failed this, and
-    # a reader of the failure would have been sent to §15 to look for it.
-    s15 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", terms.section(15)))
+    # ⚠ BOTH REACHES, AND THE NARROWING THAT REMOVED ONE WAS A MISTAKE.
+    #
+    # L15c replaced the page-wide ban with a §15-scoped one, on the reasoning
+    # that a scoped check gives a precise message. It does — and it also stopped
+    # covering every other section of the Terms, where the same phrase would
+    # ship green. The rule is RE-AIM, NEVER NARROW: the scoped assertion is the
+    # one that explains, the page-wide one is the one that still has reach, and
+    # a phrase this ambiguous is unwanted anywhere in a contract.
+    #
+    # ⚠ MATCHED ON LegalDom.text, NOT ON A NAIVE STRIP. conftest documents why:
+    # `<em>govern</em> instead` is one phrase to a reader and two tokens to a
+    # stripper that spaces every tag, so the naive version could miss the very
+    # wording it bans.
+    from conftest import LegalDom
+    s15 = LegalDom(terms.section(15)).text
     assert "govern instead" not in s15, _why15(
         "#201a", "terms.html §15's carve-out is unqualified again. 'govern "
                  "instead' displaces the Privacy Policy and Terms of Use as well, "
                  "which msa.html §1 does not do")
+    assert "govern instead" not in terms.text, _why15(
+        "#201a", "'govern instead' appears somewhere in terms.html OUTSIDE §15. "
+                 "It is the unqualified wording #201a removed, and it displaces "
+                 "more than msa.html §1 claims wherever it sits — find it, and "
+                 "narrow it the way §15's carve-out was narrowed")
     for survivor in ("Privacy Policy", "Terms of Use"):
         assert survivor in s15, _why15(
             "#201a", f"§15 stopped enumerating the {survivor}; the narrowed "
@@ -616,7 +631,11 @@ def test_201c_the_precedence_clauses_resolve_against_each_other(dpa, msa):
     # reader to "Master Service Agreement Section 1", whose ladder ranks the
     # public Terms LAST — so a Terms-only customer was told their own governing
     # document sits below three they never signed. It is now conditioned.
-    s14 = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dpa.section(14)))
+    # ⚠ LegalDom, NOT A NAIVE STRIP — `"ranks it above" not in s14` below is a
+    # NEGATIVE assertion, and a stripper that spaces every tag would let
+    # `ranks <em>it</em> above` through silently.
+    from conftest import LegalDom
+    s14 = LegalDom(dpa.section(14)).text
     assert "Where the Agreement is the Master Service Agreement" in s14, _why15(
         "#201c", "DPA §14's precedence sentence is unconditional again. A "
                  "self-serve customer's Agreement is the Terms of Service, and "
@@ -726,21 +745,41 @@ def test_200_the_msa_notices_bullet_cites_customer_side_notice_provisions(msa):
     cited = re.findall(r'href="#s(\d+)"', bullet.group(1))
     assert cited, _why15("#200", "the Notices bullet cites no sections at all")
 
-    # ⚠ THE PROPERTY IS CHECKED BEFORE THE LITERAL, AND THAT ORDER IS THE POINT.
-    # `cited == ["4", "13"]` used to run first, so this loop was unreachable for
-    # any other citation and the §3 check below was dead code. The equality alone
-    # would pass a future citation that is wrong-but-different, and the check
-    # that could tell wrong from right never ran. Now every cited section is
-    # tested for the property first; the literal is the last word, not the gate.
+    # ⚠ THREE CHECKS, ORDERED MOST-SPECIFIC FIRST, AND EVERY ONE REACHABLE.
+    #
+    # L15c moved the property loop ahead of the literal so the loop could run.
+    # That left the §3 assertion below it STILL dead — §3 has no "either party",
+    # so the loop always failed first — under a comment claiming the reorder had
+    # revived it. A comment asserting coverage that does not exist is worse than
+    # no comment, so the order now matches the claim:
+    #
+    #   (a) §3 by name      — the specific known-wrong citation, its own message
+    #   (b) the property    — any OTHER one-way section, in general
+    #   (c) the literal     — bilateral but not the agreed pair
+    #
+    # Each is reachable by a citation the others do not catch, which is the only
+    # sense in which an ordering is correct.
+    assert "3" not in cited, _why15(
+        "#200", "the Notices bullet cites §3. §3's notice runs Foxy Audit → "
+                "Customer only ('Foxy Audit may suspend the Service on 10 days' "
+                "written notice'), so it is not a provision the customer serves "
+                "under — this is the exact miscitation #200 corrected")
+
+    # ⚠ THE SECTION MUST EXIST BEFORE IT CAN BE READ. msa.section() raises a bare
+    # ValueError from conftest for an unknown id, which fails in the parser
+    # rather than here and tells the reader nothing about the citation.
+    numbered = set(re.findall(r'<h2 id="s(\d+)">', msa.src))
+    dangling = [n for n in cited if n not in numbered]
+    assert not dangling, _why15(
+        "#200", f"the Notices bullet cites Section(s) {dangling}, which msa.html "
+                f"has no heading for. The document has {sorted(numbered, key=int)}")
+
     for n in cited:
         body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", msa.section(int(n))))
         assert re.search(r"either party", body, re.I), _why15(
             "#200", f"§{n} is cited as a route for notice TO Foxy Audit, but its "
                     f"notice provision is not bilateral — §{n} reads {body[:160]!r}. "
                     "Re-read it before citing it")
-    assert "3" not in cited, _why15(
-        "#200", "the Notices bullet cites §3 again. §3's notice runs Foxy Audit → "
-                "Customer only, so it is not a provision the customer serves under")
     assert cited == ["4", "13"], _why15(
         "#200", f"the Notices bullet cites Sections {cited}; the customer-side "
                 "notice provisions are 4 (non-renewal) and 13 (breach)")
