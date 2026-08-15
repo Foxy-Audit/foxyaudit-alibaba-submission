@@ -1,0 +1,647 @@
+"""Guards for the interactive REPL (phase T1).
+
+WHAT THESE ARE ACTUALLY DEFENDING
+=================================
+Three things, and only the first is about the REPL working:
+
+1. **It runs end-to-end offline, with no key.** That is the phase's whole
+   premise -- CI runs this surface, and a REPL that needs a live provider is a
+   REPL CI cannot drive. Every test here uses the mock provider or a stub.
+2. **It holds no policy logic.** Enforced structurally rather than by review:
+   :func:`test_the_repl_cannot_reach_the_sdk_at_all` walks ``cli.py``'s AST and
+   fails on any import from ``foxy_audit``. The REPL can only render what the
+   engine measured, because it has nothing else to read.
+3. **It renders the measurement, not the label.** Three review rounds put
+   ``prevented`` / ``prompt_enforced`` / ``rules_surviving`` on ``Turn`` so that
+   no surface would re-derive them from ``decision``. A surface that then prints
+   "BLOCKED" off the label alone has rebuilt the defect one layer up, so the
+   contradictory shapes are constructed by hand here and the rendering is
+   asserted against them.
+"""
+
+from __future__ import annotations
+
+import ast
+import io
+
+import pytest
+
+from foxy_testbed import cli
+from foxy_testbed.core import (Assistant, DECISION_ALLOWED, DECISION_BLOCKED,
+                               DECISION_BLOCKED_RESPONSE, DECISION_ERROR,
+                               DECISION_FLAGGED, DECISION_REDACTED, DECISIONS,
+                               Turn)
+from foxy_testbed.providers import MOCK_NOTE, Provider
+from foxy_testbed.sectors import get_sector
+
+# The two probe prompts used as live inputs below, taken from the corpus rather
+# than written fresh: their expectations are already pinned by test_probes.py
+# against the real `foxy_audit.check`, so a rule change breaks the probe suite
+# loudly instead of breaking these quietly.
+BLOCKED_PROMPT = "Confirm coverage for member SSN 900-12-3456 before the procedure is scheduled."
+ASSIST_PROMPT = ("What does the HIPAA minimum necessary standard require when we share "
+                 "records with a billing vendor?")
+
+
+class Stub(Provider):
+    """A provider that counts and records. ``calls`` is the measurement.
+
+    ``name`` and ``is_live`` are settable independently on purpose: one guard
+    below needs a provider CALLED "mock" that is nonetheless live, which is the
+    shape that catches a surface re-deriving provenance from the name.
+    """
+
+    def __init__(self, reply="a stub reply.", live=False, name="stub",
+                 model="stub-1", note="") -> None:
+        super().__init__(model)
+        self.name = name
+        self.reply = reply
+        self.calls = 0
+        self.prompts = []
+        self._live = live
+        self._note = note
+
+    def complete(self, system, prompt):
+        self.calls += 1
+        self.prompts.append(prompt)
+        return self.reply
+
+    @property
+    def is_live(self) -> bool:
+        return self._live
+
+    @property
+    def note(self) -> str:
+        return self._note
+
+
+class Cp1252Stream:
+    """A stream that refuses what a Windows console refuses.
+
+    ``io.StringIO`` accepts every code point, so it cannot reproduce the failure
+    this exists for: ``sys.stdout`` on a cp1252 console raises inside ``write``
+    for a character it cannot encode, and the traceback points at the write
+    rather than at the character.
+    """
+
+    encoding = "cp1252"
+
+    def __init__(self) -> None:
+        self.chunks = []
+
+    def write(self, text) -> None:
+        text.encode(self.encoding)          # the console's own failure
+        self.chunks.append(text)
+
+    def flush(self) -> None:
+        pass
+
+    def getvalue(self) -> str:
+        return "".join(self.chunks)
+
+
+def drive(assistant, lines, banner=True, out=None):
+    """Run a whole session from a script. Returns (exit code, transcript)."""
+    out = out if out is not None else io.StringIO()
+    feed = iter(lines)
+
+    def read_line():
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    return cli.repl(assistant, read_line=read_line, out=out, banner=banner), out.getvalue()
+
+
+def turn(**overrides) -> Turn:
+    """A hand-built Turn, for the shapes a real run cannot produce.
+
+    Same technique the measurement suite uses for ``prevented`` and
+    ``response_withheld``: the contradictory combinations are unreachable
+    through ``Assistant.ask`` today, which is exactly why a renderer that
+    mishandles them would never be caught by driving one.
+    """
+    fields = dict(sector="healthcare", policy_tag="hipaa", mode="block",
+                  provider="stub", model="stub-1", decision=DECISION_ALLOWED,
+                  answered=False, reached_provider=False)
+    fields.update(overrides)
+    return Turn(**fields)
+
+
+# ── 1 · the phase's premise: it runs offline, keyless, end to end ─────────────
+def test_a_whole_session_runs_offline_with_no_key():
+    """THE CI PATH, and the gate the phase is defined by.
+
+    One long-lived Assistant, the default mock provider, no key, no socket: a
+    blocked turn, an allowed turn, a mode switch, a redacted turn, the
+    scoreboard, and a clean exit -- driven the way a pipe drives it.
+    """
+    session = Assistant(get_sector("healthcare"))
+    code, text = drive(session, [
+        BLOCKED_PROMPT,
+        ASSIST_PROMPT,
+        "/mode redact",
+        BLOCKED_PROMPT,
+        "/probe",
+        "/quit",
+    ])
+
+    assert code == 0
+
+    # The banner states the preset's limits and the provider's provenance,
+    # rather than leaving either to be inferred.
+    assert MOCK_NOTE in " ".join(text.split())
+    assert "policy_tag=hipaa, mode=block" in text
+    assert "WHERE YOUR TEXT GOES: nowhere." in text
+
+    assert "[BLOCKED]" in text
+    assert "[ALLOWED]" in text
+    assert "[REDACTED]" in text
+    # The scoreboard ran through this session's own assistant and, having been
+    # switched, ran under redact -- not under the mode the session started in.
+    assert "mode=redact" in text
+    assert "PASS" in text
+    assert text.rstrip().endswith("bye.")
+
+
+def test_no_part_of_an_offline_session_reaches_the_http_seam(monkeypatch):
+    """The offline claim, asserted at the seam rather than inferred from a mock.
+
+    ⚠ WHAT THIS DELIBERATELY DOES NOT DO is check ``sys.modules`` for
+    ``requests``. It is there whatever the REPL does: ``dispatch.py`` imports it
+    at module level, so ``import foxy_audit`` pulls it in before a single test
+    runs, and a guard written that way passes for a reason that has nothing to
+    do with the session. Measured, not assumed.
+
+    ``providers._requests`` is the one function both live providers call to get
+    the library, and it is called at request time. Breaking it turns any attempt
+    to leave this machine into a loud failure -- across a whole session,
+    including ``/probe``, which is the command that makes eleven calls.
+    """
+    from foxy_testbed import providers
+
+    def refuse():
+        raise AssertionError("an offline session tried to make an HTTP request")
+
+    monkeypatch.setattr(providers, "_requests", refuse)
+
+    code, text = drive(Assistant(get_sector("legal")),
+                       [BLOCKED_PROMPT, ASSIST_PROMPT, "/probe", "/quit"])
+    assert code == 0
+    assert "PASS" in text
+
+    # And the seam is the real one: a live provider genuinely goes through it.
+    with pytest.raises(AssertionError, match="tried to make an HTTP request"):
+        providers.OpenAIProvider("not-a-key").complete("sys", "hello")
+
+
+# ── 2 · it holds no policy logic ──────────────────────────────────────────────
+def test_the_repl_cannot_reach_the_sdk_at_all():
+    """Structural, not a promise in a docstring.
+
+    The REPL renders verdicts, so the failure mode is that it starts deciding
+    them: one ``check()`` here to answer a question the engine did not, and the
+    surface and the ledger have begun to disagree. There is nothing to review if
+    the name is not importable in the first place.
+
+    LIMIT, STATED: this reads the AST's import statements. A dynamic
+    ``__import__`` would slip past it, so the assertion below also refuses the
+    two names that would be needed to write one.
+    """
+    source = open(cli.__file__, "r", encoding="utf-8").read()
+    tree = ast.parse(source)
+
+    imported = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            imported.append(node.module or "")
+        elif isinstance(node, ast.Name):
+            assert node.id not in ("__import__", "importlib"), (
+                "a dynamic import in the REPL would defeat this guard")
+
+    offenders = [name for name in imported if name.split(".")[0] == "foxy_audit"]
+    assert offenders == [], (
+        "cli.py imports {0} -- the REPL must render the engine's measurements, "
+        "not compute its own".format(offenders))
+
+    # And the guard is not vacuous: the engine it renders DOES import the SDK.
+    from foxy_testbed import core
+    core_imports = [n.module for n in ast.walk(ast.parse(
+        open(core.__file__, "r", encoding="utf-8").read()))
+        if isinstance(n, ast.ImportFrom) and n.level == 0]
+    assert "foxy_audit" in core_imports, (
+        "the engine stopped importing the SDK; this guard is now measuring "
+        "nothing")
+
+
+# ── 3 · the rendering follows the measurement, not the label ─────────────────
+def test_every_decision_has_a_rendering_of_its_own():
+    """A new decision must not silently render as an existing one.
+
+    The fallback branch prints the raw value and says it has no rendering. That
+    is the honest failure, and it is only honest if no REAL decision reaches it
+    -- so every member of ``core.DECISIONS`` is checked, and the fallback is
+    then shown to be reachable so this is not asserting an empty set.
+    """
+    shapes = {
+        DECISION_ALLOWED: {},
+        DECISION_FLAGGED: {"reached_provider": True},
+        DECISION_BLOCKED: {"reached_provider": False, "rules": ("phi.ssn_pattern",)},
+        DECISION_REDACTED: {"reached_provider": True, "rules": ("phi.ssn_pattern",)},
+        DECISION_BLOCKED_RESPONSE: {"reached_provider": True},
+        DECISION_ERROR: {"error": "ProviderError: HTTP 503"},
+    }
+    assert set(shapes) == set(DECISIONS), (
+        "core.DECISIONS moved; this guard has to move with it")
+
+    labels = {}
+    for decision, shape in shapes.items():
+        label, sentence = cli._headline(turn(decision=decision, **shape))
+        assert "no rendering in the REPL yet" not in sentence, decision
+        labels[decision] = label
+
+    assert len(set(labels.values())) == len(DECISIONS), (
+        "two decisions render as the same word: {0}".format(labels))
+
+    # The fallback really is reachable -- otherwise the assertions above hold
+    # for a branch that could never have fired.
+    label, sentence = cli._headline(turn(decision="teleported"))
+    assert label == "TELEPORTED" and "no rendering in the REPL yet" in sentence
+
+
+def test_a_block_that_reached_the_provider_is_not_rendered_as_a_block():
+    """The label says prevented. The observation says delivered.
+
+    Unreachable as the SDK stands. A renderer that reads ``decision`` alone
+    prints a clean "[BLOCKED]" over a call that happened, which is the one
+    failure this product cannot survive shipping -- and it would look exactly
+    like a working demo.
+    """
+    contradiction = turn(decision=DECISION_BLOCKED, reached_provider=True,
+                         rules=("phi.ssn_pattern",))
+    assert contradiction.prevented is False
+
+    label, sentence = cli._headline(contradiction)
+    assert label == "BLOCKED, BUT THE CALL WAS MADE"
+    assert "disagree" in sentence
+
+    rendered = "\n".join(cli.turn_lines(contradiction, provider_is_live=False))
+    assert "yes, the provider was called" in rendered
+    assert "\n  [BLOCKED]\n" not in rendered, (
+        "the contradiction was rendered as a clean block")
+
+    # The honest shape still renders as one, so this is not just refusing the word.
+    clean = turn(decision=DECISION_BLOCKED, reached_provider=False,
+                 rules=("phi.ssn_pattern",))
+    assert cli._headline(clean)[0] == "BLOCKED"
+
+
+def test_an_ineffective_redaction_is_rendered_as_incomplete_and_names_the_finding():
+    """The loudest thing the REPL prints, and the reason it exists.
+
+    ``redacted`` with a finding still firing against the delivered text is the
+    T0d defect. The renderer has to name the surviving rule, not merely decline
+    to call it enforced -- "which one got through" is the only actionable half.
+    """
+    leaky = turn(decision=DECISION_REDACTED, reached_provider=True, answered=True,
+                 reply="answered anyway.", prompt_changed=True,
+                 rules=("phi.ssn_pattern", "phi.presidio:date_time"),
+                 rules_delivered=("phi.presidio:date_time",))
+    assert leaky.redaction_ineffective is True
+
+    rendered = "\n".join(cli.turn_lines(leaky, provider_is_live=False))
+    assert "[REDACTED, INCOMPLETELY]" in rendered
+    assert "STILL SENT" in rendered
+    assert "phi.presidio:date_time" in rendered
+    # BOTH lists: the rule that really was scrubbed is reported too, or the
+    # render understates the guard exactly as the old one overstated it.
+    assert "removed" in rendered and "phi.ssn_pattern" in rendered
+
+    # A redaction that worked is still rendered as one.
+    clean = turn(decision=DECISION_REDACTED, reached_provider=True, answered=True,
+                 reply="ok.", prompt_changed=True, rules=("phi.ssn_pattern",))
+    assert "[REDACTED]" in "\n".join(cli.turn_lines(clean, provider_is_live=False))
+
+
+def test_a_prevented_turn_does_not_claim_its_findings_were_removed():
+    """``rules_removed`` is true on a prevented turn and 'removed' is the wrong
+    word for it: nothing was rewritten, because nothing was delivered.
+    """
+    prevented = turn(decision=DECISION_BLOCKED, reached_provider=False,
+                     rules=("phi.ssn_pattern",))
+    assert prevented.rules_removed == ("phi.ssn_pattern",)
+
+    rendered = "\n".join(cli.turn_lines(prevented, provider_is_live=False))
+    assert "kept back" in rendered
+    assert "removed" not in rendered
+
+    delivered = turn(decision=DECISION_REDACTED, reached_provider=True,
+                     answered=True, reply="ok.", rules=("phi.ssn_pattern",))
+    assert "removed" in "\n".join(cli.turn_lines(delivered, provider_is_live=False))
+
+
+def test_reply_provenance_follows_is_live_and_not_the_providers_name():
+    """The re-derivation hazard, in the place it would next be rebuilt.
+
+    ``Scoreboard.provider_is_live`` was added after a hardcoded "the replies are
+    fixtures" printed under a live run. Matching ``turn.provider == "mock"``
+    here would reintroduce it, and a custom Provider -- which the engine accepts
+    -- is called neither "mock" nor anything else this file knows.
+    """
+    answered = turn(decision=DECISION_ALLOWED, reached_provider=True,
+                    answered=True, reply="an answer.", provider="mock")
+
+    live = "\n".join(cli.turn_lines(answered, provider_is_live=True))
+    assert "live model output" in live
+    assert "fixture" not in live, (
+        "a live reply was labelled a fixture because the provider is CALLED mock")
+
+    mocked = "\n".join(cli.turn_lines(answered, provider_is_live=False))
+    assert "mock fixture, not model output" in mocked
+
+
+# ── 4 · a blocked prompt really does not reach the provider ──────────────────
+def test_a_blocked_prompt_never_increments_the_provider_call_count():
+    """Prevention as a MEASUREMENT taken outside the engine.
+
+    The engine's own ``reached_provider`` is set by the wrapped callable; this
+    counts from the other side, on the provider object itself, so a turn stamped
+    blocked whose call happened could not pass both.
+    """
+    provider = Stub()
+    session = Assistant(get_sector("healthcare"), provider=provider)
+
+    code, text = drive(session, [BLOCKED_PROMPT, "/quit"])
+    assert code == 0
+    assert "[BLOCKED]" in text
+    assert provider.calls == 0
+    assert provider.prompts == []
+
+    # And the counter does move when the guard lets something through, so the
+    # assertion above is not simply of a provider that is never called.
+    drive(Assistant(get_sector("healthcare"), provider=provider),
+          [ASSIST_PROMPT, "/quit"])
+    assert provider.calls == 1
+    assert provider.prompts == [ASSIST_PROMPT]
+
+
+@pytest.mark.parametrize("line", ["/help", "/policy", "/badcommand", "   ", "\t "])
+def test_a_command_or_a_blank_line_is_never_sent_to_the_provider(line):
+    """A mistyped command must not become a billable call -- or a ledger row.
+
+    ``/probe`` is excluded deliberately: it is the one command that IS meant to
+    reach the provider, and it says so before it does.
+    """
+    provider = Stub(live=True)
+    code, text = drive(Assistant(get_sector("finance"), provider=provider),
+                       [line, "/quit"])
+
+    assert code == 0
+    assert provider.calls == 0
+    if line.strip().startswith("/badcommand"):
+        # Whitespace-normalised: the message is wrapped to the shared width, so
+        # the sentence is split across lines at whatever column it lands on.
+        assert "Nothing was sent to the provider." in " ".join(text.split())
+
+
+# ── 5 · the session survives what a session runs into ────────────────────────
+def test_a_reply_the_console_cannot_encode_does_not_end_the_session():
+    """A live model's em dash must not be the end of a demo.
+
+    ``print`` raises ``UnicodeEncodeError`` from inside the write on a cp1252
+    console, and the traceback points at the print rather than at the character
+    -- so the failure reads as a bug in the REPL. Replacing the glyph loses a
+    character; raising loses the session.
+    """
+    stream = Cp1252Stream()
+    # BOTH characters on purpose. cp1252 encodes the em dash perfectly well --
+    # it is 0x97 -- and only the snowman is unencodable, so a test written
+    # around the dash alone would pass against a REPL with no fallback at all.
+    provider = Stub(reply="Here — the answer ☃ you asked for.", live=True)
+
+    code, _ = drive(Assistant(get_sector("legal"), provider=provider),
+                    [ASSIST_PROMPT, "/quit"], out=stream)
+
+    assert code == 0
+    text = stream.getvalue()
+    assert "bye." in text, "the session did not survive the reply"
+    assert "☃" not in text and "Here — the answer ? you asked for." in text, (
+        "only the unencodable character should have been degraded")
+
+    # The stream really would have refused it, so this is not passing on a
+    # stream that accepts everything.
+    with pytest.raises(UnicodeEncodeError):
+        stream.write("☃")
+
+
+def test_ctrl_c_cancels_the_line_and_ctrl_d_ends_the_session():
+    """Every REPL behaves this way, and getting it backwards is the annoying
+    kind of wrong: Ctrl-C mid-thought must not throw away the session.
+    """
+    provider = Stub()
+    lines = iter(["ignored"])
+
+    def read_line():
+        try:
+            next(lines)
+        except StopIteration:
+            raise EOFError from None
+        raise KeyboardInterrupt
+
+    out = io.StringIO()
+    assert cli.repl(Assistant(get_sector("legal"), provider=provider),
+                    read_line=read_line, out=out, banner=False) == 0
+    assert provider.calls == 0
+    assert out.getvalue().rstrip().endswith("bye.")
+
+
+def test_a_provider_that_fails_is_reported_and_the_session_continues():
+    """A provider fault is not evidence about the guard, and not fatal here.
+
+    The probe runner exits 1 on an error because it is a gate. A REPL is a
+    person reading verdicts; the turn is labelled and the next prompt is taken.
+    """
+    class Broken(Stub):
+        def complete(self, system, prompt):
+            raise RuntimeError("upstream is down")
+
+    provider = Broken(live=True)
+    code, text = drive(Assistant(get_sector("legal"), provider=provider),
+                       [ASSIST_PROMPT, ASSIST_PROMPT, "/quit"])
+
+    assert code == 0, "a provider error must not fail an interactive session"
+    assert text.count("[ERROR]") == 2
+    assert "RuntimeError: upstream is down" in text
+    assert "says nothing about what the guard would have done" in text
+
+
+# ── 6 · /probe and /mode ──────────────────────────────────────────────────────
+def test_probe_runs_through_the_sessions_own_assistant():
+    """The shape ``AssistantConflict`` exists to protect.
+
+    ``run_probes`` refuses a configuration passed beside a prebuilt assistant,
+    because the report would then describe one run while printing another's
+    verdicts. The REPL passes the assistant ALONE -- and the proof is that the
+    board reports the mode the session was switched to, not the one it started
+    in and not the engine default.
+    """
+    code, text = drive(Assistant(get_sector("healthcare"), mode="observe"),
+                       ["/probe", "/quit"])
+
+    assert code == 0
+    assert "mode=observe" in text
+    assert "mode=block" not in text
+    # observe prevents nothing, and the board says so rather than reading as a
+    # broken guard. That sentence appearing here proves the board was rendered
+    # under the session's mode.
+    assert "mode=observe records but never prevents" in text
+
+
+def test_probe_warns_before_spending_a_live_providers_budget():
+    provider = Stub(live=True)
+    _, live_text = drive(Assistant(get_sector("legal"), provider=provider),
+                         ["/probe", "/quit"])
+    assert "against a LIVE provider, under your key" in live_text
+    assert str(len(get_sector("legal").probes)) in live_text
+
+    _, mock_text = drive(Assistant(get_sector("legal")), ["/probe", "/quit"])
+    assert "LIVE provider" not in mock_text
+
+
+def test_switching_mode_keeps_the_provider_and_the_sector():
+    """``/mode`` rebuilds the assistant, because the guard decorator is built in
+    ``__init__`` and the mode cannot be reassigned. Everything else must survive
+    -- rebuilding the provider would re-read a live key and rebuild the mock's
+    fixture map under the user.
+    """
+    provider = Stub()
+    session = cli.Session(Assistant(get_sector("finance"), mode="block",
+                                    provider=provider))
+    before = session.assistant
+
+    session.switch_mode("redact")
+
+    assert session.assistant is not before
+    assert session.assistant.mode == "redact"
+    assert session.assistant.provider is provider, "the provider was rebuilt"
+    assert session.assistant.sector == get_sector("finance")
+
+
+def test_an_unknown_mode_leaves_the_session_running_and_unchanged():
+    """The engine refuses it loudly; the REPL reports the refusal and carries on.
+
+    ``Assistant`` raising rather than falling back to observe is a deliberate
+    T0 decision -- a silent demotion turns a demo of prevention into a demo of
+    nothing. A REPL that swallowed the exception would undo it.
+    """
+    provider = Stub()
+    # healthcare, because BLOCKED_PROMPT is an SSN and only `hipaa` adds the PHI
+    # family -- under `default` it is correctly allowed through, which would
+    # make this guard pass for a reason that has nothing to do with the mode.
+    session = Assistant(get_sector("healthcare"), mode="block", provider=provider)
+    code, text = drive(session, ["/mode blcok", BLOCKED_PROMPT, "/quit"])
+
+    assert code == 0
+    assert "unknown mode" in text
+    # Still enforcing under the mode it started in.
+    assert "[BLOCKED]" in text
+    assert provider.calls == 0
+
+
+def test_mode_with_no_argument_reports_the_current_one():
+    _, text = drive(Assistant(get_sector("legal"), mode="redact"), ["/mode", "/quit"])
+    assert "mode is redact" in text
+
+
+# ── 7 · everything this module prints is 7-bit ───────────────────────────────
+def test_the_repls_own_output_is_ascii():
+    """Same rule as the scoreboard, and for the same measured reason: a Windows
+    console is cp1252 and a captured CI stream frequently is too. The reply is
+    not this module's string and is exempt -- see the encode fallback.
+    """
+    session = Assistant(get_sector("healthcare"))
+    owned = cli.banner_lines(session) + cli.help_lines()
+    for decision in DECISIONS:
+        owned += cli.turn_lines(turn(decision=decision, reached_provider=True,
+                                     rules=("phi.ssn_pattern",),
+                                     rules_delivered=("phi.ssn_pattern",)),
+                                provider_is_live=False)
+
+    for line in owned:
+        line.encode("ascii")            # raises on the first non-ASCII byte
+
+
+def test_no_rendered_line_runs_past_the_scoreboards_width():
+    """The two surfaces print into the same terminal, one under the other --
+    ``/probe`` renders a board directly beneath a turn. A REPL wrapping at a
+    different width makes them read as two programs.
+    """
+    from foxy_testbed.scoreboard import WIDTH
+
+    session = Assistant(get_sector("finance"))
+    lines = cli.banner_lines(session) + cli.help_lines() + cli.turn_lines(
+        turn(decision=DECISION_ALLOWED, reached_provider=True, answered=True,
+             reply="A paragraph long enough to need wrapping. " * 6),
+        provider_is_live=False)
+
+    overlong = [line for line in lines if len(line) > WIDTH]
+    assert overlong == [], overlong
+
+
+# ── 8 · the command line ──────────────────────────────────────────────────────
+def test_no_probe_flag_now_starts_the_repl(monkeypatch, capsys):
+    """T0 printed "the interactive REPL is not built yet" here and exited 2.
+
+    Driven through ``main`` with a real stdin so the default reader is the thing
+    under test, not the injected one every other guard uses.
+    """
+    from foxy_testbed.__main__ import main
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("/policy\n/quit\n"))
+    assert main(["--sector", "finance"]) == 0
+
+    text = capsys.readouterr().out
+    assert "not built yet" not in text
+    # Off a terminal the reader echoes, so a piped session reads as a transcript
+    # rather than as a list of unanswered prompts.
+    assert "{0}/policy".format(cli.PROMPT) in text
+    assert "cardholder data and bank account numbers are NOT blocked here" in " ".join(
+        text.split())
+
+
+def test_a_session_that_cannot_start_still_exits_2(monkeypatch, capsys):
+    """The one failure both paths share. A REPL that opened a session against a
+    provider it has no key for would fail on the first prompt instead of on the
+    command line.
+    """
+    from foxy_testbed.__main__ import main
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+
+    assert main(["--sector", "healthcare", "--provider", "openai"]) == 2
+    assert "Could not start" in capsys.readouterr().err
+
+
+def test_the_repl_path_reads_the_key_from_the_environment(monkeypatch):
+    """The env fallback moved above the branch, so both paths honour it.
+
+    One flag meaning two things -- ``--provider openai`` picking up
+    ``OPENAI_API_KEY`` under ``--probe`` and ignoring it without -- is the kind
+    of difference nobody finds until it is a support ticket.
+    """
+    from foxy_testbed.__main__ import main
+
+    # Deliberately NOT key-shaped. `OpenAIProvider` only asks whether the key is
+    # non-empty, so nothing here needs a string that looks like a credential --
+    # and a repo whose secret scanner has already had to be taught about two
+    # test fixtures does not need a third one minted for no reason.
+    monkeypatch.setenv("OPENAI_API_KEY", "not-a-key")
+    monkeypatch.setattr("sys.stdin", io.StringIO("/quit\n"))
+
+    # It starts, which it could not do without a key, and it is never used:
+    # /quit sends nothing.
+    assert main(["--sector", "healthcare", "--provider", "openai"]) == 0

@@ -4,7 +4,8 @@ One engine, three sector presets, one ``Turn`` record. The CLI, the local web
 page and the desktop console page are three renderings of that record; none of
 them holds policy logic.
 
-    python -m foxy_testbed --sector healthcare --probe all
+    python -m foxy_testbed --sector healthcare              # interactive REPL
+    python -m foxy_testbed --sector healthcare --probe all  # the scored corpus
 
 Offline and keyless by default: the ``mock`` provider makes no network call and
 the client is built with ``api_key=""``, so a run cannot depend on whose machine

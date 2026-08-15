@@ -130,6 +130,30 @@ jobs:
           # redactions as MISSED and exited 1. A guard covers the tallies; this
           # line covers the entry point a human actually types.
           python -m foxy_testbed --sector healthcare --probe all --mode redact
+      # THE OTHER ENTRY POINT A HUMAN TYPES (T1). Everything above passes
+      # `--probe`, so the branch a prospect actually lands on -- `python -m
+      # foxy_testbed --sector healthcare`, no flags -- was reachable by nothing.
+      # The guard suite drives `main()` in-process with a patched stdin, which
+      # cannot see an import that only fails in a fresh interpreter.
+      #
+      # Off a terminal the REPL reads from stdin and exits 0 at EOF, so a pipe
+      # drives a whole session: a prompt the guard must stop, a prompt it must
+      # answer, and the scoreboard rendered through the session's own assistant.
+      # Offline, no key, mock provider -- if that ever stops being true this step
+      # fails rather than the demo failing in front of somebody.
+      - name: Testbed REPL (offline, no key, piped session)
+        run: |
+          # python LAST in the pipeline, and the output redirected rather than
+          # teed: the runner's shell is `bash -e` without `pipefail`, so a
+          # `| tee` here would report tee's exit status and swallow a crash.
+          printf '%s\n%s\n/probe\n/quit\n' \
+            'Confirm coverage for member SSN 900-12-3456 before the procedure.' \
+            'What does the HIPAA minimum necessary standard require?' \
+            | python -m foxy_testbed --sector healthcare > repl-session.txt
+          cat repl-session.txt
+          grep -q '\[BLOCKED\]' repl-session.txt
+          grep -q '\[ALLOWED\]' repl-session.txt
+          grep -q 'PASS | enforcement' repl-session.txt
       - name: Hash-chain regression test
         run: pytest backend/tests/test_chain.py -q
       - name: Verifier tests (the second, independent implementation)
