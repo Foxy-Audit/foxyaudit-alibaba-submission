@@ -7,14 +7,27 @@ and point ruleset.CURRENT_VERSION at it; ruleset.drift() fails the suite if you
 edit a rule without doing so.
 
 Supersedes 2026.08.2, which remains in the registry forever because rows name it.
-Three patterns moved, all in SDK 1.9.0, and the rule IDS are unchanged -- so a
-row stamped 2026.08.2 still resolves, it simply resolves to the rules that were
-live when it was written:
+Three patterns and one VALIDATOR NAME moved, all in SDK 1.9.0, and the rule IDS
+are unchanged -- so a row stamped 2026.08.2 still resolves, it simply resolves to
+the rules that were live when it was written:
 
-* `pii_detectors.phone` and `pii_detectors.credit_card` (SDK #215) -- the
-  lookarounds now exclude an adjacent LETTER or HYPHEN, not only an adjacent
-  digit. Under 2026.08.2 a digit run inside an identifier read as personal data:
-  15.3% of SHA-256 digests reported `phone`.
+* `pii_detectors.phone` (SDK #215) -- the lookarounds now exclude an adjacent
+  LETTER or HYPHEN, not only an adjacent digit. Under 2026.08.2 a digit run
+  inside an identifier read as personal data: 15.3% of SHA-256 digests reported
+  `phone`.
+* `pii_detectors.credit_card` (SDK #215) -- the same boundary, but LETTERS ONLY.
+  Excluding the hyphen here deleted a fifth of the real PAN shapes
+  (`card-4111111111111111`), and what it was defending against is handled by the
+  validator instead. The pattern is also restructured so a separator can only
+  appear BETWEEN digits, which stops a redaction eating the character after the
+  number.
+* `pii_detectors.credit_card.validator` -- "luhn" becomes "luhn+iin+distinct".
+  Luhn alone accepts `0000000000000000`, and the candidate chains across a
+  UUID's hyphens, so a NIL UUID reported `credit_card`. The gate now also
+  rejects a leading zero (ISO/IEC 7812 assigns MII 0 elsewhere) and a run of one
+  repeated digit. A NEW NAME rather than a redefinition: rows stamped 2026.08.1
+  and 2026.08.2 record "luhn" and must keep replaying under the plain checksum
+  that ran on the day they were written. `introspect.replay` honours both.
 * `secret.private_key` (SDK #218) -- the pattern now spans the whole PEM block
   rather than the BEGIN header alone. What it DETECTS is unchanged; what a
   redaction removes is not. It appears TWICE below, under `prompt_rules.secret`
@@ -29,15 +42,15 @@ string determines none of them. See the "WHAT THE HASH COVERS" section of
 ruleset.py. The guard for that change is
 tests/test_policy_truth_1_9_0.py::test_217_every_marker_is_inert_under_every_rule.
 
-sha256 over canonical JSON: 46611104bead6e8a6292c83498c1c6ea2b2afa046bd065daf582bcde836f5936
+sha256 over canonical JSON: a79ca7bfda4bed7d5b373f27677c556329b4a40cb7a9fccea67255134f920e9b
 """
 
 VERSION = "2026.08.3"
 
 DEFINITION = {'pii_detectors': {'credit_card': {'flags': [],
-                                   'pattern': '(?<![0-9A-Za-z])(?:\\d[ '
-                                              '\\-]?){13,19}(?![0-9A-Za-z])',
-                                   'validator': 'luhn'},
+                                   'pattern': '(?<![0-9A-Za-z])\\d(?:[ '
+                                              '\\-]?\\d){12,18}(?![0-9A-Za-z])',
+                                   'validator': 'luhn+iin+distinct'},
                    'email': {'flags': [], 'pattern': '[\\w.\\-]+@[\\w\\-]+\\.\\w+'},
                    'ip_address': {'flags': [],
                                   'pattern': '\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b'},

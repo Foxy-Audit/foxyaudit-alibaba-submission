@@ -252,11 +252,28 @@ def replay(definition: dict, text: str, policy_tag: str) -> list:
     if prefix:
         for label, entry in sorted(definition.get("pii_detectors", {}).items()):
             for found in _compile(entry).finditer(text):
-                # The definition records `"validator": "luhn"` for the card
-                # detector, so honour it — otherwise the replay would report a
-                # match the SDK itself would have discarded.
-                if entry.get("validator") == "luhn":
-                    if not _luhn_ok(re.sub(r"\D", "", found.group())):
+                # The definition NAMES the card detector's validator, so honour
+                # the one THIS ROW's ruleset recorded — otherwise the replay
+                # reports a match the SDK itself would have discarded, or
+                # discards one it kept.
+                #
+                # ⚠ EACH NAME KEEPS ITS OWN MEANING FOREVER. Rows stamped
+                # 2026.08.1 / .2 record "luhn" and replay under the plain
+                # checksum, which is what ran on the day they were written —
+                # including its acceptance of `0000000000000000`. From 2026.08.3
+                # the gate also rejects a leading zero and a single repeated
+                # digit (pii._is_card_number), so it is a DIFFERENT name rather
+                # than a redefinition of the old one. An unknown name applies no
+                # validator, which over-reports rather than silently under-
+                # reporting: a replay from a newer SDK should look too eager, not
+                # falsely clean.
+                validator = entry.get("validator")
+                if validator in ("luhn", "luhn+iin+distinct"):
+                    digits = re.sub(r"\D", "", found.group())
+                    if not _luhn_ok(digits):
+                        continue
+                    if validator == "luhn+iin+distinct" and (
+                            digits[:1] == "0" or len(set(digits)) == 1):
                         continue
                 matches.append(Match(f"{prefix}.{label}", found.start(),
                                      found.end(), found.group()))

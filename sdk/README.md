@@ -17,12 +17,17 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   UUID, a commit sha and **15.3% of real SHA-256 digests** reported `phone`
   under `hipaa`/`gdpr`, and `mode="block"` refused the prompt. They now require
   a token boundary — a **letter or hyphen** for phones (the bare UUID's digit run
-  sits between hyphens), a **letter** for cards (no UUID group reaches the card's
-  13-digit minimum, and excluding hyphens there would drop
-  `card-4111111111111111`). *Cost:* a phone glued straight to a hyphen with no
-  space (`Tel-4155550134`) is no longer detected, nor a card glued to a letter
-  (`4111111111111111x`); 5 UUIDs in 20 000 still read as `credit_card`, against
-  1.8.0's 33. Every phone shape that matched in a delimited context still does.
+  sits between hyphens), a **letter** for cards (excluding hyphens there would
+  drop `card-4111111111111111`, and a missed card number is worse than a spurious
+  label). The card validator gained the two structural facts Luhn does not know:
+  a card number **does not start with 0** (ISO/IEC 7812 assigns that industry
+  identifier elsewhere) and **is not one repeated digit**. Without them a **nil
+  UUID** reported `credit_card`, because the candidate chains across a UUID's
+  hyphens and Luhn accepts `0000000000000000`. *Cost:* a phone glued straight to a
+  hyphen with no space (`Tel-4155550134`) is no longer detected, nor a card glued
+  to a letter (`4111111111111111x`); 5 random UUIDs in 20 000 still read as
+  `credit_card`, against 1.8.0's 33. Every phone shape that matched in a delimited
+  context still does, and a card redaction no longer eats the character after it.
 - **`mode="redact"` now blocks when a finding survives its own redaction.** A
   finding redaction cannot act on — a Presidio match, a value in a non-string
   field — used to be stamped `redacted` while the content reached the model. The
@@ -117,7 +122,7 @@ content-blind strings inside `event_metadata`:
 {"decision": "blocked", "blocked_reason": "prompt_injection",
  "policy_rules": ["injection.ignore_previous"],
  "ruleset_version": "2026.08.3",
- "ruleset_hash": "46611104…"}
+ "ruleset_hash": "a79ca7bf…"}
 ```
 
 `ruleset_version` names a **frozen** definition. The SDK ships one

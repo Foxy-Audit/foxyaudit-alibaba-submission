@@ -63,6 +63,7 @@ def _load(name: str, filename: str):
     return module
 
 
+CORPORA = _load("identifier_corpora", "identifier_corpora.py")
 OLD_PII = _load("pii_1_8_0", "pii_1_8_0.py")
 OLD_POLICY = _load("policy_1_8_0", "policy_1_8_0.py")
 # The rebind that makes this a comparison of TWO ERAS rather than of one module
@@ -283,43 +284,99 @@ def test_215_the_guard_no_longer_refuses_the_prompt(text):
     assert not [r for r in rules if r.startswith(("phi.phone", "phi.credit_card"))], rules
 
 
-def test_215_the_false_positive_RATE_is_gone():
-    """Measured over a population, not over the handful above.
+def _fired(module, corpus, label=None):
+    """How many items in ``corpus`` produce a signal (optionally a named one)."""
+    return sum(1 for text in corpus
+               if (label in module.detect_pii(text, "") if label
+                   else bool(module.detect_pii(text, ""))))
+
+
+def test_215_digests_no_longer_read_as_personal_data():
+    """The population #215 was reported against.
 
     On 1.8.0: 15.3% of real SHA-256 digests reported `phone` and 0.45% cleared
-    Luhn as `credit_card`; 2.8% of random UUIDs were flagged. A per-example test
-    would have been satisfied by a fix that happened to catch those examples.
-
-    ⚠ THE UUID RESIDUE IS NOT ZERO AND IS NOT CLAIMED TO BE. The card detector
-    takes the LETTER boundary only (see pii.py for the measurement that decides
-    it), so a UUID whose digit groups chain across hyphens into a Luhn-passing
-    13-19 digit run still reads as `credit_card` — 5 in 20 000, against 1.8.0's
-    33. Asserting zero here would be asserting a fix that does not exist; the
-    bound is asserted instead, and it is an order of magnitude.
+    Luhn as `credit_card`. A per-example test would have been satisfied by a fix
+    that happened to catch the four examples in the report.
     """
-    import hashlib
-    import random
+    old = _fired(OLD_PII, CORPORA.SHA256_DIGESTS)
+    assert old > 2000, f"1.8.0 only hit {old}/20000 — the corpus is stale"
+    assert _fired(pii, CORPORA.SHA256_DIGESTS) == 0
 
-    digests = [hashlib.sha256(str(i).encode()).hexdigest() for i in range(4000)]
-    old_hits = sum(1 for d in digests if OLD_PII.detect_pii(d, ""))
-    new_hits = sum(1 for d in digests if pii.detect_pii(d, ""))
-    assert old_hits > 400, f"1.8.0 only hit {old_hits}/4000 — the corpus is stale"
-    assert new_hits == 0, f"{new_hits}/4000 digests still flagged"
 
-    # GENUINELY RANDOM, seeded. A multiplicative sequence produces UUIDs full of
-    # leading zeros — `00000000-0000-0000-9e37-79b97f4a7c15` chains three groups
-    # into one long digit run — and measuring against that reports 4% where the
-    # real rate is 0.025%. A corpus that is not representative measures itself.
-    random.seed(5)
-    uuids = ["%08x-%04x-%04x-%04x-%012x"
-             % tuple(random.getrandbits(b) for b in (32, 16, 16, 16, 48))
-             for _ in range(20000)]
-    old_uuid = sum(1 for u in uuids if OLD_PII.detect_pii(u, ""))
-    new_uuid = sum(1 for u in uuids if pii.detect_pii(u, ""))
-    assert old_uuid >= 30, f"1.8.0 only hit {old_uuid}/20000 — the corpus is stale"
-    assert new_uuid <= old_uuid // 5, (
-        f"{new_uuid}/20000 UUIDs still flagged against 1.8.0's {old_uuid} — the "
-        f"residue was measured at 5 and is meant to stay an order of magnitude down")
+def test_215_the_ZERO_HEAVY_class_is_the_one_that_matters():
+    """⚠ NIL UUIDS, ZERO-PADDED COUNTERS AND SEQUENTIAL IDS. Bound: ZERO.
+
+    This is the class 1.9.0's boundary change re-broke and the class a
+    uniformly-random UUID corpus cannot see. `_is_card_number` kills it with two
+    facts Luhn does not know — a card number does not start with 0, and is not
+    one repeated digit — at no cost to PAN recall.
+
+    STRICT is asserted at exactly 0 because every digit run in it is a
+    placeholder. The wider ZERO_HEAVY set additionally contains UUIDs with a
+    RANDOM TAIL, whose 16-digit 8-distinct-digit Luhn-passing runs no
+    content-free rule separates from a PAN — those get a small bound and a
+    reason, not a pretence of zero.
+    """
+    old_strict = _fired(OLD_PII, CORPORA.ZERO_HEAVY_STRICT)
+    assert old_strict > 1000, f"1.8.0 only hit {old_strict} — the corpus is stale"
+    assert _fired(pii, CORPORA.ZERO_HEAVY_STRICT) == 0, \
+        "a placeholder id is being read as personal data"
+
+    old_wide = _fired(OLD_PII, CORPORA.ZERO_HEAVY)
+    new_wide = _fired(pii, CORPORA.ZERO_HEAVY)
+    assert old_wide > 2000, f"1.8.0 only hit {old_wide} — the corpus is stale"
+    assert new_wide <= 5, (
+        f"{new_wide}/{len(CORPORA.ZERO_HEAVY)} zero-heavy ids flagged against "
+        f"1.8.0's {old_wide}; measured at 2, both random-tailed")
+
+
+def test_215_random_uuids_are_the_EASY_case_and_get_their_own_bound():
+    """Kept BESIDE the zero-heavy one, never collapsed into it.
+
+    A uniformly-random UUID rarely holds a long enough all-digit run to chain, so
+    this population reported 5 while the real world reported 2 627. Two corpora,
+    two bounds, two reasons — see fixtures/identifier_corpora.py.
+    """
+    old = _fired(OLD_PII, CORPORA.RANDOM_UUIDS)
+    new = _fired(pii, CORPORA.RANDOM_UUIDS)
+    assert old >= 30, f"1.8.0 only hit {old}/20000 — the corpus is stale"
+    assert new <= 5, f"{new}/20000 random UUIDs flagged against 1.8.0's {old}"
+
+
+def test_215_the_two_corpora_do_NOT_measure_the_same_thing():
+    """CONTROL for keeping both, and the whole reason this went wrong once.
+
+    If the zero-heavy population ever stops being harder than the random one,
+    someone has quietly made them the same corpus and one of the two bounds has
+    become decorative. Measured against 1.8.0, where the gap is enormous.
+    """
+    random_rate = _fired(OLD_PII, CORPORA.RANDOM_UUIDS) / len(CORPORA.RANDOM_UUIDS)
+    zero_rate = _fired(OLD_PII, CORPORA.ZERO_HEAVY) / len(CORPORA.ZERO_HEAVY)
+    # Measured at 22x (0.639 vs 0.029). The bound is 10x, so this fails when the
+    # two populations genuinely converge rather than when one drifts a little.
+    assert zero_rate > random_rate * 10, (
+        f"zero-heavy {zero_rate:.4f} vs random {random_rate:.4f} — the corpora "
+        f"have converged and one of them is no longer testing anything")
+
+
+@pytest.mark.parametrize("text", CORPORA.NAMED_PLACEHOLDERS)
+def test_215_each_named_placeholder_by_name(text):
+    """A rate can drift; a named case cannot come back quietly."""
+    assert "credit_card" not in pii.detect_pii(text, ""), text
+    assert "phone" not in pii.detect_pii(text, ""), text
+
+
+def test_215_the_hyphenated_id_rate_is_NOT_a_regression():
+    """Stated rather than hidden: these fire, and they fired on 1.8.0 too.
+
+    A Luhn-passing hyphen-separated 13-19 digit run is what a card number looks
+    like. The claim is not that this class is clean — it is that 1.9.0 did not
+    make it worse, which is the only claim the measurement supports.
+    """
+    old = _fired(OLD_PII, CORPORA.HYPHENATED_IDS, "credit_card")
+    new = _fired(pii, CORPORA.HYPHENATED_IDS, "credit_card")
+    assert old > 500, f"1.8.0 only hit {old} — the corpus is stale"
+    assert new <= old, f"1.9.0 made this class WORSE: {new} vs {old}"
 
 
 def test_215_every_phone_shape_1_8_0_ACCEPTED_still_matches():
@@ -367,6 +424,50 @@ def test_215_the_cost_is_what_the_comment_says_it_is():
     # ...and a space is all it takes to keep it.
     for spaced in ("Tel: 4155550134", "call 4155550134", "- 415-555-0134"):
         assert pii.detect_pii(spaced, "") == ["phone"], spaced
+
+
+@pytest.mark.parametrize("sep,name", [(" ", "space"), ("-", "hyphen")])
+def test_215_the_card_redaction_eats_NEITHER_trailing_separator(sep, name):
+    """Both halves of one class, which is why the hyphen half was missed.
+
+    ``(?:\\d[ \\-]?){13,19}`` ends with an OPTIONAL SEPARATOR, so the match could
+    run past the number and swallow the character after it. 1.9.0 fixed the space
+    by accident — the new lookahead forced a backtrack — and gave that its own
+    test while leaving the hyphen: ``redact("6011111111111117- ok")`` returned
+    ``"[REDACTED:credit_card] ok"`` with the customer's hyphen gone.
+
+    The regex is now ``\\d(?:[ \\-]?\\d){12,18}``: same digit counts, separators
+    strictly BETWEEN digits, so neither can be consumed. Parametrised rather than
+    written twice, so a third separator cannot be forgotten the same way.
+    """
+    # ⚠ THE SEPARATOR MUST BE FOLLOWED BY A NON-IDENTIFIER CHARACTER, or the
+    # lookahead forces a backtrack and the bug hides. A first draft of this test
+    # used "...117-ok" — the letter made even the OLD regex give the hyphen back,
+    # so it passed against the defect. This is the review's exact shape.
+    text = "ref 6011111111111117{0} ok".format(sep)
+    assert pii.redact(text) == "ref [REDACTED:credit_card]{0} ok".format(sep), name
+    # 1.8.0 ate the separator, which is what makes this a fix not a preference.
+    assert OLD_PII.redact(text) == "ref [REDACTED:credit_card] ok", name
+    # And the internal separators are still consumed — this is about the EDGE.
+    assert pii.redact("ref 6011-1111-1111-1117 ok") == "ref [REDACTED:credit_card] ok"
+
+
+@pytest.mark.parametrize("text", CORPORA.NAMED_PLACEHOLDERS)
+def test_215_REDACTION_agrees_with_detection_on_every_placeholder(text):
+    """The two must not drift, and only one of them was guarded.
+
+    ``detect_pii`` and ``redact`` run the same regexes on purpose, but the GATES
+    are separate call sites — so redaction could rewrite a span detection never
+    reported. That hands the model a mangled prompt for a finding the ledger does
+    not contain: the customer's nil UUID becomes ``[REDACTED:credit_card]`` and
+    nothing anywhere says why.
+
+    Measured as a mutation: pointing redaction at plain ``_luhn_ok`` while
+    leaving detection alone passed every other guard in this file.
+    """
+    assert pii.detect_pii(text, "") == [], text
+    assert pii.redact(text) == text, (
+        "redaction rewrote a span detection did not report")
 
 
 def test_215_the_card_redaction_no_longer_eats_the_following_space():

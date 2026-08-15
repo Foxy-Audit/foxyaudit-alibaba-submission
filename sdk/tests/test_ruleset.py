@@ -72,7 +72,7 @@ def test_the_named_version_survives_the_current_rules_changing():
 PUBLISHED = {
     "2026.08.1": "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0",
     "2026.08.2": "59888ec66b3e2b84f550412ec5f2372e9d90f4a8df66a9e5ad9193f7c17b1f62",
-    "2026.08.3": "46611104bead6e8a6292c83498c1c6ea2b2afa046bd065daf582bcde836f5936",
+    "2026.08.3": "a79ca7bfda4bed7d5b373f27677c556329b4a40cb7a9fccea67255134f920e9b",
 }
 
 
@@ -157,7 +157,7 @@ def test_the_coverage_ids_specifically_resolve():
         assert rule_id in explained, rule_id
 
 
-def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_three_patterns():
+def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_named_fields():
     """The ruleset identity claim for SDK 1.9.0, made checkable.
 
     If rules change and the version does not, two different rule sets become
@@ -185,6 +185,14 @@ def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_three_patterns():
     assert moved == {
         "pii_detectors.phone.pattern",
         "pii_detectors.credit_card.pattern",
+        # The card's GATE, not just its pattern. Luhn alone accepts
+        # `0000000000000000`, so a nil UUID reported credit_card; the gate now
+        # also rejects a leading zero and a uniform run. Recorded under a NEW
+        # NAME rather than redefining "luhn", because 2026.08.1/.2 rows record
+        # that string and must keep replaying under the plain checksum —
+        # test_a_row_naming_the_OLD_version_still_replays_against_the_old_rules
+        # is the other half of that claim.
+        "pii_detectors.credit_card.validator",
         "prompt_rules.secret.secret.private_key.pattern",
         # The RESPONSE side's copy, and it must be here. response_policy builds
         # `response_secret.*` from `policy._SECRET_RULES` — the same compiled
@@ -218,6 +226,33 @@ def test_a_row_naming_the_OLD_version_still_replays_against_the_old_rules():
                                                      text, "hipaa")}
     assert "phi.phone" in old_hits, old_hits
     assert "phi.phone" not in new_hits, new_hits
+
+
+def test_the_card_VALIDATOR_replays_under_the_name_the_row_recorded():
+    """The other half of naming it: each version keeps its own gate forever.
+
+    A nil UUID was reported as `credit_card` by the plain Luhn check, and a row
+    written under 2026.08.1 or 2026.08.2 says so. Replaying it under TODAY's
+    stricter gate would show a clean prompt where the ledger recorded a finding —
+    the row would look like a lie about itself. So the old name keeps the old
+    meaning and the new name gets the new one.
+    """
+    from foxy_audit import introspect
+
+    nil = "patient record 00000000-0000-0000-0000-000000000000 not found"
+    for version, expected in (("2026.08.1", True), ("2026.08.2", True),
+                              ("2026.08.3", False)):
+        hits = {m.rule_id for m in introspect.replay(ruleset.load(version),
+                                                     nil, "hipaa")}
+        assert ("phi.credit_card" in hits) is expected, (version, sorted(hits))
+
+    # ...and a REAL card still replays as one under every version, so the split
+    # is about the placeholder class and not about the detector being weakened.
+    for version in ("2026.08.1", "2026.08.2", "2026.08.3"):
+        hits = {m.rule_id for m in introspect.replay(ruleset.load(version),
+                                                     "card 4111111111111111",
+                                                     "hipaa")}
+        assert "phi.credit_card" in hits, (version, sorted(hits))
 
 
 def test_2026_08_1_is_still_the_version_that_could_not_explain_them():

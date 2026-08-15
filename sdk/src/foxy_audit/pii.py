@@ -48,31 +48,39 @@ import re
 # a great deal, measured over 450 generated PAN shapes (6 issuers x 3 groupings x
 # 25 contexts) and four 20 000-item false-positive populations:
 #
-#   boundary            PANs found   sha256   uuid   hyphenated 13-15 digit ids
-#   1.8.0                 450/450       90     33         1996 / 20 000
-#   letters + hyphen      324/450        0      0            0
-#   letters only          414/450        0      5         1996 / 20 000
+#   boundary                 PANs    sha256  random uuid  ZERO-HEAVY  hyphen ids
+#   1.8.0                  450/450     90        33          2853        2022
+#   letters + hyphen       324/450      0         0           411           0
+#   letters only           414/450      0         5          2627        2022
+#   + _is_card_number      414/450      0         5             2        2022
 #
-# No UUID can ever be a card candidate on its own — its longest digit group is
-# 12, below the 13 minimum — so the hyphen was defending against nothing here
-# while deleting 90 real PAN shapes: ``card-4111111111111111`` and
+# ⚠ THE HYPHEN WAS DEFENDING AGAINST SOMETHING, and an earlier version of this
+# comment claimed otherwise — "no UUID can ever be a card candidate, its longest
+# digit group is 12". THAT IS FALSE. ``[ \-]?`` is a SEPARATOR, so a candidate
+# chains straight across a UUID's hyphens: ``0000-0000-0000-0000`` is one 16-digit
+# run. The 0-vs-5 column above says so, and the ZERO-HEAVY column says it loudly.
+# What the hyphen was defending against is now handled where it belongs — in
+# :func:`_is_card_number`, at no cost to PAN recall — instead of by a boundary
+# that also deleted 90 real PAN shapes. ``card-4111111111111111`` and
 # ``4111-1111-1111-1111-visa`` were detected by 1.8.0 and were NOT by the first
 # version of this fix. For a compliance product a missed PAN is worse than a
-# spurious label on a hex digest, and that trade is not symmetric.
+# spurious label on an identifier, and that trade is not symmetric.
 #
-# The hyphenated-id column is the reason letters-only is not a regression: it is
+# The hyphen-ids column is the reason letters-only is not a regression: it is
 # IDENTICAL to 1.8.0's. A Luhn-passing 13-19 digit run written with hyphen
 # separators is what a PAN looks like, and flagging it is the base rate this
 # detector has always had — not something #215 introduced or promised to remove.
 # An IIN-prefix rule (``[2-6]``) was measured and rejected: it only halved that
-# column (1996 -> 1110), recovered no additional PAN, and would miss any card
+# column (2022 -> ~1110), recovered no additional PAN, and would miss any card
 # outside the mainstream ranges.
 #
 # THE CARD COST, STATED RATHER THAN HIDDEN: a PAN glued directly to a LETTER
-# (``4111111111111111x``) is not detected, and 5 UUIDs in 20 000 still read as
-# ``credit_card`` where 1.8.0 flagged 33. test_pii.py and
-# test_policy_truth_1_9_0.py regenerate both corpora rather than trusting these
-# sentences.
+# (``4111111111111111x``) is not detected; 5 random UUIDs in 20 000 and 2 of
+# 10 120 zero-heavy ids still read as ``credit_card`` (1.8.0: 33 and 2 853), and
+# those residues are 16-digit, 8-distinct-digit Luhn-passing runs no content-free
+# rule separates from a PAN. tests/fixtures/identifier_corpora.py checks in every
+# population above, and test_policy_truth_1_9_0.py regenerates the PAN shapes,
+# rather than trusting these sentences.
 _PHONE_BEFORE = r"(?<![0-9A-Za-z\-])"
 _PHONE_AFTER = r"(?![0-9A-Za-z\-])"
 _CARD_BEFORE = r"(?<![0-9A-Za-z])"
@@ -88,8 +96,78 @@ _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 # SHA-256 digests cleared Luhn on a run inside them. Fixing only the phone would
 # have left the same over-block firing under a different label — but it needs the
 # LETTER boundary only, for the reasons measured above.
+#
+# ``\d(?:[ \-]?\d){12,18}`` rather than ``(?:\d[ \-]?){13,19}``: same 13–19
+# digits, but a separator can only appear BETWEEN two digits. The old shape let
+# the final ``[ \-]?`` swallow the character AFTER the number, so
+# ``redact("6011111111111117- ok")`` returned ``"[REDACTED:credit_card] ok"``
+# with the customer's hyphen gone. The space half of that was fixed by accident
+# in 1.9.0 (the new lookahead forced a backtrack); this fixes the whole class on
+# purpose.
 _CARD_CANDIDATE_RE = re.compile(
-    _CARD_BEFORE + r"(?:\d[ \-]?){13,19}" + _CARD_AFTER)
+    _CARD_BEFORE + r"\d(?:[ \-]?\d){12,18}" + _CARD_AFTER)
+
+
+def _is_uniform(digits: str) -> bool:
+    """A run of ONE repeated digit — ``0000000000``, ``1111111111111``.
+
+    Never a phone number and never a card number, in any scheme; always a
+    placeholder someone typed. Shared by both detectors because fixing one and
+    not the other is how this file ends up with two boundaries again.
+    """
+    return len(set(digits)) == 1
+
+
+def _is_phone_number(digits: str) -> bool:
+    """The phone detector's one structural test.
+
+    The phone rule has no checksum — any delimited 10-13 digit run is
+    phone-shaped, which is correct and is why ``4155550134`` is caught. It also
+    made ``0000000000000`` a phone, so a bare placeholder run blocked the prompt
+    under ``hipaa``. Measured: 10 of 10 120 zero-heavy identifiers.
+
+    Free: no real phone number is one repeated digit, and the 56 448 generated
+    phone shapes are unaffected.
+    """
+    return not _is_uniform(digits)
+
+
+def _is_card_number(digits: str) -> bool:
+    """Luhn, PLUS the two structural facts Luhn alone does not know.
+
+    ⚠ LUHN ACCEPTS RUBBISH. ``_luhn_ok("0000000000000000")`` is True, and the
+    card candidate can chain across a UUID's hyphens (``[ \\-]?`` is a separator,
+    so ``0000-0000-0000-0000`` is one 16-digit run). Together those made A NIL
+    UUID — one of the most common placeholder values in software — report
+    ``credit_card``:
+
+        "patient record 00000000-0000-0000-0000-000000000000 not found"
+
+    Under ``hipaa`` that fires ``phi.credit_card``: it blocks the prompt, mangles
+    it under redact, and under OBSERVE it lands in ``pii_signals``, where one
+    label makes the backend's deterministic verdict a BREACH. ``response_policy``
+    shares this detector, so a response echoing a nil UUID did it too.
+
+    The two extra tests are free — neither can reject a real card:
+
+    * **No PAN starts with 0.** ISO/IEC 7812 assigns major industry identifier 0
+      to ISO/TC 68; no payment network issues from it. This is what kills the
+      zero-padded and sequential-id class (``0000-000000000018`` and friends).
+    * **No PAN is one repeated digit.** ``2222…``, ``4444…``, ``6666…`` and
+      ``8888…`` pass Luhn at some lengths and are not card numbers.
+
+    Measured over 10 120 zero-heavy ids (nil UUIDs, sequential UUIDs, zero-padded
+    counters, uniform runs): 2 853 fired on 1.8.0, 2 627 after the 1.9.0 boundary
+    change, and 2 here — and those 2 are 16-digit, 8-distinct-digit Luhn-passing
+    runs that no content-free rule could separate from a PAN. PAN recall is
+    unchanged at 414/450 generated shapes.
+
+    Kept SEPARATE from :func:`_luhn_ok` on purpose. That function stays the plain
+    checksum because ``introspect.replay`` reimplements it to replay rows written
+    under rulesets 2026.08.1 and 2026.08.2, whose frozen definitions record
+    ``"validator": "luhn"`` and must keep meaning exactly that.
+    """
+    return digits[:1] != "0" and not _is_uniform(digits) and _luhn_ok(digits)
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -107,9 +185,16 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _has_phone(text: str) -> bool:
+    for m in _PHONE_RE.finditer(text):
+        if _is_phone_number(re.sub(r"\D", "", m.group())):
+            return True
+    return False
+
+
 def _has_card(text: str) -> bool:
     for m in _CARD_CANDIDATE_RE.finditer(text):
-        if _luhn_ok(re.sub(r"\D", "", m.group())):
+        if _is_card_number(re.sub(r"\D", "", m.group())):
             return True
     return False
 
@@ -158,16 +243,27 @@ def redact(text: str) -> str:
     """Replace detected PII spans with content-blind ``[REDACTED:<label>]`` markers.
 
     Runs entirely in-process on the host (like detection); the raw values never
-    leave. Credit cards are Luhn-gated exactly as in detection so we never mangle
-    an unrelated long digit run.
-    """
-    def _card_sub(match: "re.Match[str]") -> str:
-        digits = re.sub(r"\D", "", match.group())
-        return f"[REDACTED:{_CARD_LABEL}]" if _luhn_ok(digits) else match.group()
+    leave.
 
-    out = _CARD_CANDIDATE_RE.sub(_card_sub, str(text))
+    ⚠ EVERY GATE DETECTION APPLIES IS APPLIED HERE TOO, through the SAME
+    functions. Cards go through :func:`_is_card_number` and phones through
+    :func:`_is_phone_number`, so redaction cannot rewrite a span detection would
+    not have reported — which would hand the model a mangled prompt for a finding
+    the ledger never recorded, and is the drift ``_REDACTIONS`` exists to prevent
+    by reusing the same regexes.
+    """
+    def _sub_if(gate, label):
+        def _sub(match: "re.Match[str]") -> str:
+            digits = re.sub(r"\D", "", match.group())
+            return f"[REDACTED:{label}]" if gate(digits) else match.group()
+        return _sub
+
+    out = _CARD_CANDIDATE_RE.sub(_sub_if(_is_card_number, _CARD_LABEL), str(text))
     for regex, label in _REDACTIONS:
-        out = regex.sub(f"[REDACTED:{label}]", out)
+        if regex is _PHONE_RE:
+            out = regex.sub(_sub_if(_is_phone_number, label), out)
+        else:
+            out = regex.sub(f"[REDACTED:{label}]", out)
     return out
 
 
@@ -180,7 +276,7 @@ def detect_pii(prompt_s: str, response_s: str) -> list[str]:
         signals.append("email")
     if _SSN_RE.search(combined):
         signals.append("ssn_pattern")
-    if _PHONE_RE.search(combined):
+    if _has_phone(combined):
         signals.append("phone")
     if _IPV4_RE.search(combined):
         signals.append("ip_address")

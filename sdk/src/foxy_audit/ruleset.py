@@ -129,7 +129,15 @@ def describe_live() -> dict:
             "ip_address": {"pattern": pii._IPV4_RE.pattern, "flags": _flags(pii._IPV4_RE)},
             "credit_card": {"pattern": pii._CARD_CANDIDATE_RE.pattern,
                             "flags": _flags(pii._CARD_CANDIDATE_RE),
-                            "validator": "luhn"},
+                            # NAMED, not just "luhn". From 2026.08.3 the card
+                            # gate is Luhn PLUS "does not start with 0" and "is
+                            # not one repeated digit" (pii._is_card_number) —
+                            # without which a nil UUID reported credit_card. A
+                            # row stamped 2026.08.1/.2 records "luhn" and must
+                            # keep replaying under the plain checksum, so the
+                            # change gets its own name rather than redefining
+                            # the old one underneath those rows.
+                            "validator": "luhn+iin+distinct"},
         },
         "policy_map": {
             "baseline": sorted(policy._BASELINE_CHECKS),

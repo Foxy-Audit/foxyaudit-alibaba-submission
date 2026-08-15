@@ -49,18 +49,26 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #     THE TWO DETECTORS TAKE DIFFERENT BOUNDARIES, and that is measured rather
 #     than tidy. PHONE excludes an adjacent letter OR HYPHEN, because the bare
 #     UUID carries a 12-digit run between hyphens that letters alone do not kill.
-#     CARD excludes an adjacent LETTER ONLY: no UUID group reaches the card's
-#     13-digit minimum, so the hyphen defended against nothing there while
-#     deleting 90 of 450 real PAN shapes — `card-4111111111111111` and
+#     CARD excludes an adjacent LETTER ONLY, because excluding the hyphen there
+#     deleted 90 of 450 real PAN shapes — `card-4111111111111111` and
 #     `4111-1111-1111-1111-visa` among them. For a compliance product a missed
-#     PAN is worse than a spurious label on a hex digest.
+#     PAN is worse than a spurious label on an identifier.
+#
+#     The card candidate DOES chain across a UUID's hyphens (`[ \-]?` is a
+#     separator, so `0000-0000-0000-0000` is one 16-digit run) and Luhn accepts
+#     `0000000000000000`, so a NIL UUID reported credit_card. That is handled in
+#     the validator rather than the boundary: a card number does not start with 0
+#     (ISO/IEC 7812 assigns MII 0 to ISO/TC 68) and is not one repeated digit.
+#     Both are free — neither can reject a real card — and they take the
+#     zero-heavy identifier class from 2 853 in 10 120 to 2.
 #     ⚠ THE COST: a PHONE glued directly to a hyphen with no separating space
 #     ("Tel-4155550134") is no longer detected; a CARD glued to a LETTER
-#     ("4111111111111111x") is not either. 5 UUIDs in 20 000 still read as
+#     ("4111111111111111x") is not either. 5 random UUIDs in 20 000 still read as
 #     credit_card, against 1.8.0's 33 — a residue, not a claim of zero. Every
 #     phone shape the old regex accepted in a delimited context still matches
 #     (56 448 generated shapes, zero lost), and every PAN shape except the
-#     letter-glued ones. A card redaction also stops eating the space after it.
+#     letter-glued ones. A card redaction also stops eating the space OR HYPHEN
+#     that follows the number.
 #
 #   #216 — mode="redact" NOW BLOCKS when a finding survives its own redaction.
 #     The guard stamped decision="redacted" without ever checking that the
