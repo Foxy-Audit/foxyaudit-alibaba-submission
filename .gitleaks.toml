@@ -26,4 +26,14 @@ regexes = [
   # sk-ABCDEF... is a placeholder and AKIAIOSFODNN7EXAMPLE is AWS's public doc key.
   '''AKIAIOSFODNN7EXAMPLE''',
   '''sk-ABCDEF0123456789ABCDEFGH''',
+  # The compliance testbed's fixture for SDK #218 — the defect that
+  # `secret.private_key` matches the BEGIN header alone, so redaction removes the
+  # header and delivers the key BODY verbatim. Demonstrating that needs a
+  # complete BEGIN/END block, which is the one shape gitleaks' `private-key` rule
+  # requires (the older `sdk/tests/test_policy.py` fixture has no END marker,
+  # which is why it never tripped this). The body below is 36 characters of
+  # keyboard noise — it is not a key, and no key it resembles has ever existed.
+  # ⚠ A path allowlist was rejected: it would stop scanning a whole file that
+  # will keep growing. This pins the one fake body instead.
+  '''MIIEowIBAAKCAQEAxKk9Lm2QpVrTbNc7YwH0''',
 ]
