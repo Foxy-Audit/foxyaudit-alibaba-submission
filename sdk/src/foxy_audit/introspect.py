@@ -229,6 +229,25 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0 and len(digits) >= 13
 
 
+#: Every validator name a frozen definition can record, and what it MEANT.
+#:
+#: ⚠ EACH NAME KEEPS ITS OWN MEANING FOREVER. A row stamped 2026.08.1 or .2
+#: records ``"luhn"`` and must replay under the plain checksum that ran on the
+#: day it was written — including its acceptance of ``0000000000000000``.
+#: Redefining ``"luhn"`` to today's stricter gate would make those rows look like
+#: lies about themselves.
+#:
+#: A dict rather than a chain of ``if``s because an UNKNOWN name must be a loud
+#: KeyError, not a silent pass: a build asked to replay a validator it does not
+#: carry cannot honestly report anything, and :func:`explain` already has a
+#: ``unknown_ruleset`` answer for exactly that situation.
+_VALIDATORS = {
+    "luhn": lambda digits: _luhn_ok(digits),
+    "luhn+distinct": lambda digits: _luhn_ok(digits) and len(set(digits)) > 1,
+    "not-all-zero": lambda digits: set(digits) != {"0"},
+}
+
+
 def replay(definition: dict, text: str, policy_tag: str) -> list:
     """Every match the ROW's ruleset finds in ``text``, with spans.
 
@@ -268,12 +287,9 @@ def replay(definition: dict, text: str, policy_tag: str) -> list:
                 # reporting: a replay from a newer SDK should look too eager, not
                 # falsely clean.
                 validator = entry.get("validator")
-                if validator in ("luhn", "luhn+iin+distinct"):
+                if validator:
                     digits = re.sub(r"\D", "", found.group())
-                    if not _luhn_ok(digits):
-                        continue
-                    if validator == "luhn+iin+distinct" and (
-                            digits[:1] == "0" or len(set(digits)) == 1):
+                    if not _VALIDATORS[validator](digits):
                         continue
                 matches.append(Match(f"{prefix}.{label}", found.start(),
                                      found.end(), found.group()))

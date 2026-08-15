@@ -72,7 +72,7 @@ def test_the_named_version_survives_the_current_rules_changing():
 PUBLISHED = {
     "2026.08.1": "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0",
     "2026.08.2": "59888ec66b3e2b84f550412ec5f2372e9d90f4a8df66a9e5ad9193f7c17b1f62",
-    "2026.08.3": "a79ca7bfda4bed7d5b373f27677c556329b4a40cb7a9fccea67255134f920e9b",
+    "2026.08.3": "100daf439ccbe706e607c9be2b079ae9a2b96f2f099c0b4b5900491cc7a18753",
 }
 
 
@@ -186,12 +186,11 @@ def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_named_fields():
         "pii_detectors.phone.pattern",
         "pii_detectors.credit_card.pattern",
         # The card's GATE, not just its pattern. Luhn alone accepts
-        # `0000000000000000`, so a nil UUID reported credit_card; the gate now
-        # also rejects a leading zero and a uniform run. Recorded under a NEW
-        # NAME rather than redefining "luhn", because 2026.08.1/.2 rows record
-        # that string and must keep replaying under the plain checksum —
-        # test_a_row_naming_the_OLD_version_still_replays_against_the_old_rules
-        # is the other half of that claim.
+        # `0000000000000000` and `2222222222222222`. Recorded under a NEW NAME
+        # rather than redefining "luhn", because 2026.08.1/.2 rows record that
+        # string and must keep replaying under the plain checksum —
+        # test_the_card_VALIDATOR_replays_under_the_name_the_row_recorded is the
+        # other half of that claim.
         "pii_detectors.credit_card.validator",
         "prompt_rules.secret.secret.private_key.pattern",
         # The RESPONSE side's copy, and it must be here. response_policy builds
@@ -204,7 +203,12 @@ def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_named_fields():
         "response_rules.always.response_secret.private_key.pattern",
     }, sorted(moved)
 
-    assert set(flatten(old)) == set(flatten(new)), "a FIELD was added or removed"
+    # A FIELD was ADDED, and exactly one. The phone detector has always had a
+    # gate in code; recording it is what stops `introspect.replay` disagreeing
+    # with the live SDK under the same ruleset hash. Named here so the next
+    # addition is a decision someone made rather than something that slipped in.
+    assert set(flatten(new)) - set(flatten(old)) == {"pii_detectors.phone.validator"}
+    assert not set(flatten(old)) - set(flatten(new)), "a FIELD was REMOVED"
     assert ruleset.explained_ids(old) == ruleset.explained_ids(new), \
         "the rule id vocabulary moved — a row naming 2026.08.2 may stop resolving"
 
@@ -226,6 +230,54 @@ def test_a_row_naming_the_OLD_version_still_replays_against_the_old_rules():
                                                      text, "hipaa")}
     assert "phi.phone" in old_hits, old_hits
     assert "phi.phone" not in new_hits, new_hits
+
+
+def test_REPLAY_AGREES_WITH_THE_LIVE_SDK_under_the_current_ruleset():
+    """⚠ THE HASH'S WHOLE CLAIM, and it was quietly false.
+
+    A row names a ruleset; an auditor replays it and expects the ids the SDK
+    emitted. While `_is_phone_number` went unrecorded, `introspect.replay`
+    reported `phi.phone` for "call 0000000000 now" where the live SDK reported
+    nothing — two builds with the SAME ruleset hash emitting DIFFERENT rule ids.
+
+    So this compares the two ENGINES across the whole obligation corpus rather
+    than pinning one example: a validator added in code and forgotten in
+    `describe_live()` fails here on the first input that exercises it.
+    """
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path
+
+    from foxy_audit import introspect, pii
+
+    name = "foxy_audit._identifier_corpora"
+    if name not in _sys.modules:
+        path = Path(__file__).resolve().parent / "fixtures" / "identifier_corpora.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules[name] = module
+        spec.loader.exec_module(module)
+    corpora = _sys.modules[name]
+
+    definition = ruleset.load(ruleset.CURRENT_VERSION)
+    corpus = (corpora.PAN_SHAPES + corpora.PHONE_SHAPES
+              + corpora.NAMED_PLACEHOLDERS + corpora.UNIFORM_NONZERO_RUNS
+              + corpora.ZERO_HEAVY_STRICT[:200] + corpora.RANDOM_UUIDS[:200]
+              + corpora.SHA256_DIGESTS[:200])
+
+    disagreements = []
+    for text in corpus:
+        replayed = {m.rule_id for m in introspect.replay(definition, text, "hipaa")}
+        live = {f"phi.{label}" for label in pii.detect_pii(text, "")}
+        # Only the detectors the definition records are comparable; presidio is
+        # explicitly out of scope for the hash and is absent here anyway.
+        for label in ("phi.phone", "phi.credit_card", "phi.ssn_pattern",
+                      "phi.email", "phi.ip_address"):
+            if (label in replayed) != (label in live):
+                disagreements.append((text, label, label in replayed, label in live))
+    assert not disagreements, (
+        f"{len(disagreements)} inputs where replay and the live SDK disagree "
+        f"under the same ruleset hash: {disagreements[:4]}")
 
 
 def test_the_card_VALIDATOR_replays_under_the_name_the_row_recorded():

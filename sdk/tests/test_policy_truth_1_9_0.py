@@ -291,6 +291,76 @@ def _fired(module, corpus, label=None):
                    else bool(module.detect_pii(text, ""))))
 
 
+def _detected(module, corpus, label):
+    return {t for t in corpus if label in module.detect_pii(t, "")}
+
+
+# ── the obligation set, direction 1: things that MUST be detected ─────────────
+def test_215_the_card_detects_the_IDENTICAL_SET_1_8_0_did():
+    """⚠ THE GUARD THIS BOUNDARY NEEDED THREE ROUNDS AGO.
+
+    A COUNT is not enough — two rules can agree on 504/540 while disagreeing
+    about which 504. So this is a set difference in BOTH directions across the
+    whole checked-in obligation set, and the losing direction names the shapes.
+
+    Three consecutive rounds lost real card numbers here: hyphen-glued PANs, then
+    the same class differently, then `ref 0 4111111111111111`. Each round's
+    false-positive numbers looked excellent while a detection quietly vanished,
+    because each round's corpus was assembled after the rule was chosen.
+    """
+    old = _detected(OLD_PII, CORPORA.PAN_SHAPES, "credit_card")
+    new = _detected(pii, CORPORA.PAN_SHAPES, "credit_card")
+    assert len(old) > 400, f"1.8.0 only found {len(old)} — the corpus is stale"
+    assert not (old - new), (
+        f"{len(old - new)} card shapes 1.8.0 detected are now MISSED — a PAN "
+        f"reaches the model: {sorted(old - new)[:5]}")
+    assert old == new, f"newly detected, unexpectedly: {sorted(new - old)[:5]}"
+
+
+def test_215_the_phone_detects_the_IDENTICAL_SET_1_8_0_did():
+    """The same obligation for the other detector, and the one that was missing.
+
+    `888-888-8888`, `(888) 888-8888` and `+7 777 777 7777` are dialable numbers
+    that a uniform-digit rule refused — 96 of 168 shapes — while every
+    false-positive column looked better than ever.
+    """
+    old = _detected(OLD_PII, CORPORA.PHONE_SHAPES, "phone")
+    new = _detected(pii, CORPORA.PHONE_SHAPES, "phone")
+    assert len(old) > 150, f"1.8.0 only found {len(old)} — the corpus is stale"
+    assert not (old - new), (
+        f"{len(old - new)} phone shapes 1.8.0 detected are now MISSED: "
+        f"{sorted(old - new)[:5]}")
+    assert old == new
+
+
+@pytest.mark.parametrize("text,label", CORPORA.NAMED_OBLIGATIONS)
+def test_215_each_named_obligation_by_name(text, label):
+    """The named losses from every review round, asserted individually.
+
+    A set-difference test says "something broke"; these say WHICH, and they are
+    the half that was missing each time a real detection disappeared.
+    """
+    assert label in pii.detect_pii(text, ""), f"{label} lost on {text!r}"
+
+
+def test_215_the_uniform_run_asymmetry_is_deliberate():
+    """The two detectors disagree about repeated-digit runs ON PURPOSE.
+
+    `2222222222222222` passes Luhn and is not a card number. `888-888-8888` is a
+    real phone number. Collapsing these into one shared rule — which is what
+    "fix both detectors the same way" produced — refused 96 real phone shapes.
+    Pinned so neither can be tidied into the other.
+    """
+    cards = _detected(pii, CORPORA.UNIFORM_NONZERO_RUNS, "credit_card")
+    phones = _detected(pii, CORPORA.UNIFORM_NONZERO_RUNS, "phone")
+    assert cards == set(), f"a repeated-digit run read as a card: {sorted(cards)[:3]}"
+    assert phones, "the phone must still accept repeated-digit numbers"
+
+    # ...and ALL zeros is the one run neither may accept.
+    for run in ("0" * 10, "0" * 13, "0" * 16):
+        assert pii.detect_pii(run, "") == [], run
+
+
 def test_215_digests_no_longer_read_as_personal_data():
     """The population #215 was reported against.
 
@@ -405,9 +475,14 @@ def test_215_every_phone_shape_1_8_0_ACCEPTED_still_matches():
               in itertools.product(country, seps, areas, seps, seps)}
     corpus = [ctx.format(shape) for shape in shapes for ctx in contexts]
 
-    accepted = [t for t in corpus if OLD_PII._PHONE_RE.search(t)]
+    # ⚠ THROUGH `detect_pii`, NOT `_PHONE_RE`. This compared the two REGEXES,
+    # so the phone GATE sat outside the guard that three docstrings cited as its
+    # evidence — and that is exactly how a uniform-digit rule shipped that
+    # refused `888-888-8888`. A proof obligation has to run the thing that
+    # decides, not the half of it that happens to be a pattern.
+    accepted = [t for t in corpus if "phone" in OLD_PII.detect_pii(t, "")]
     assert len(accepted) > 20000, len(accepted)
-    lost = [t for t in accepted if not pii._PHONE_RE.search(t)]
+    lost = [t for t in accepted if "phone" not in pii.detect_pii(t, "")]
     assert not lost, f"{len(lost)} phone shapes lost, e.g. {sorted(lost)[:5]}"
 
 
@@ -452,22 +527,31 @@ def test_215_the_card_redaction_eats_NEITHER_trailing_separator(sep, name):
     assert pii.redact("ref 6011-1111-1111-1117 ok") == "ref [REDACTED:credit_card] ok"
 
 
-@pytest.mark.parametrize("text", CORPORA.NAMED_PLACEHOLDERS)
+@pytest.mark.parametrize(
+    "text",
+    CORPORA.NAMED_PLACEHOLDERS
+    # ⚠ THE UNIFORM RUNS ARE WHAT CATCHES IT NOW. Once the card pattern leads
+    # with `[1-9]`, a zero-led placeholder produces no candidate at all, so
+    # pointing redaction at plain `_luhn_ok` became invisible on those. A
+    # NON-ZERO uniform run still produces a candidate that only the VALIDATOR
+    # rejects, which is the one place the two can drift. Measured: without these
+    # the divergence mutation survives the entire suite.
+    + [t for t in CORPORA.UNIFORM_NONZERO_RUNS if len(t) >= 16])
 def test_215_REDACTION_agrees_with_detection_on_every_placeholder(text):
     """The two must not drift, and only one of them was guarded.
 
     ``detect_pii`` and ``redact`` run the same regexes on purpose, but the GATES
     are separate call sites — so redaction could rewrite a span detection never
     reported. That hands the model a mangled prompt for a finding the ledger does
-    not contain: the customer's nil UUID becomes ``[REDACTED:credit_card]`` and
+    not contain: ``2222222222222222`` becomes ``[REDACTED:credit_card]`` and
     nothing anywhere says why.
 
     Measured as a mutation: pointing redaction at plain ``_luhn_ok`` while
     leaving detection alone passed every other guard in this file.
     """
-    assert pii.detect_pii(text, "") == [], text
-    assert pii.redact(text) == text, (
-        "redaction rewrote a span detection did not report")
+    assert "credit_card" not in pii.detect_pii(text, ""), text
+    assert "[REDACTED:credit_card]" not in pii.redact(text), (
+        "redaction rewrote a card span detection did not report")
 
 
 def test_215_the_card_redaction_no_longer_eats_the_following_space():

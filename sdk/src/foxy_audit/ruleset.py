@@ -125,19 +125,31 @@ def describe_live() -> dict:
         "pii_detectors": {
             "email": {"pattern": pii._EMAIL_RE.pattern, "flags": _flags(pii._EMAIL_RE)},
             "ssn_pattern": {"pattern": pii._SSN_RE.pattern, "flags": _flags(pii._SSN_RE)},
-            "phone": {"pattern": pii._PHONE_RE.pattern, "flags": _flags(pii._PHONE_RE)},
+            # ⚠ THE PHONE HAS A VALIDATOR TOO, AND OMITTING IT BROKE THE HASH'S
+            # WHOLE CLAIM. `_is_phone_number` rejects an all-zero run, and while
+            # that was unrecorded `introspect.replay` reported `phi.phone` for
+            # "call 0000000000 now" where the live SDK reported nothing — two
+            # builds with the SAME ruleset hash emitting different rule ids. A
+            # hash that does not identify behaviour is worse than no hash.
+            "phone": {"pattern": pii._PHONE_RE.pattern,
+                      "flags": _flags(pii._PHONE_RE),
+                      "validator": "not-all-zero"},
             "ip_address": {"pattern": pii._IPV4_RE.pattern, "flags": _flags(pii._IPV4_RE)},
             "credit_card": {"pattern": pii._CARD_CANDIDATE_RE.pattern,
                             "flags": _flags(pii._CARD_CANDIDATE_RE),
                             # NAMED, not just "luhn". From 2026.08.3 the card
-                            # gate is Luhn PLUS "does not start with 0" and "is
-                            # not one repeated digit" (pii._is_card_number) —
-                            # without which a nil UUID reported credit_card. A
-                            # row stamped 2026.08.1/.2 records "luhn" and must
-                            # keep replaying under the plain checksum, so the
-                            # change gets its own name rather than redefining
-                            # the old one underneath those rows.
-                            "validator": "luhn+iin+distinct"},
+                            # gate is Luhn PLUS "is not one repeated digit"
+                            # (pii._is_card_number) — without which
+                            # `2222222222222222` and friends read as cards. The
+                            # OTHER half of the rule, "no PAN starts with 0",
+                            # lives in the pattern's leading `[1-9]` and is
+                            # therefore already recorded above.
+                            #
+                            # A row stamped 2026.08.1/.2 records "luhn" and must
+                            # keep replaying under the plain checksum, so this
+                            # gets its own name rather than redefining the old
+                            # one underneath those rows.
+                            "validator": "luhn+distinct"},
         },
         "policy_map": {
             "baseline": sorted(policy._BASELINE_CHECKS),
