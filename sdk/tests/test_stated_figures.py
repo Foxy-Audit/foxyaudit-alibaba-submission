@@ -116,7 +116,15 @@ _VARIANTS = {
         re.compile(r"(?<![0-9A-Za-z\-])(?:\d[ \-]?){13,19}(?![0-9A-Za-z\-])"), _luhn),
     "letters only  (S8b)": (
         re.compile(r"(?<![0-9A-Za-z])\d(?:[ \-]?\d){12,18}(?![0-9A-Za-z])"), _luhn),
-    "[1-9] lead + luhn": (None, None),          # filled from the live module
+    # ⚠ THE PRE-S10 GATE IS SPELLED OUT, not read from the live module. It used
+    # to be the "filled from the live module" row, and 2026.08.4 silently
+    # redefined what that row measured — the table then showed the NEW gate under
+    # the OLD row's name and the delta the change bought vanished. A superseded
+    # row is history and has to be written down like history.
+    "[1-9] lead + luhn": (
+        re.compile(r"(?<![0-9A-Za-z])[1-9](?:[ \-]?\d){12,18}(?![0-9A-Za-z])"),
+        lambda d: len(set(d)) > 1 and _luhn(d)),
+    "+ assigned IIN (S10)": (None, None),       # filled from the live module
 }
 
 
@@ -124,8 +132,24 @@ def _card_hits(regex, gate, text: str) -> bool:
     return any(gate(re.sub(r"\D", "", m.group())) for m in regex.finditer(text))
 
 
+#: The gates that were actually SHIPPED, oldest first. The other rows in
+#: _VARIANTS are candidates that were measured and rejected, so they are not
+#: eras and no document compares to them.
+_SHIPPED_ERAS = ("1.8.0", "[1-9] lead + luhn", "+ assigned IIN (S10)")
+
+#: Consecutive transitions, plus first-to-last: the comparisons a release note
+#: legitimately draws.
+_ERA_PAIRS = tuple(zip(_SHIPPED_ERAS, _SHIPPED_ERAS[1:])) + (
+    (_SHIPPED_ERAS[0], _SHIPPED_ERAS[-1]),)
+
+#: The row measured from the SHIPPED module rather than from a copy of it. One
+#: name, in one place: when the next version supersedes this gate, this string
+#: moves to the new row and the old one is spelled out in _VARIANTS above.
+_LIVE_ROW = "+ assigned IIN (S10)"
+
+
 def _variant(name):
-    if name == "[1-9] lead + luhn":
+    if name == _LIVE_ROW:
         return pii._CARD_CANDIDATE_RE, pii._is_card_number
     return _VARIANTS[name]
 
@@ -206,9 +230,17 @@ def measured() -> dict:
         for name in _VARIANTS:
             count = figures[f"{population} / {name}"][0]
             figures[f"{population} / {name} in corpus"] = (count, len(corpus))
-        before = figures[f"{population} / 1.8.0"][0]
-        after = figures[f"{population} / [1-9] lead + luhn"][0]
-        figures[f"{population} 1.8.0 -> shipped"] = (before, after)
+        # ⚠ DERIVED FROM THE ERA LIST, NOT ONE HARDCODED TRANSITION. This was
+        # `1.8.0 -> [1-9] lead + luhn`, written when there were two eras — so
+        # 2026.08.4's "2 016 -> 621" was a legitimate sentence the scan had no
+        # measurement for, and the only way to state it was to stop stating it.
+        # Every transition between CONSECUTIVE shipped gates is a comparison the
+        # docs may make; the rejected candidates (S8, S8b) never shipped and
+        # form no era, which keeps this from becoming an escape hatch.
+        for before, after in _ERA_PAIRS:
+            figures[f"{population} {before} -> {after}"] = (
+                figures[f"{population} / {before}"][0],
+                figures[f"{population} / {after}"][0])
 
     # Detection ERAS, the other way a doc phrases a comparison.
     figures["card recall 1.8.0 -> shipped"] = (len(old_cards), len(new_cards))
@@ -346,7 +378,13 @@ def test_the_scan_actually_finds_the_claims():
     #
     # If this number moves, a sentence was added or removed. Read the diff and
     # update it deliberately; do not widen it.
-    assert len(claims) == 22, (
+    #
+    # 22 -> 39 in 1.11.0 (S10). The release note states four before/after
+    # measurements in the README and again in the changelog block, pii.py's card
+    # table gained a fifth row and a re-derived cost sentence, and the README
+    # gained a 1.11.0 section. Every one of the 17 new claims was checked against
+    # measured() by the guard above before this line was moved.
+    assert len(claims) == 39, (
         f"the extractor finds {len(claims)} claims, expected 22. A doc sentence "
         f"was added or removed, or the extractor stopped matching a form: "
         f"{sorted((n, d, rel) for n, d, rel, _ in claims)}")
@@ -422,7 +460,7 @@ def test_every_exemption_is_reachable():
 
 @needs_checkout
 def test_the_card_table_in_pii_py_is_re_measured_row_by_row():
-    """The table is four variants x six columns of stated numbers.
+    """The table is five variants x six columns of stated numbers.
 
     Parsed out of the module's own comment and re-measured, so a row cannot go
     stale while the prose around it stays confident. The SHIPPED row is measured
@@ -447,7 +485,7 @@ def test_the_card_table_in_pii_py_is_re_measured_row_by_row():
             f"{name}: the table states {stated}, the corpora measure {expected}"
             f" -- row: {row[0]}")
         seen += 1
-    assert seen == 4, f"re-measured only {seen} rows"
+    assert seen == len(_VARIANTS), f"re-measured only {seen} rows"
 
 
 def test_the_dialable_phone_corpus_is_actually_READ():

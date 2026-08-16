@@ -92,7 +92,7 @@ log = logging.getLogger("foxy_audit")
 #: Bumped by hand when the rules change. Date-based rather than semver: this
 #: numbers a body of RULES, not an API, and "which rules were live in August
 #: 2026" is the question an auditor actually asks.
-CURRENT_VERSION = "2026.08.3"
+CURRENT_VERSION = "2026.08.4"
 
 _SCHEMA = "foxy-ruleset-v1"
 
@@ -177,7 +177,17 @@ def describe_live() -> dict:
                             # keep replaying under the plain checksum, so this
                             # gets its own name rather than redefining the old
                             # one underneath those rows.
-                            "validator": "luhn+distinct"},
+                            #
+                            # ⚠ AND A THIRD NAME IN 2026.08.4. The gate now ALSO
+                            # requires an assigned issuer prefix — see
+                            # issuer_ranges — which cut Luhn-passing build-id
+                            # false positives from 10.08% to 3.10% with no
+                            # change to PAN recall on the obligation corpus.
+                            # A NEW NAME, not a third redefinition: 2026.08.3
+                            # rows recorded "luhn+distinct" and it still means
+                            # Luhn plus not-one-repeated-digit, exactly what it
+                            # meant on the day they were written.
+                            "validator": "luhn+iin+distinct"},
         },
         "policy_map": {
             "baseline": sorted(policy._BASELINE_CHECKS),

@@ -32,6 +32,55 @@ from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 from .introspect import CheckResult, ExplainResult, check, explain
 
+# 1.11.0 — S10. A card number begins with an issuer, and the card detector now
+# knows that.
+#
+# ⚠ THIS CHANGES WHAT FIRES, so it mints ruleset 2026.08.4 and a new validator
+# name. Read it before upgrading a deployment that runs mode="block" or
+# mode="redact" under a policy that includes phi/pii.
+#
+#   The card gate was Luhn plus "not one repeated digit". Luhn is a single check
+#   digit — roughly one random 13-19 digit run in ten passes it — so any
+#   hyphen-delimited build id, order number or correlation id of the right
+#   length had a one-in-ten chance of being reported as a credit card. Measured
+#   on the checked-in obligation corpus: 2 016 of 20 000 build ids (10.08%).
+#   Under `hipaa` that fires `phi.credit_card`, which BLOCKS the prompt in
+#   mode="block", mangles it under mode="redact", and in observe mode lands in
+#   pii_signals where one label makes the backend's deterministic verdict a
+#   BREACH.
+#
+#   A card number is not an arbitrary Luhn-passing run: its leading digits are
+#   an issuer identification number assigned under ISO/IEC 7812, and those
+#   assignments are public. The gate now requires one. See
+#   foxy_audit.issuer_ranges, which keeps the table as a table — Visa,
+#   Mastercard (including the 2221-2720 series), Amex, Discover, Diners, JCB,
+#   UnionPay and Maestro — so it can be checked against the issuers' own
+#   published ranges rather than trusted.
+#
+#   Measured, same corpora, same run:
+#
+#       build-id false positives   2 016 (10.08%)  ->  621 (3.10%)
+#       zero-heavy id findings             2       ->    0
+#       random-UUID findings               5       ->    4
+#       PAN recall                  504/540 (93.33%)  ->  504/540 (93.33%)
+#
+#   ⚠ "NO RECALL COST" IS TRUE ON THIS CORPUS AND UNPROVEN IN GENERAL. The
+#   obligation corpus is built from mainstream test cards (4111…, 5500…, 6011…,
+#   3782…) which all carry valid IINs BY CONSTRUCTION, so it cannot show what a
+#   regional or private-label issuer outside the table would do — it would now
+#   be MISSED. #219 is the standing reminder that a corpus only disproves what
+#   it contains. If you issue or process cards outside the eight networks named
+#   above, measure before you upgrade.
+#
+#   RULESET 2026.08.4, VALIDATOR `luhn+iin+distinct`. A new name, not a
+#   redefinition: rows stamped 2026.08.3 record `luhn+distinct` and still replay
+#   under Luhn-plus-not-one-repeated-digit, including its acceptance of the runs
+#   this version starts rejecting. `foxy explain` on an old row is unchanged.
+#   2026.08.1/.2/.3 keep their digests.
+#
+#   The phone and digest paths are untouched: phone recall stays 168/168, and
+#   SHA-256 digests and random UUIDs stay at 0.000% on the phone detector.
+#
 # 1.10.0 — S9. explain() verifies the ruleset it replays, instead of trusting
 # its own registry.
 #
@@ -285,7 +334,7 @@ from .introspect import CheckResult, ExplainResult, check, explain
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 __all__ = ["CheckResult", "ExplainResult", "FoxyClient", "FoxyConfig",
            "FoxyPolicyBlocked", "FoxyResponseBlocked", "audit", "check",
            "explain", "__version__"]

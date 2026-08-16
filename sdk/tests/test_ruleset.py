@@ -73,6 +73,10 @@ PUBLISHED = {
     "2026.08.1": "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0",
     "2026.08.2": "59888ec66b3e2b84f550412ec5f2372e9d90f4a8df66a9e5ad9193f7c17b1f62",
     "2026.08.3": "100daf439ccbe706e607c9be2b079ae9a2b96f2f099c0b4b5900491cc7a18753",
+    # 2026.08.4 — the card validator becomes "luhn+iin+distinct" (SDK 1.11.0).
+    # Added here, never in place of the line above it: .3 keeps its digest
+    # because rows in customers' chains name it.
+    "2026.08.4": "13569591ec9854f5f83e61cb0a50025fd5055f9b66d10b5918570ed24feb57ce",
 }
 
 

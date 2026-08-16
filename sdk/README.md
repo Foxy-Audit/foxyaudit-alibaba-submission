@@ -6,6 +6,48 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.11.0 — a card number begins with an issuer
+
+**This changes what fires.** Read it before upgrading a deployment that runs
+`mode="block"` or `mode="redact"` under a policy that includes `phi`/`pii`.
+
+The card gate was Luhn plus "not one repeated digit". Luhn is a single check
+digit — roughly one random 13–19 digit run in ten passes it — so any
+hyphen-delimited build id, order number or correlation id of the right length had
+about a one-in-ten chance of being reported as a credit card. Under `hipaa` that
+fires `phi.credit_card`, which **blocks the prompt** in `mode="block"`.
+
+A card number is not an arbitrary Luhn-passing run: its leading digits are an
+**issuer identification number** assigned under ISO/IEC 7812, and those
+assignments are public. The gate now requires one. The table lives in
+`foxy_audit.issuer_ranges`, kept as a table — Visa, Mastercard (including the
+2221–2720 series), Amex, Discover, Diners, JCB, UnionPay, Maestro — so you can
+check it against the networks' own published ranges instead of trusting it.
+
+Measured on the checked-in obligation corpora, one run, same populations:
+
+| | before | after |
+|---|---|---|
+| build-id false positives | 2 016 of 20 000 (10.08%) | **621 of 20 000** (3.10%) |
+| zero-heavy id findings | 2 of 10 057 | **0 of 10 057** |
+| random-UUID findings | 5 of 20 000 | **4 of 20 000** |
+| PAN recall | 504 of 540 | **504 of 540** — the identical set |
+
+> ⚠ **"No recall cost" is true on this corpus and unproven in general.** The
+> obligation corpus is built from mainstream test cards (`4111…`, `5500…`,
+> `6011…`, `3782…`) which all carry valid IINs *by construction*, so it cannot
+> show what a regional or private-label issuer outside the table would do — it
+> would now be **missed**. SDK #219 is the standing reminder that a corpus only
+> disproves what it contains. If you issue or process cards outside the eight
+> networks above, measure before upgrading.
+
+Rows are stamped **ruleset 2026.08.4**, validator `luhn+iin+distinct`. That is a
+new name, not a redefinition: a row stamped 2026.08.3 records `luhn+distinct` and
+still replays under Luhn-plus-not-one-repeated-digit — including its acceptance
+of the runs this release starts rejecting — so `foxy explain` on old evidence is
+unchanged. The phone and digest paths are untouched: phone recall stays 168 of
+168, and SHA-256 digests stay at 0.000%.
+
 ## 1.10.0 — `explain()` verifies the ruleset it replays
 
 One change, and it is to the *proof* rather than to the guard: nothing about what
@@ -48,7 +90,8 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   and are still detected. *Cost:* a phone glued straight to a hyphen with no space
   (`Tel-4155550134`) is no longer detected, nor a card glued to a letter
   (`4111111111111111x` — 1.8.0 missed that one too); 5 random UUIDs in 20 000
-  still read as `credit_card`, against 33 in 20 000 for 1.8.0. **Detection of real card and
+  read as `credit_card` in this release, against 33 in 20 000 for 1.8.0 — 1.11.0
+  takes it to 4. **Detection of real card and
   phone numbers is otherwise IDENTICAL to 1.8.0** — the same shapes, asserted as
   a set difference in both directions rather than as a count (504 of 540 card
   shapes and all 168 phone shapes in the test corpus). A card redaction also no

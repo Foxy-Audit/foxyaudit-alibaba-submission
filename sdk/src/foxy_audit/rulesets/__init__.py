@@ -12,12 +12,13 @@ never correct: rows in customers' chains name these strings.
 
 from __future__ import annotations
 
-from . import v2026_08_1, v2026_08_2, v2026_08_3
+from . import v2026_08_1, v2026_08_2, v2026_08_3, v2026_08_4
 
 _REGISTRY = {
     v2026_08_1.VERSION: v2026_08_1.DEFINITION,
     v2026_08_2.VERSION: v2026_08_2.DEFINITION,
     v2026_08_3.VERSION: v2026_08_3.DEFINITION,
+    v2026_08_4.VERSION: v2026_08_4.DEFINITION,
 }
 
 

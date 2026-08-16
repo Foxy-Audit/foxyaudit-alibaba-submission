@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from .issuer_ranges import starts_with_assigned_iin
+
 # A phone or card number is a STANDALONE TOKEN, not a fragment of a longer one.
 #
 # The old lookarounds — ``(?<!\d)`` / ``(?!\d)`` — excluded an adjacent DIGIT but
@@ -61,7 +63,7 @@ import re
 #
 # Measured on that set — 540 PAN shapes, and the false-positive populations at
 # their checked-in sizes (sha256 20 000, random UUID 20 000, ZERO-HEAVY 10 057,
-# its strict subset 6 057, hyphenated ids 20 000). All four rows are one
+# its strict subset 6 057, hyphenated ids 20 000). All five rows are one
 # measurement against the CURRENT corpora, so the columns are comparable:
 #
 #   card variant           PANs    sha256  rand uuid  ZERO-HEAVY  strict   hyph
@@ -69,18 +71,27 @@ import re
 #   letters+hyphen (S8)   432/540       0        0         407     407       0
 #   letters only  (S8b)   504/540       0        5        2623    2457    2016
 #   [1-9] lead + luhn     504/540       0        5           2       0    2016
+#   + assigned IIN (S10)  504/540       0        4           0       0     621
 #
-# The shipped row does not merely MATCH 1.8.0's count — it detects the IDENTICAL
-# SET of 540 shapes, asserted as a set difference in both directions, while every
-# false-positive column is the same or better. There is no trade left to argue
-# about, which is why no fallback to 1.8.0's pattern was needed.
+# Every row after the first detects the IDENTICAL SET of PAN shapes 1.8.0 did —
+# asserted as a set difference in both directions, not as a matching count —
+# while the false-positive columns fall. There is no trade left to argue about,
+# which is why no fallback to 1.8.0's pattern was needed.
+#
+# ⚠ THE LAST ROW IS THE ONE WITH AN UNMEASURABLE COST. The first four differ
+# only in what a REGEX BOUNDARY admits, so the corpus can see everything they
+# change. The IIN gate rejects by ISSUER, and the corpus is built from mainstream
+# test cards which all carry valid IINs by construction — so it can show the
+# 1 395 false positives removed and CANNOT show a regional or private-label
+# issuer outside the table, which would now be missed. Stated again beside the
+# table in :func:`_is_card_number`, and in the README and changelog.
 #
 # THE CARD COST, STATED RATHER THAN HIDDEN: a PAN glued directly to a LETTER
 # (``4111111111111111x``) is not detected — 1.8.0 did not detect it either — and
-# 5 random UUIDs in 20 000 plus 2 of 10 057 zero-heavy ids still read as
+# 4 random UUIDs in 20 000 plus 0 of 10 057 zero-heavy ids still read as
 # ``credit_card`` (1.8.0: 33 in 20 000 and 2 849 in 10 057). Those residues are
-# 16-digit, 8-distinct-digit Luhn-passing runs that no content-free rule
-# separates from a PAN.
+# 16-digit, 8-distinct-digit Luhn-passing runs carrying a real issuer prefix,
+# which no content-free rule separates from a PAN.
 _PHONE_BEFORE = r"(?<![0-9A-Za-z\-])"
 _PHONE_AFTER = r"(?![0-9A-Za-z\-])"
 _CARD_BEFORE = r"(?<![0-9A-Za-z])"
@@ -162,28 +173,41 @@ def _is_card_number(digits: str) -> bool:
     label makes the backend's deterministic verdict a BREACH. ``response_policy``
     shares this detector, so a response echoing a nil UUID did it too.
 
-    The two extra tests are free — neither can reject a real card:
+    The three extra tests are structural facts about card numbers, not tuning:
 
     * **No PAN starts with 0.** ISO/IEC 7812 assigns major industry identifier 0
       to ISO/TC 68; no payment network issues from it. This one lives in the
       PATTERN's leading ``[1-9]``, not here — see :data:`_CARD_CANDIDATE_RE` for
       why applying it to the assembled digit string lost real PANs.
     * **No PAN is one repeated digit.** ``2222…``, ``4444…``, ``6666…`` and
-      ``8888…`` pass Luhn at some lengths and are not card numbers. That is this
-      function's whole job, and it is why it is not simply ``_luhn_ok``.
+      ``8888…`` pass Luhn at some lengths and are not card numbers.
+    * **A PAN BEGINS WITH AN ASSIGNED ISSUER.** The leading digits are an IIN
+      handed out under ISO/IEC 7812, and the assignments are public. See
+      :mod:`foxy_audit.issuer_ranges`, which holds the table as a table.
 
-    Measured over 10 057 zero-heavy ids (nil UUIDs, sequential UUIDs, zero-padded
-    counters): 2 849 fired on 1.8.0 and 2 here — and those 2 are 16-digit,
-    8-distinct-digit Luhn-passing runs that no content-free rule could separate
-    from a PAN. PAN recall is IDENTICAL to 1.8.0 — the same 504 of 540
-    obligation shapes, not merely the same count.
+    ⚠ THE THIRD ONE IS NOT FREE, AND THE HONEST STATEMENT OF ITS COST IS THIS.
+    Measured on the checked-in obligation corpora, it cut Luhn-passing build-id
+    false positives from 2 016 of 20 000 (10.08%) to 621 (3.10%), took zero-heavy
+    ids from 2 to 0, and changed PAN recall by NOTHING — the same 504 of 540
+    shapes, the same 36 missed (SDK #219). But "no recall cost" is true ON THIS
+    CORPUS and unproven in general: ``PAN_SHAPES`` is built from mainstream test
+    cards (4111…, 5500…, 6011…, 3782…) which all carry valid IINs BY
+    CONSTRUCTION. A regional or private-label issuer outside the table would now
+    be missed, and this corpus cannot see that. #219 is the standing reminder
+    that a corpus only disproves what it contains.
 
     Kept SEPARATE from :func:`_luhn_ok` on purpose. That function stays the plain
     checksum because ``introspect.replay`` reimplements it to replay rows written
     under rulesets 2026.08.1 and 2026.08.2, whose frozen definitions record
-    ``"validator": "luhn"`` and must keep meaning exactly that.
+    ``"validator": "luhn"`` and must keep meaning exactly that. For the same
+    reason this function's new behaviour took a NEW validator name —
+    ``luhn+iin+distinct``, ruleset 2026.08.4 — rather than redefining
+    ``luhn+distinct``, which 2026.08.3 rows recorded and must keep meaning what
+    it meant on the day they were written.
     """
-    return not _is_uniform(digits) and _luhn_ok(digits)
+    return (not _is_uniform(digits)
+            and starts_with_assigned_iin(digits)
+            and _luhn_ok(digits))
 
 
 def _luhn_ok(digits: str) -> bool:

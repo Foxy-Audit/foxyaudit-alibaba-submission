@@ -34,6 +34,21 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 DEMO = REPO / "demo"
 
+#: ⚠ THESE TESTS SHIP, AND CANNOT RUN WHERE THEY SHIP. ``tests/`` goes into the
+#: sdist; ``demo/`` lives at the REPOSITORY root and does not. Outside a
+#: checkout every test here died on ``ModuleNotFoundError: mock_llm`` — three
+#: errors in the sdist self-test, which is an audit product's own suite failing
+#: to install cleanly. Skipped with a stated reason instead, exactly as
+#: test_stated_figures.py skips the documentation it cross-checks.
+#:
+#: NOT a loosening. In a checkout — where CI runs and where this gate matters —
+#: every one of them still executes, and the skip is visible as a skip rather
+#: than as a pass.
+pytestmark = pytest.mark.skipif(
+    not (DEMO / "mock_llm.py").is_file(),
+    reason="exercises demo/mock_llm.py, which lives at the repository root and "
+           "is not part of the sdist")
+
 
 @pytest.fixture()
 def demo(monkeypatch, tmp_path):

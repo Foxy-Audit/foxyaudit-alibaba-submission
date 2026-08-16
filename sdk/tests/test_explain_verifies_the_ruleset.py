@@ -562,7 +562,17 @@ def test_the_digest_does_NOT_cover_the_validator_implementations(tmp_path, monke
     assert [m.rule_id for m in baseline.matches] == ["phi.credit_card"], baseline.message
 
     # Same definition, same digest, DIFFERENT live code behind the same name.
-    monkeypatch.setitem(introspect._VALIDATORS, "luhn+distinct", lambda digits: False)
+    #
+    # ⚠ THE NAME IS READ FROM THE DEFINITION, NOT TYPED HERE. It was hardcoded
+    # as "luhn+distinct" and went stale the moment 2026.08.4 renamed the card
+    # validator — the test then swapped an implementation the current ruleset no
+    # longer names, and failed for a reason that had nothing to do with its
+    # subject. Reading the name back from the row's own ruleset makes this hold
+    # across every future mint.
+    definition = ruleset.load(ruleset.CURRENT_VERSION)
+    validator = definition["pii_detectors"]["credit_card"]["validator"]
+    assert validator in introspect._VALIDATORS, validator
+    monkeypatch.setitem(introspect._VALIDATORS, validator, lambda digits: False)
     after = introspect.explain(text, EVENT, export, KEY)
 
     assert after.ruleset_verified is True, "the definition really is unchanged"
@@ -643,12 +653,25 @@ def test_no_shipped_file_credits_220_to_the_wrong_release():
     IT ASKS A POSITIVE QUESTION. Not "does 1.9.0 appear near #220" — a module
     that honestly RECOUNTS the near miss says both, and blocklisting the wrong
     answer would forbid the true sentence. What is required instead is that
-    every claim of the form "#220 … fixed in <version>" names THIS release. That
-    keeps working at 1.11.0 without an edit, and it does not police history.
+    every claim of the form "#220 … fixed in <version>" names the release it was
+    actually fixed in, and it does not police history.
+
+    ⚠ THAT RELEASE IS A CONSTANT, NOT ``__version__``. The first cut compared
+    against the current version and claimed it would "keep working at 1.11.0
+    without an edit" — which was exactly backwards. It went red on the FIRST
+    release after the fix, because #220 was fixed in 1.10.0 and stays fixed in
+    1.10.0 no matter what ships next. "The release that fixed it" and "the
+    release being built" are the same number for one release only, and writing
+    a guard that assumes they always coincide is how a true sentence gets
+    reported as a defect.
     """
     import re
     from pathlib import Path
-    from foxy_audit import __version__
+
+    #: The release #220's fix actually shipped in. HISTORY, so it is a literal:
+    #: it can never legitimately change, and anything that makes this line look
+    #: wrong is a claim to check rather than a number to update.
+    FIXED_IN = "1.10.0"
 
     # The claim, in either order, across at most ~120 characters of any kind —
     # newlines included, since they are already spaces by the time this runs.
@@ -661,7 +684,7 @@ def test_no_shipped_file_credits_220_to_the_wrong_release():
         flat = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
         for found in claim.finditer(flat):
             named = found.group(1) or found.group(2)
-            if named != __version__:
+            if named != FIXED_IN:
                 offenders.append(f"{path.name}: ...{found.group(0).strip()}...")
 
     assert not offenders, "#220 shipped in %s:\n  %s" % (

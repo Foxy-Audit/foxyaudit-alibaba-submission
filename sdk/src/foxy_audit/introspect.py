@@ -105,6 +105,13 @@ import re
 from dataclasses import dataclass, field
 
 from . import hashing, policy as policy_engine, ruleset
+# ⚠ THE ONE PLACE THIS MODULE SHARES CODE WITH THE LIVE DETECTOR, and it is
+# deliberate. `replay` recompiles PATTERNS from the frozen definition rather than
+# importing `pii`'s — that is what makes it a replay. Validator implementations
+# are different: the definition records only a NAME, so the code behind each name
+# has to live somewhere, and a second copy of the issuer table would be a second
+# thing to get wrong. The table is data; the names above are what is versioned.
+from .issuer_ranges import starts_with_assigned_iin
 
 #: Compile-flag names, as recorded in a frozen definition, back to the flags.
 _FLAGS = {"IGNORECASE": re.IGNORECASE, "MULTILINE": re.MULTILINE,
@@ -326,9 +333,18 @@ def _luhn_ok(digits: str) -> bool:
 #: PUBLIC paths turn that into an answer — see :func:`explain`'s
 #: ``unknown_ruleset`` branch. A traceback out of ``foxy explain`` would be the
 #: tool failing to say "I cannot", which is the one thing this module promises.
+#: ⚠ AND AGAIN AT 2026.08.4. ``luhn+iin+distinct`` adds "begins with an issuer
+#: identification number a card network actually issues from". It is a THIRD
+#: entry, not an edit to the second: a 2026.08.3 row records ``luhn+distinct``
+#: and replays under Luhn-plus-not-one-repeated-digit — INCLUDING its acceptance
+#: of the Luhn-passing runs 2026.08.4 starts rejecting. That acceptance is not a
+#: bug in the replay; it is what those rows' rules were.
 _VALIDATORS = {
     "luhn": lambda digits: _luhn_ok(digits),
     "luhn+distinct": lambda digits: _luhn_ok(digits) and len(set(digits)) > 1,
+    "luhn+iin+distinct": lambda digits: (_luhn_ok(digits)
+                                         and len(set(digits)) > 1
+                                         and starts_with_assigned_iin(digits)),
     "not-all-zero": lambda digits: set(digits) != {"0"},
 }
 
