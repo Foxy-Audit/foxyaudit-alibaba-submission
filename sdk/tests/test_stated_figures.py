@@ -45,6 +45,26 @@ from foxy_audit import pii
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
+#: ⚠ THIS FILE SHIPS, AND THE THINGS IT READS DO NOT ALL SHIP WITH IT.
+#:
+#: The sdist puts 29 test files — this one among them — at ``<pkg>/tests/``, so
+#: ``REPO`` resolves to the unpacked tarball root, where there is no ``sdk/`` and
+#: no ``docs/``. Verified by building the tarball and running pytest inside it:
+#: five tests here raised FileNotFoundError or asserted on an empty sweep.
+#:
+#: A customer running the suite from a release deserves a clean skip and a
+#: reason, not a traceback from an audit product's own tests. The MEASUREMENTS
+#: still run — they need only the corpora and the installed package — because
+#: those are the tests that say the detectors work; it is the documentation
+#: cross-checks that have nothing to read.
+_IN_A_REPO_CHECKOUT = (REPO / "sdk" / "README.md").is_file()
+
+needs_checkout = pytest.mark.skipif(
+    not _IN_A_REPO_CHECKOUT,
+    reason="cross-checks the repository's documentation, which the sdist does "
+           "not carry (docs/ and sdk/ live at the repo root). The measurements "
+           "in this file still run.")
+
 #: The files whose numbers ship. README goes to PyPI; the changelog block is read
 #: at the REPL; pii.py's header is what the next person to touch the detectors
 #: reads; the frozen module explains a version rows will name forever.
@@ -160,8 +180,12 @@ def measured() -> dict:
         figures[f"corpus size {name}"] = (len(corpus), None)
 
     for name, (regex, gate) in ((n, _variant(n)) for n in _VARIANTS):
-        figures[f"PAN recall / {name}"] = (
-            sum(1 for t in pans if _card_hits(regex, gate, t)), len(pans))
+        found = sum(1 for t in pans if _card_hits(regex, gate, t))
+        figures[f"PAN recall / {name}"] = (found, len(pans))
+        # The other way the docs phrase it: what a variant MISSED. "missed 108 of
+        # the 540" is the sentence that corrected "90 of 450", and it was
+        # invisible to the scan until the connector learned "of THE".
+        figures[f"PAN missed / {name}"] = (len(pans) - found, len(pans))
 
     # ⚠ THE CROSS-PAIRINGS THE DOCS ACTUALLY WRITE, derived rather than allowed.
     #
@@ -204,26 +228,21 @@ _PAIRS = {(n, d) for n, d in MEASURED.values() if d is not None}
 #: Numbers that appear in the docs and are NOT measurements of a corpus. Each is
 #: enumerated with a reason, so the exemption list cannot quietly absorb a real
 #: claim — the same discipline as policy.py's free-string tag allowlist.
+#: ⚠ PAIRS ONLY. ``_claims()`` yields ``(int, int)`` and nothing else, so a
+#: ``(N, None)`` key here can never match — nine of them sat unreachable,
+#: 17 of 19 entries dead, and the list read as if it were doing work. An
+#: exemption nobody can trip is indistinguishable from one nobody needs, and
+#: ``test_every_exemption_is_reachable`` now fails on a dead entry rather than
+#: letting the list rot.
+#: Eight entries were removed the moment reachability was asserted. Three
+#: ("1.9.0", "1.8.0", "2026.08.x") became unnecessary when ``_NUMBER`` learned to
+#: refuse a digit adjacent to a dot; four regex repetitions ({12,18} and friends)
+#: were never reachable because a comma is not a connector; one was the second
+#: half of a pair the non-overlapping scan can never produce. Every survivor is
+#: tripped by a real sentence.
 _NOT_A_MEASUREMENT = {
-    (7812, None): "ISO/IEC 7812, a standard number",
-    (1, 9): "version 1.9.0",
-    (1, 8): "version 1.8.0",
-    (2026, 8): "ruleset 2026.08.x",
-    (12, 18): "the {12,18} repetition in a regex",
-    (13, 19): "the {13,19} repetition in a regex",
-    (1, 3): "the {1,3} repetition in a regex",
-    (3, 4): "a regex repetition",
-    (16, None): "the {16,} repetition in the openai-key rule",
-    (20, None): "the {20,} repetition in the bearer rule",
-    (215, None): "an issue number",
-    (216, None): "an issue number",
-    (217, None): "an issue number",
-    (218, None): "an issue number",
-    (219, None): "an issue number",
-    (220, None): "an issue number",
     (96, 168): "a SUPERSEDED figure, quoted in pii.py as the wrong one it was",
     (555, 111): "phone-number literals in prose (\"reserved 555/111/222 numbers\")",
-    (111, 222): "the same sentence's second pair",
 }
 
 #: ``N of M``, ``N/M`` and ``N -> M``: the three shapes a figure claim takes in
@@ -236,13 +255,24 @@ _NOT_A_MEASUREMENT = {
 #: 19-digit denominator, so four table rows reported as four unexplained claims
 #: while their real columns were never compared to anything. The extractor's own
 #: shape is part of what this file has to get right.
-_NUMBER = r"(?:\d{1,3}(?:[  ]\d{3})+|\d+)"
-#: The connector between the two numbers. ``/`` and ``->`` sit directly
-#: between them; ``of`` and ``in`` may carry a few words of subject first —
-#: "5 random UUIDs in 20 000" is a claim, and a version of this pattern that
-#: required the words to be absent never extracted it at all, so the figure was
-#: unchecked while the file reported a clean sweep.
-_CONNECTOR = r"(?:\s*(?:/|->)\s*|\s+(?:[A-Za-z][A-Za-z'-]*\s+){0,4}(?:of|in)\s+)"
+#: ⚠ AND IT MUST NOT STRADDLE A DOTTED VERSION. Without the lookarounds,
+#: "2026.08.3 ... during 1.9.0" extracted as the claim 3/1 -- the connector
+#: happily spanning two version strings. Excluding a digit adjacent to a dot
+#: also retires three exemptions that existed only to absorb "1.9.0", "1.8.0"
+#: and "2026.08.x".
+_NUMBER = r"(?<![\d.])" + r"(?:\d{1,3}(?:[  ]\d{3})+|\d+)" + r"(?![.\d])"
+#: The connector between the two numbers. ``/`` and ``->`` sit directly between
+#: them; ``of`` and ``in`` may carry filler on EITHER SIDE.
+#:
+#: ⚠ BOTH SIDES, AND THE SECOND HALF WAS MISSING. Filler was allowed before the
+#: preposition ("5 random UUIDs in 20 000") but not after, so the ordinary
+#: English form "108 of THE 540" was invisible — including on the very figure
+#: this file was written to correct, and on "36 of the 540" two lines below it.
+#: Verified before the fix: rewriting it to "999 of the 540" left all eight
+#: tests green. A guard that misses the claim it exists for is worse than none,
+#: because it certifies it.
+_FILLER = r"(?:[A-Za-z][A-Za-z'-]*\s+){0,4}"
+_CONNECTOR = (r"(?:\s*(?:/|->)\s*|\s+" + _FILLER + r"(?:of|in)\s+" + _FILLER + ")")
 _CLAIM = re.compile("(" + _NUMBER + ")" + _CONNECTOR + "(" + _NUMBER + ")")
 
 
@@ -263,6 +293,7 @@ def _claims():
 
 
 # ── the guards ───────────────────────────────────────────────────────────────
+@needs_checkout
 def test_every_figure_claim_in_the_docs_is_one_the_code_produces():
     """⚠ THE DELIVERABLE. Scanned, not listed.
 
@@ -285,6 +316,7 @@ def test_every_figure_claim_in_the_docs_is_one_the_code_produces():
           "_NOT_A_MEASUREMENT with a reason if it is not a measurement at all.")
 
 
+@needs_checkout
 def test_the_scan_actually_finds_the_claims():
     """CONTROL. An extractor that matches nothing passes the test above.
 
@@ -293,36 +325,89 @@ def test_the_scan_actually_finds_the_claims():
     reporting a clean sweep.
     """
     claims = _claims()
-    # 11 at the time of writing. The bound is a floor with headroom, not the
-    # current number wearing a bound's clothes — but the real control is the
-    # NAMED pairs below, because a count can be satisfied by any eleven matches.
-    assert len(claims) >= 10, f"the extractor found only {len(claims)} claims"
+    # ⚠ THE EXACT COUNT, not a floor. A floor of 10 against a real 22 let the
+    # connector lose its filler clause — the precise regression the comment
+    # beside _CONNECTOR documents as having happened — while both this control
+    # and the guard stayed green, because 19 is still >= 10. A bound with that
+    # much slack is not a bound; it is the absence of one, written confidently.
+    #
+    # If this number moves, a sentence was added or removed. Read the diff and
+    # update it deliberately; do not widen it.
+    assert len(claims) == 22, (
+        f"the extractor finds {len(claims)} claims, expected 22. A doc sentence "
+        f"was added or removed, or the extractor stopped matching a form: "
+        f"{sorted((n, d, rel) for n, d, rel, _ in claims)}")
+
     files = {rel for _, _, rel, _ in claims}
     assert "sdk/README.md" in files, "the PyPI long description is not being read"
     assert "sdk/src/foxy_audit/pii.py" in files, "the detector header is not read"
     pairs = {(n, d) for n, d, _, _ in claims}
-    assert (504, 540) in pairs, "the headline card figure is not being extracted"
-    assert (60, 60) in pairs, "the dialable-phone figure is not being extracted"
+    for pair, why in [((504, 540), "the headline card figure"),
+                      ((60, 60), "the dialable-phone figure"),
+                      ((108, 540), "the 'N of THE M' form"),
+                      ((36, 540), "the 'N of the M' form, second instance"),
+                      ((5, 20000), "the 'N <words> in M' form")]:
+        assert pair in pairs, f"{why} ({pair[0]}/{pair[1]}) is not being extracted"
 
 
 def test_a_planted_drift_is_caught():
     """CONTROL for the control. The check must be able to FAIL.
 
     A guard that only ever runs against correct docs proves nothing about what it
-    would do with wrong ones, so this plants the exact defect the S8e review
-    found — a plausible figure with the wrong numerator — and requires the
-    extraction-plus-comparison to reject it.
+    would do with wrong ones, so this plants the defects the reviews actually
+    found and requires the extraction-plus-comparison to reject each.
+
+    ⚠ ASSERTED AS THE GUARD'S OWN PREDICATE, not as two facts about a tuple. The
+    previous version asserted ``pair not in _PAIRS`` and then, on the next line,
+    ``not (... and pair in _PAIRS)`` — implied by the first and unable to fail,
+    so the property it meant to show (that the guard REJECTS the planted claim)
+    was never asserted at all.
     """
-    planted = "the same 540 of 540 card shapes"
-    numerator, denominator = 540, 540
-    assert (numerator, denominator) not in _PAIRS, \
-        "540/540 is now a real measurement; plant a different drift"
-    assert not (numerator in _SCALARS and denominator in _SCALARS
-                and (numerator, denominator) in _PAIRS)
-    # ...and it is the shape the extractor reads.
-    assert _CLAIM.search(planted).groups() == ("540", "540")
+    def rejected(text):
+        """What test_every_figure_claim... would conclude about this sentence."""
+        found = _CLAIM.search(text)
+        assert found, f"the extractor does not even read {text!r}"
+        pair = (_num(found.group(1)), _num(found.group(2)))
+        return pair not in _PAIRS and pair not in _NOT_A_MEASUREMENT
+
+    # The S8e defect: a plausible figure whose halves are both real measurements.
+    assert rejected("the same 540 of 540 card shapes")
+    # The S8g defect: the "of THE" form, on the very figure it corrects.
+    assert rejected("missed 999 of the 540 obligation shapes")
+    # An ordinary drift.
+    assert rejected("2 853 in 10 057 zero-heavy ids")
+
+    # ...and the CONTROL for the control: a TRUE sentence must be accepted, or
+    # `rejected` could simply be returning True.
+    assert not rejected("missed 108 of the 540 obligation shapes")
+    assert not rejected("504 of 540 card shapes")
 
 
+@needs_checkout
+def test_every_exemption_is_reachable():
+    """CONTROL. An exemption nobody can trip is one nobody needs.
+
+    ``_claims()`` yields ``(int, int)`` only, so a ``(N, None)`` key could never
+    match — nine sat unreachable and 17 of 19 entries were dead, while the list
+    read as though it were carrying the file's judgement calls. Every entry must
+    now be a pair the extractor can actually produce.
+    """
+    for pair, reason in _NOT_A_MEASUREMENT.items():
+        assert isinstance(pair, tuple) and len(pair) == 2, pair
+        assert all(isinstance(half, int) for half in pair), (
+            f"{pair} can never match: _claims() yields (int, int) only")
+        assert reason.strip(), f"{pair} needs a stated reason"
+
+    # And each one is REACHED by the current docs — an exemption for a sentence
+    # that no longer exists is dead weight that hides the next real claim.
+    live = {(n, d) for n, d, _, _ in _claims()}
+    unused = set(_NOT_A_MEASUREMENT) - live
+    assert not unused, (
+        f"exemption(s) nothing in the docs trips: {sorted(unused)}. The sentence "
+        f"they excused is gone; remove them so the list stays readable.")
+
+
+@needs_checkout
 def test_the_card_table_in_pii_py_is_re_measured_row_by_row():
     """The table is four variants x six columns of stated numbers.
 
@@ -394,6 +479,14 @@ def test_the_36_missed_shapes_are_all_issue_219():
     # and a planted 20/16 slipped past the set-only version of this assertion.
     assert dict(contexts) == {"item 1 {}": 18, "line 12 {}": 18}, dict(contexts)
 
+    # ⚠ THE MEASUREMENT ABOVE RUNS EVERYWHERE; only the DOC cross-check needs a
+    # repository. Guarded inline rather than by marking the whole test, because
+    # "do the detectors still miss exactly these 36 shapes?" is worth answering
+    # from an unpacked release — it is the part that says what the code does.
+    if not _IN_A_REPO_CHECKOUT:
+        pytest.skip("docs/known-issues.md is not in the sdist; the measurement "
+                    "above ran, only the cross-check against its prose is skipped")
+
     stated = (REPO / "docs/known-issues.md").read_text(encoding="utf-8")
     for context, count in contexts.items():
         marker = context.replace(" {}", "").strip()
@@ -410,17 +503,72 @@ _NOT_IN_THE_SDIST = ("docs/", "backend/", "desktop/", "verifier/", "demo/",
                      "contracts/", "deploy/", "e2e/")
 
 
+#: ⚠ THE PRIVATE REPOSITORY HOST. pyproject.toml records it plainly: "The
+#: repository is `fatimaatta-09` and is PRIVATE, so no GitHub URL can be a public
+#: route", which is why Source/Issues were dropped from the project metadata.
+#:
+#: A URL to it in a shipped file is an ACTIVE 404 on the public PyPI page —
+#: strictly worse than the inert `docs/` reference it replaced. This release
+#: shipped two of them, in README.md and the frozen ruleset module, because a
+#: reviewer and I both reached for "just link to GitHub" without re-reading the
+#: file that says why there is nothing to link to. The rule outlives the release.
+_PRIVATE_HOST = "github.com/fatimaatta-09"
+
+
 def _shipped_files():
-    """Every file the sdist carries: sdk/ minus its tests and caches."""
+    """Every file the sdist carries.
+
+    ⚠ INCLUDING tests/. An earlier version excluded them "because tests are not
+    in the sdist" — they are: building the sdist puts 29 test files in it,
+    verified by unpacking the tarball. A comment asserting the opposite is how
+    the exclusion survived.
+    """
     for path in sorted((REPO / "sdk").rglob("*")):
         if not path.is_file() or path.suffix not in (".py", ".md", ".toml"):
             continue
         rel = path.relative_to(REPO).as_posix()
-        if "__pycache__" in rel or "/tests" in rel:
+        if "__pycache__" in rel:
             continue
         yield rel, path
 
 
+@needs_checkout
+def test_no_shipped_file_links_to_the_PRIVATE_repository():
+    """⚠ THE GUARD THAT WOULD HAVE CAUGHT ME, and it is not about this release.
+
+    Replacing a dangling `docs/` reference with a GitHub URL looks like the
+    obvious fix and is the wrong one here: the repository is private, so the URL
+    404s on the public PyPI page while the path it replaced merely failed to
+    resolve. Worse, and shipped.
+
+    Kept separate from the dangling-path sweep because the reasoning is
+    different — that one is about the sdist's contents, this one about who can
+    read the repository — and because the next person to reach for a GitHub link
+    should meet a sentence explaining why there isn't one.
+    """
+    offenders = []
+    for rel, path in _shipped_files():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(
+                r"(?:https?://)?(?:www\.)?" + re.escape(_PRIVATE_HOST)
+                + r"[^\s)\"'`]*", text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            line_end = text.find("\n", match.end())
+            line = text[line_start:line_end if line_end != -1 else None]
+            # The one exemption, and it is this file naming the host it forbids.
+            # A constant is not a link; without this the guard reports itself.
+            if "_PRIVATE_HOST =" in line:
+                continue
+            offenders.append(f"{rel}: {match.group(0)} — {line.strip()[:80]}")
+    assert not offenders, (
+        "shipped file(s) linking to the PRIVATE repository:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nThat URL is a 404 for every reader of the PyPI page. State the "
+          "point inline instead; pyproject.toml explains why Source and Issues "
+          "were dropped from the project metadata for the same reason.")
+
+
+@needs_checkout
 def test_nothing_in_the_sdist_points_at_a_file_the_sdist_lacks():
     """⚠ sdk/README.md IS THE PyPI LONG DESCRIPTION.
 
@@ -441,8 +589,14 @@ def test_nothing_in_the_sdist_points_at_a_file_the_sdist_lacks():
                 line_start = text.rfind("\n", 0, match.start()) + 1
                 line_end = text.find("\n", match.end())
                 line = text[line_start:line_end if line_end != -1 else None]
-                if "https://" in line:
-                    continue          # a full URL resolves anywhere
+                # ⚠ IS THIS MATCH PART OF A URL — not "does this line mention
+                # one". The substring test on the whole line is the exemption
+                # that blessed the two private-repo links: any line carrying a
+                # URL anywhere excused every docs/ path on it, including ones
+                # that were not part of the URL at all.
+                head = text[max(0, match.start() - 60):match.start()]
+                if re.search(r"https?://\S*$", head):
+                    continue          # this path IS inside a URL
                 # ⚠ A POINTER, not a mention. `verifier/foxy_verify.py` written in
                 # backticks as CONTEXT is fine — the reader is not being sent
                 # anywhere. A markdown link, or a "see"/"filed as"/"tracked as",
@@ -464,6 +618,7 @@ def test_nothing_in_the_sdist_points_at_a_file_the_sdist_lacks():
           "state the limitation inline.")
 
 
+@needs_checkout
 def test_the_sdist_sweep_actually_reads_the_shipped_files():
     """CONTROL. A sweep over an empty file list passes silently."""
     shipped = dict(_shipped_files())
@@ -471,6 +626,11 @@ def test_the_sdist_sweep_actually_reads_the_shipped_files():
     assert "sdk/src/foxy_audit/pii.py" in shipped
     assert "sdk/src/foxy_audit/rulesets/v2026_08_3.py" in shipped, \
         "the frozen module — which carried this exact defect — is not swept"
-    assert not any(r.startswith("sdk/tests") for r in shipped), \
-        "tests are not in the sdist and must not be swept as if they were"
+    # ⚠ TESTS SHIP. Building the sdist and unpacking it shows 29 test files
+    # inside, so excluding them here — as an earlier version did, on the strength
+    # of a comment asserting the opposite — left a third of the published
+    # tarball unswept.
+    assert any(r.startswith("sdk/tests/") for r in shipped), \
+        "tests ARE in the sdist and must be swept like everything else"
+    assert "sdk/tests/test_stated_figures.py" in shipped
     assert len(shipped) > 20, len(shipped)

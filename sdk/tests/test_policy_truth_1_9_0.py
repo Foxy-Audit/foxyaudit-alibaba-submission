@@ -1440,6 +1440,14 @@ def test_the_chain_blob_formula_is_untouched():
     two halves ship separately and the chain is what binds them.
     """
     chain = Path(__file__).resolve().parents[2] / "backend" / "app" / "chain.py"
+    if not (Path(__file__).resolve().parents[2] / "sdk" / "README.md").is_file():
+        # ⚠ SKIPPED ONLY OUTSIDE A CHECKOUT. This file SHIPS in the sdist,
+        # where backend/ does not exist, so a customer running the suite
+        # from a release would meet a FileNotFoundError from an audit
+        # product's own tests. Inside a checkout the assert below still
+        # fires — a wrong path is not allowed to become a silent skip,
+        # which is what it did before.
+        pytest.skip("backend/ is not in the sdist; this guard needs the repo")
     assert chain.exists(), (
         f"{chain} not found — this guard silently skipped for as long as the "
         f"path was wrong, which is the same as not having it")

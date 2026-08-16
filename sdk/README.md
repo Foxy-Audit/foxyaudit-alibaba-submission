@@ -32,11 +32,17 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   still read as `credit_card`, against 33 in 20 000 for 1.8.0. **Detection of real card and
   phone numbers is otherwise IDENTICAL to 1.8.0** — the same shapes, asserted as
   a set difference in both directions rather than as a count (504 of 540 card
-  shapes and all 168 phone shapes in the test corpus; 1.8.0 missed the same 36,
-  tracked as [SDK #219](https://github.com/fatimaatta-09/Foxy-Audit/blob/main/docs/known-issues.md#219--a-stray-separated-digit-in-front-of-a-card-number-breaks-detection)
-  — a stray separated digit in front of a card number breaks detection, in this
-  release and in 1.8.0 alike) — and a card redaction no longer eats the
-  character after the number.
+  shapes and all 168 phone shapes in the test corpus). A card redaction also no
+  longer eats the character after the number.
+
+  **The 36 card shapes both releases miss are a known, inherited limitation,
+  tracked as SDK #219.** A stray separated digit immediately in front of a card
+  number — `item 1 4111111111111111`, `line 12 4111111111111111` — chains into
+  the same candidate and breaks the Luhn check, so the number is not detected.
+  1.8.0 behaves identically; this is not a regression, and it is stated here
+  because "identical to 1.8.0" is a claim about parity, never about completeness.
+  There is no public issue tracker to link to, so the full write-up ships with
+  the source rather than at a URL.
 - **`mode="redact"` now blocks when a finding survives its own redaction.** A
   finding redaction cannot act on — a Presidio match, a value in a non-string
   field — used to be stamped `redacted` while the content reached the model. The

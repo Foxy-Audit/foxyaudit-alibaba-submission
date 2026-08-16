@@ -29,6 +29,19 @@ import pytest
 from foxy_audit import policy, response_policy
 
 REPO = Path(__file__).resolve().parents[2]
+
+#: ⚠ THESE TESTS SHIP. The sdist carries tests/ but not the repository
+#: root, so `sdk/README.md`, `demo/` and `desktop/` are all absent when a
+#: customer runs the suite from an unpacked release — two guards here have
+#: failed that way since 1.6.0, unnoticed because nobody had run pytest from
+#: a tarball until 1.9.0. Skipping is the honest answer: the vocabulary they
+#: check is a property of the REPOSITORY, not of the installed package.
+_IN_A_REPO_CHECKOUT = (REPO / "sdk" / "README.md").is_file()
+
+needs_checkout = pytest.mark.skipif(
+    not _IN_A_REPO_CHECKOUT,
+    reason="reads documentation from the repository root, which the sdist "
+           "does not carry")
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -476,6 +489,7 @@ def _documented_tags() -> dict[str, list[str]]:
     return found
 
 
+@needs_checkout
 def test_every_documented_policy_tag_is_a_real_tag():
     """The systemic half: nothing connected the docs' vocabulary to the code's.
 
@@ -500,6 +514,7 @@ def test_every_documented_policy_tag_is_a_real_tag():
     )
 
 
+@needs_checkout
 def test_the_documentation_guard_can_see_the_quickstart():
     """CONTROL. The extraction must reach the sites that actually went wrong.
 

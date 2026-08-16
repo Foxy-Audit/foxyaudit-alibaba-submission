@@ -34,9 +34,10 @@ separator, so a preceding stray digit chains into the same candidate:
 returns non-overlapping matches, so once that candidate is consumed there is no
 second attempt starting at the real PAN.
 
-The zero case (`ref 0 …`) was fixed in 1.9.0 because the pattern now requires the
-candidate to START at `[1-9]`, which makes the match begin past a leading zero.
-A stray NON-zero digit is still swept in.
+The zero case (`ref 0 …`) does not reach this, because the pattern requires the
+candidate to START at `[1-9]` and the match therefore begins past a leading zero.
+Both 1.8.0 and 1.9.0 detect it. A stray NON-zero digit is still swept in, and
+that is #219.
 
 **Why it was not fixed here.** It is inherited behaviour, identical in 1.8.0, and
 1.9.0 was already five review rounds deep on this boundary — three of which lost
