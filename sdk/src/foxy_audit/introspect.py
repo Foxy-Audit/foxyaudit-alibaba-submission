@@ -447,5 +447,9 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         matches=matches)
 
 
-__all__ = ["CheckResult", "ExplainResult", "Match", "STATUSES", "check",
-           "explain", "replay"]
+#: ``UnknownValidator`` is exported because ``replay`` is, and ``replay`` RAISES
+#: it — its own docstring tells a caller to catch it. An exception a public
+#: function can raise but that the module does not name is one a caller can only
+#: reach by importing a private symbol.
+__all__ = ["CheckResult", "ExplainResult", "Match", "STATUSES",
+           "UnknownValidator", "check", "explain", "replay"]

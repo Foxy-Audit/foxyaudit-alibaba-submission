@@ -20,8 +20,13 @@ by 1.9.0**
                              1.8.0    1.9.0
 item 1 4111111111111111       []       []
 line 12 4111111111111111      []       []
-ref 0 4111111111111111        card     card     (fixed in 1.9.0)
+ref 0 4111111111111111        card     card
 ```
+
+The third row is not a fix over 1.8.0 — 1.8.0 detected it too. It is there
+because the 1.9.0 review LOST it (S8b/S8c applied "no PAN starts with 0" to the
+whole separator-chained candidate) and S8d restored it. Same mechanism, zero
+instead of a non-zero digit.
 
 **Mechanism.** `_CARD_CANDIDATE_RE` treats a space or hyphen as an internal
 separator, so a preceding stray digit chains into the same candidate:
@@ -43,7 +48,16 @@ obligation set in `sdk/tests/fixtures/identifier_corpora.py` extended first.
 IDENTICAL to 1.8.0's — the same 504 of 540 obligation shapes, asserted as a set
 difference in both directions. A parity test cannot see an inherited bug, so
 "identical to 1.8.0" must never be written in a way that reads as "complete".
-The 36 shapes both releases miss are the letter-glued ones plus these.
+
+**All 36 shapes both releases miss are this defect** — one per PAN per grouping:
+18 `item 1 <PAN>` shapes and 18 `line 12 <PAN>` shapes.
+
+(An earlier draft said "the letter-glued ones plus these". `PAN_SHAPES` contains
+no letter-glued context at all: a PAN welded to a letter is not something the
+detector is meant to find, so it belongs in the false-positive populations, not
+in an obligation set. The 36 are entirely #219, and
+`tests/test_stated_figures.py` re-derives that split rather than trusting this
+sentence.)
 
 ---
 

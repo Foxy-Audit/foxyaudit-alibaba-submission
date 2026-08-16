@@ -16,7 +16,10 @@ small, however obviously a fix — mints 2026.08.4.
 The check that would have caught an in-place edit does not exist yet: explain()
 loads the definition a row NAMES but never compares the row's recorded
 `ruleset_hash` against `hash_of()` of what it loaded, so a silently edited
-registry replays as if nothing happened. Filed as SDK #220 in docs/known-issues.
+registry replays as if nothing happened. Filed as SDK #220 at
+https://github.com/fatimaatta-09/Foxy-Audit/blob/main/docs/known-issues.md
+(a full URL because this module SHIPS IN THE SDIST, where the repository's
+docs/ directory does not exist).
 
 Supersedes 2026.08.2, which remains in the registry forever because rows name it.
 Three patterns moved and TWO VALIDATORS are now recorded, all in SDK 1.9.0, and

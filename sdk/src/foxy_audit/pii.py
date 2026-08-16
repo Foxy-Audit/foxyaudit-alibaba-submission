@@ -78,8 +78,9 @@ import re
 # THE CARD COST, STATED RATHER THAN HIDDEN: a PAN glued directly to a LETTER
 # (``4111111111111111x``) is not detected — 1.8.0 did not detect it either — and
 # 5 random UUIDs in 20 000 plus 2 of 10 057 zero-heavy ids still read as
-# ``credit_card`` (1.8.0: 33 and 2 849). Those residues are 16-digit,
-# 8-distinct-digit Luhn-passing runs no content-free rule separates from a PAN.
+# ``credit_card`` (1.8.0: 33 in 20 000 and 2 849 in 10 057). Those residues are
+# 16-digit, 8-distinct-digit Luhn-passing runs that no content-free rule
+# separates from a PAN.
 _PHONE_BEFORE = r"(?<![0-9A-Za-z\-])"
 _PHONE_AFTER = r"(?![0-9A-Za-z\-])"
 _CARD_BEFORE = r"(?<![0-9A-Za-z])"

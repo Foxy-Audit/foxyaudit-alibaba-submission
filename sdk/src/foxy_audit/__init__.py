@@ -50,9 +50,10 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #     than tidy. PHONE excludes an adjacent letter OR HYPHEN, because the bare
 #     UUID carries a 12-digit run between hyphens that letters alone do not kill.
 #     CARD excludes an adjacent LETTER ONLY, because excluding the hyphen there
-#     deleted 90 of 450 real PAN shapes — `card-4111111111111111` and
-#     `4111-1111-1111-1111-visa` among them. For a compliance product a missed
-#     PAN is worse than a spurious label on an identifier.
+#     missed 108 of the 540 obligation shapes — a fifth of them, and 72 more
+#     than 1.8.0 missed — including `card-4111111111111111` and
+#     `4111-1111-1111-1111-visa`. For a compliance product a missed PAN is
+#     worse than a spurious label on an identifier.
 #
 #     The card candidate DOES chain across a UUID's hyphens (`[ \-]?` is a
 #     separator, so `0000-0000-0000-0000` is one 16-digit run) and Luhn accepts
@@ -76,8 +77,8 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #     ("Tel-4155550134") is no longer detected; a CARD glued to a LETTER
 #     ("4111111111111111x") is not either, and 1.8.0 did not detect that one
 #     either. 5 random UUIDs in 20 000 still read as credit_card, against
-#     1.8.0's 33 — a residue, not a claim of zero. A card redaction also stops
-#     eating the space OR HYPHEN that follows the number.
+#     33 in 20 000 for 1.8.0 — a residue, not a claim of zero. A card redaction
+#     also stops eating the space OR HYPHEN that follows the number.
 #
 #     ⚠ THIS BOUNDARY LOST REAL DETECTIONS IN THREE CONSECUTIVE REVIEW ROUNDS.
 #     The recurrence was the defect, not any single loss: each round assembled

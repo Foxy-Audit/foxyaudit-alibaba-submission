@@ -394,6 +394,8 @@ def test_215_the_ZERO_HEAVY_class_is_the_one_that_matters():
     assert _fired(pii, CORPORA.ZERO_HEAVY_STRICT) == 0, \
         "a placeholder id is being read as personal data"
 
+    # 2 623 under the S8b letters-only boundary, 2 here. Both are re-derived by
+    # tests/test_stated_figures.py rather than trusted as prose.
     old_wide = _fired(OLD_PII, CORPORA.ZERO_HEAVY)
     new_wide = _fired(pii, CORPORA.ZERO_HEAVY)
     assert old_wide > 2000, f"1.8.0 only hit {old_wide} — the corpus is stale"
@@ -406,7 +408,7 @@ def test_215_random_uuids_are_the_EASY_case_and_get_their_own_bound():
     """Kept BESIDE the zero-heavy one, never collapsed into it.
 
     A uniformly-random UUID rarely holds a long enough all-digit run to chain, so
-    this population reported 5 while the real world reported 2 627. Two corpora,
+    this population reported 5 while the real world reported 2 623. Two corpora,
     two bounds, two reasons — see fixtures/identifier_corpora.py.
     """
     old = _fired(OLD_PII, CORPORA.RANDOM_UUIDS)
@@ -424,7 +426,7 @@ def test_215_the_two_corpora_do_NOT_measure_the_same_thing():
     """
     random_rate = _fired(OLD_PII, CORPORA.RANDOM_UUIDS) / len(CORPORA.RANDOM_UUIDS)
     zero_rate = _fired(OLD_PII, CORPORA.ZERO_HEAVY) / len(CORPORA.ZERO_HEAVY)
-    # Measured at 22x (0.639 vs 0.029). The bound is 10x, so this fails when the
+    # Measured at 22x (0.642 vs 0.029). The bound is 10x, so this fails when the
     # two populations genuinely converge rather than when one drifts a little.
     assert zero_rate > random_rate * 10, (
         f"zero-heavy {zero_rate:.4f} vs random {random_rate:.4f} — the corpora "
@@ -573,15 +575,58 @@ def test_215_REDACTION_agrees_with_DETECTION_for_every_gated_detector(label, tex
         f"redaction rewrote a {label} span detection did not report")
 
 
+#: The candidate regex that must match before each gate is consulted at all.
+#: Read from the module, so a row cannot claim to exercise a gate the pattern no
+#: longer reaches.
+_CANDIDATE_OF = {"credit_card": lambda: pii._CARD_CANDIDATE_RE,
+                 "phone": lambda: pii._PHONE_RE}
+
+
+@pytest.mark.parametrize(
+    "label,text", [(label, text) for label, texts in _GATED_DETECTORS
+                   for text in texts])
+def test_215_every_drift_row_still_REACHES_the_gate_it_claims_to_test(label, text):
+    """⚠ THE ROW MUST BE ABLE TO FAIL, not merely exist.
+
+    A gate is only consulted when the CANDIDATE PATTERN matches first. Tighten
+    the pattern so an input no longer produces a candidate and the row becomes
+    vacuous — it still asserts "not detected, not redacted", which is now true
+    for a completely different reason, and it would sit green forever while the
+    gate it names went unguarded.
+
+    That is not hypothetical: it is exactly what happened to the CARD row when
+    the pattern gained its leading ``[1-9]``. Zero-led placeholders stopped
+    producing a candidate at all, the validator stopped being the thing under
+    test, and the drift mutation went silent until the uniform runs were added.
+
+    So each row proves BOTH halves: the pattern still matches the input, AND the
+    gate is what rejects it.
+    """
+    candidate = _CANDIDATE_OF[label]()
+    matches = list(candidate.finditer(text))
+    assert matches, (
+        f"{text!r} no longer produces a {label} candidate, so the {label} gate "
+        f"is never consulted and this row tests nothing. Replace it with an "
+        f"input the current pattern still matches.")
+
+    gate = {"credit_card": pii._is_card_number, "phone": pii._is_phone_number}[label]
+    digits = [re.sub(r"\D", "", m.group()) for m in matches]
+    assert not any(gate(d) for d in digits), (
+        f"the {label} gate ACCEPTS {digits} — this row no longer exercises a "
+        f"rejection, so it cannot detect the gate being removed")
+
+
 def test_215_the_drift_table_covers_every_gate_the_module_has():
     """CONTROL. A gate added without a row here is a gate nobody checks.
 
     Derived from the module rather than eyeballed: every ``_is_*`` predicate
-    ``redact`` consults must appear in ``_GATED_DETECTORS``. That is what makes
-    "one table, every detector" a property instead of an intention.
+    ``redact`` consults must appear in ``_GATED_DETECTORS``, and every label in
+    the table must have a candidate pattern beside it. That is what makes "one
+    table, every detector" a property instead of an intention.
     """
     gates = {name for name in dir(pii)
              if name.startswith("_is_") and name != "_is_uniform"}
+    assert set(_CANDIDATE_OF) == {label for label, _ in _GATED_DETECTORS}
     assert gates == {"_is_card_number", "_is_phone_number"}, (
         f"pii gained or lost a gate: {sorted(gates)}. Add a row to "
         f"_GATED_DETECTORS with inputs that gate REJECTS, or this property "
