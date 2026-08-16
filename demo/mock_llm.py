@@ -65,7 +65,24 @@ class MockLLM:
 # reads `foxy` at call time rather than capturing it, so neither path needs to
 # know which one is active — and with no flag, this is the object it has always
 # been.
-foxy = FoxyClient(desktop_ping=False)
+#
+# ⚠ api_key="" IS LOAD-BEARING. `FoxyConfig.resolve` reads $FOXY_API_KEY
+# whenever api_key is None (config.py:99), so `FoxyClient(desktop_ping=False)`
+# adopted an exported key and this "offline" client came up ENABLED. Measured on
+# this file as it stood:
+#
+#     FOXY_API_KEY=foxy_sk_… python -c "import mock_llm; print(mock_llm.foxy.cfg.enabled)"
+#     True
+#
+# — so `--scenario all`, the merge gate whose entire claim is that nothing
+# leaves the machine, SHIPPED on any machine where that variable was set. And
+# the --live instructions in this file's own error message tell you to set it,
+# so the affected machine is specifically a machine someone demoed on.
+#
+# "" and None are different instructions to the SDK: None means "look it up",
+# "" means "there is no key". The keyed path is unaffected — --live reads the
+# same variable through argparse and hands it to enable_live() explicitly.
+foxy = FoxyClient(api_key="", desktop_ping=False)
 mock = MockLLM()
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8000"
