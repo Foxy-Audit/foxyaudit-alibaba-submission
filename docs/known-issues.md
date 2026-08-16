@@ -62,6 +62,45 @@ sentence.)
 
 ---
 
+## #221 — five known limits of the stated-figures scan
+
+**Status:** open · **Found:** 1.9.0 review (S8h) · **In:**
+`sdk/tests/test_stated_figures.py`
+
+The scan that re-derives every number stated in the shipped documentation is
+itself a guard, and a guard has its own defect surface. Four of its holes were
+fixed in S8h; these five are recorded rather than fixed, because the release is
+otherwise finished and each is a narrowing of coverage rather than a false pass
+on anything currently written.
+
+1. **`sdk/README.md:38`'s "The 36 card shapes" is a bare scalar.** Changing it to
+   40 leaves the suite green. The only `(36, 540)` claim the scan verifies lives
+   in `foxy_audit/__init__.py`. This is the documented boundary — the scan
+   extracts PAIRS — but it means the same figure is checked in one file and not
+   in the other. Fix: reword the README sentence to state the pair.
+
+2. **`_SCALARS` is dead.** It lost its last consumer when the "both halves are
+   measured" escape hatch was removed in S8f, and now appears only at its own
+   definition. Fix: delete it.
+
+3. **`len(shipped) > 20` is toothless.** The sweep covers 60 files now that tests
+   are included, so the bound has 40 files of slack. S8f's own commit message
+   says "a bound with that much slack is not a bound"; the rule applies here.
+   Fix: assert the real count, as `test_the_scan_actually_finds_the_claims` does.
+
+4. **The is-this-inside-a-URL window is 60 characters.** A legitimate URL whose
+   path segment sits further than that from its scheme is not recognised, so a
+   `docs/...` inside it would be reported as dangling. Measured: a URL with 82
+   characters between `https://` and `docs/` false-flags. No such URL is in the
+   tree today. Fix: scan back to whitespace rather than a fixed window.
+
+5. **The claim count is asserted as `== 22`** and will need a deliberate edit
+   whenever a documentation sentence is added or removed. That is intentional —
+   a floor was what let a regression through in S8f — but it is friction, and it
+   is worth knowing before someone widens it back to `>=`.
+
+---
+
 ## #220 — `explain()` never checks a row's recorded `ruleset_hash`
 
 **Status:** open · **Found:** 1.9.0 review (S8e)

@@ -47,7 +47,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 #: ⚠ THIS FILE SHIPS, AND THE THINGS IT READS DO NOT ALL SHIP WITH IT.
 #:
-#: The sdist puts 29 test files — this one among them — at ``<pkg>/tests/``, so
+#: The sdist puts 23 files — this one among them — at ``<pkg>/tests/``, so
 #: ``REPO`` resolves to the unpacked tarball root, where there is no ``sdk/`` and
 #: no ``docs/``. Verified by building the tarball and running pytest inside it:
 #: five tests here raised FileNotFoundError or asserted on an empty sweep.
@@ -260,7 +260,20 @@ _NOT_A_MEASUREMENT = {
 #: happily spanning two version strings. Excluding a digit adjacent to a dot
 #: also retires three exemptions that existed only to absorb "1.9.0", "1.8.0"
 #: and "2026.08.x".
-_NUMBER = r"(?<![\d.])" + r"(?:\d{1,3}(?:[  ]\d{3})+|\d+)" + r"(?![.\d])"
+#: ⚠ THE TRAILING LOOKAHEAD IS TWO CHECKS, NOT ONE, AND THE ONE-CHECK VERSION
+#: BROKE MORE THAN IT FIXED. Written as ``(?![.\d])`` to keep the scan from
+#: straddling a dotted version, it also refused every figure whose denominator
+#: ENDED A SENTENCE -- "999 of 540." extracted as nothing at all, so a planted
+#: drift in that shape passed all ten tests, and the exact-count control could
+#: not see it either because a sentence that never matches does not change the
+#: count. It also made a space-grouped number backtrack to its first group:
+#: "2 853 in 10 057." read as the phantom claim (2853, 10).
+#:
+#: What separates a version from a sentence-ending period is what FOLLOWS the
+#: dot: "1.9.0" is dot-then-digit, "540." is dot-then-space-or-end. So the test
+#: is "not followed by a digit, and not followed by a dot AND a digit" --
+#: which keeps 2026.08.3 and 1.9.0 out while letting 540. and 10 057. in.
+_NUMBER = r"(?<![\d.])" + r"(?:\d{1,3}(?:[  ]\d{3})+|\d+)" + r"(?!\d)(?!\.\d)"
 #: The connector between the two numbers. ``/`` and ``->`` sit directly between
 #: them; ``of`` and ``in`` may carry filler on EITHER SIDE.
 #:
@@ -512,16 +525,35 @@ _NOT_IN_THE_SDIST = ("docs/", "backend/", "desktop/", "verifier/", "demo/",
 #: shipped two of them, in README.md and the frozen ruleset module, because a
 #: reviewer and I both reached for "just link to GitHub" without re-reading the
 #: file that says why there is nothing to link to. The rule outlives the release.
-_PRIVATE_HOST = "github.com/fatimaatta-09"
+#:
+#: ⚠ EVERY FORM, CASE-INSENSITIVELY. The first version was an exact-string
+#: match on the lower-case HTTPS path form, so a capitalised spelling or an SSH
+#: clone line walked straight past it. A guard that catches only the exact
+#: spelling of the mistake already made is a record of that mistake, not a
+#: defence against the next one. ``[/:]`` covers both the HTTPS path separator
+#: and the SSH ``user@host:owner`` colon; the optional prefix covers a scheme,
+#: a ``www.`` and a bare mention someone would paste into a browser.
+#:
+#: The forms are deliberately NOT spelled out above: this file ships, and the
+#: guard would then report its own examples — which it did, correctly, the first
+#: time this comment named them.
+_PRIVATE_HOST_RE = re.compile(
+    r"(?:git@|https?://|www\.)?github\.com[/:]fatimaatta-09[^\s)\"'`]*",
+    re.IGNORECASE)
+
+#: A line carrying this is the guard DEFINING what it forbids, not a link to it.
+_HOST_DEFINITION = "_PRIVATE_HOST_RE = re.compile("
 
 
 def _shipped_files():
     """Every file the sdist carries.
 
     ⚠ INCLUDING tests/. An earlier version excluded them "because tests are not
-    in the sdist" — they are: building the sdist puts 29 test files in it,
-    verified by unpacking the tarball. A comment asserting the opposite is how
-    the exclusion survived.
+    in the sdist" — they are: building the tarball and unpacking it shows 23
+    files under ``tests/``, 18 of them test modules, plus 6 more under
+    ``tests_testbed/``. A comment asserting the opposite is how the exclusion
+    survived; an earlier draft of THIS comment said "29 test files", which was
+    the two directories added together and therefore neither number.
     """
     for path in sorted((REPO / "sdk").rglob("*")):
         if not path.is_file() or path.suffix not in (".py", ".md", ".toml"):
@@ -549,15 +581,13 @@ def test_no_shipped_file_links_to_the_PRIVATE_repository():
     offenders = []
     for rel, path in _shipped_files():
         text = path.read_text(encoding="utf-8")
-        for match in re.finditer(
-                r"(?:https?://)?(?:www\.)?" + re.escape(_PRIVATE_HOST)
-                + r"[^\s)\"'`]*", text):
+        for match in _PRIVATE_HOST_RE.finditer(text):
             line_start = text.rfind("\n", 0, match.start()) + 1
             line_end = text.find("\n", match.end())
             line = text[line_start:line_end if line_end != -1 else None]
             # The one exemption, and it is this file naming the host it forbids.
             # A constant is not a link; without this the guard reports itself.
-            if "_PRIVATE_HOST =" in line:
+            if _HOST_DEFINITION in line:
                 continue
             offenders.append(f"{rel}: {match.group(0)} — {line.strip()[:80]}")
     assert not offenders, (
@@ -626,10 +656,10 @@ def test_the_sdist_sweep_actually_reads_the_shipped_files():
     assert "sdk/src/foxy_audit/pii.py" in shipped
     assert "sdk/src/foxy_audit/rulesets/v2026_08_3.py" in shipped, \
         "the frozen module — which carried this exact defect — is not swept"
-    # ⚠ TESTS SHIP. Building the sdist and unpacking it shows 29 test files
-    # inside, so excluding them here — as an earlier version did, on the strength
-    # of a comment asserting the opposite — left a third of the published
-    # tarball unswept.
+    # ⚠ TESTS SHIP. Building the sdist and unpacking it shows 23 files under
+    # tests/ and 6 more under tests_testbed/, so excluding them here — as an
+    # earlier version did, on the strength of a comment asserting the opposite —
+    # left a large part of the published tarball unswept.
     assert any(r.startswith("sdk/tests/") for r in shipped), \
         "tests ARE in the sdist and must be swept like everything else"
     assert "sdk/tests/test_stated_figures.py" in shipped

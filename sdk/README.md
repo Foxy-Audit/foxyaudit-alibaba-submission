@@ -36,13 +36,18 @@ before upgrading a deployment that runs `mode="block"` or `mode="redact"`.
   longer eats the character after the number.
 
   **The 36 card shapes both releases miss are a known, inherited limitation,
-  tracked as SDK #219.** A stray separated digit immediately in front of a card
-  number — `item 1 4111111111111111`, `line 12 4111111111111111` — chains into
-  the same candidate and breaks the Luhn check, so the number is not detected.
-  1.8.0 behaves identically; this is not a regression, and it is stated here
-  because "identical to 1.8.0" is a claim about parity, never about completeness.
-  There is no public issue tracker to link to, so the full write-up ships with
-  the source rather than at a URL.
+  tracked as SDK #219, and this is the whole of it.** The candidate pattern
+  treats a space or a hyphen as an *internal* separator, so a stray digit
+  immediately in front of a card number chains into the same candidate:
+  `item 1 4111111111111111` is read as one 17-digit run, which fails the Luhn
+  check. Python's `finditer` returns non-overlapping matches, so once that
+  candidate is consumed there is no second attempt starting at the real number.
+  A leading **zero** does not do this — the pattern requires a candidate to start
+  at `[1-9]` — but any other stray digit does. 1.8.0 behaves identically, so this
+  is not a regression; it is stated here because "identical to 1.8.0" is a claim
+  about parity, never about completeness. It is written out in full because there
+  is no public issue tracker to link to and the repository's `docs/` directory is
+  not part of this distribution.
 - **`mode="redact"` now blocks when a finding survives its own redaction.** A
   finding redaction cannot act on — a Presidio match, a value in a non-string
   field — used to be stamped `redacted` while the content reached the model. The
