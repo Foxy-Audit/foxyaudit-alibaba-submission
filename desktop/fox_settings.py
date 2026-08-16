@@ -28,7 +28,7 @@ APP = "DesktopPet"
 
 
 # ─────────────────────────────────────────────────────────── AI providers ──
-AI_PROVIDERS = ["anthropic", "openai", "ollama", "lmstudio", "custom"]
+AI_PROVIDERS = ["anthropic", "openai", "ollama", "lmstudio", "custom", "mock"]
 
 PROVIDER_DEFAULTS = {
     "anthropic": {"base_url": "https://api.anthropic.com/v1/messages",       "model": "claude-sonnet-4-6",  "local": False},
@@ -36,6 +36,10 @@ PROVIDER_DEFAULTS = {
     "ollama":    {"base_url": "http://localhost:11434/api/chat",               "model": "llama3",             "local": True},
     "lmstudio":  {"base_url": "http://localhost:1234/v1/chat/completions",     "model": "local-model",        "local": True},
     "custom":    {"base_url": "",                                              "model": "",                   "local": False},
+    # Deterministic, offline, no key: the model `demo/mock_llm.py` demonstrates
+    # the guard against. Selecting it makes this chat a sandbox anyone can drive
+    # with no provider account and no network.
+    "mock":      {"base_url": "",                                              "model": "mock-llm",           "local": True},
 }
 
 
@@ -188,6 +192,42 @@ class FoxSettings:
 
     def set_web_dashboard_url(self, url: str):
         self._s.setValue("foxy/web_dashboard_url", url)
+
+    # ── the chat's preflight guard ──
+    def guard_mode(self) -> str:
+        """"observe" | "block" | "redact" for the copilot's own prompts.
+
+        Defaults to `block`, and that is a decision rather than an oversight:
+        this chat sends the user's own words to a model, and the product's claim
+        is that enforcement happens locally BEFORE that call. Shipping it in
+        observe would mean the one surface carrying the fox's face watched a
+        PHI prompt go out and only wrote it down.
+        """
+        value = self._s.value("foxy/guard_mode", "block", type=str)
+        return value if value in ("observe", "block", "redact") else "block"
+
+    def set_guard_mode(self, mode: str):
+        if mode in ("observe", "block", "redact"):
+            self._s.setValue("foxy/guard_mode", mode)
+
+    def guard_policy(self) -> str:
+        """Which policy tag the copilot's prompts are judged under.
+
+        CHOSEN, never guessed. `hipaa` and `gdpr` run the same detector and
+        differ only in whether a finding is filed as `phi` or `pii`, so nothing
+        in the prompt can decide between them — it is a fact about the customer.
+        See foxy_guard.POLICY_TAGS for the measurement.
+
+        Defaults to `gdpr` because every finding it labels is defensible as
+        personal data, whereas `phi` asserts a healthcare context this app has
+        no way to know it is in. A healthcare customer sets hipaa deliberately.
+        """
+        value = self._s.value("foxy/guard_policy", "gdpr", type=str)
+        return value if value in ("default", "soc2", "gdpr", "hipaa") else "gdpr"
+
+    def set_guard_policy(self, tag: str):
+        if tag in ("default", "soc2", "gdpr", "hipaa"):
+            self._s.setValue("foxy/guard_policy", tag)
 
     # ── behaviour tuning ──
     def reaction_cooldown(self) -> float:

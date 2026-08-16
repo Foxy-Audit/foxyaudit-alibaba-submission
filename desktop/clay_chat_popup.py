@@ -60,34 +60,60 @@ from foxy_tokens import (
     reduced_motion as _reduced_motion,
 )
 import ai_providers
+import foxy_guard
 import window_tracker
+from guard_widgets import BlockOverlay, GuardReceipt, GuardStrip
 
 
 # ─────────────────────────────────────────────── background AI worker ──────
 class _AICallWorker(QThread):
-    """Runs ai_providers.call_ai() off the UI thread.
+    """Runs the GUARDED model call off the UI thread.
+
+    ⚠ THE MODEL IS NO LONGER REACHED DIRECTLY. `foxy_guard.run` evaluates the
+    prompt with the SDK first and only calls `ai_providers.call_ai` if the
+    policy allows it, so `succeeded` carries the whole result dict — decision,
+    rules, signals, both commitments — rather than a bare reply string.
 
     Signals are explicitly disconnected in _cleanup() to prevent the
     common Qt6 memory leak where finished QThreads keep a live reference
     because a connected signal holds a reference to a lambda closure that
     captures `self`.
     """
-    succeeded = pyqtSignal(str)
+    succeeded = pyqtSignal(dict)
     failed    = pyqtSignal(str)
 
     def __init__(self, history: list[dict], system_prompt: str,
-                 settings: FoxSettings, parent: QWidget | None = None):
+                 settings: FoxSettings, parent: QWidget | None = None,
+                 policy_tag: str = "default", mode: str = "block"):
         super().__init__(parent)
         self._history       = history
         self._system_prompt = system_prompt
         self._settings      = settings
+        self._policy_tag    = policy_tag
+        self._mode          = mode
         self.finished.connect(self._cleanup)
 
     def run(self):
         try:
-            reply = ai_providers.call_ai(
-                self._history, self._system_prompt, self._settings)
-            self.succeeded.emit(reply)
+            prompt = self._history[-1]["content"] if self._history else ""
+
+            def call_model(text: str) -> str:
+                # The guard hands back what the model MAY see — the scrubbed
+                # text on the redact path — so the history sent to the provider
+                # is rewritten to match. Sending the original alongside a
+                # redacted copy would defeat the redaction entirely.
+                history = list(self._history[:-1])
+                history.append({"role": "user", "content": text})
+                return ai_providers.call_ai(
+                    history, self._system_prompt, self._settings)
+
+            self.succeeded.emit(foxy_guard.run(
+                prompt, call_model,
+                policy_tag=self._policy_tag, mode=self._mode,
+                api_key=self._settings.org_api_key(),
+                endpoint=self._settings.backend_url(),
+                agent=self._settings.ai_provider(),
+            ))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -451,6 +477,15 @@ class ChatPopup(QWidget):
         self._empty_state = self._build_empty_state()
         self.messages_layout.insertWidget(0, self._empty_state)
 
+        # The refusal card, over the panel. Built last so it sits on top, and
+        # parented to the panel so it covers the chat but not the desktop.
+        self.block_overlay = BlockOverlay(self.panel)
+        self.block_overlay.edit_requested.connect(self._edit_blocked_prompt)
+        self.block_overlay.redact_requested.connect(self._retry_redacted)
+        self.block_overlay.dismissed.connect(self._re_enable_input)
+        self._pending_prompt = ""
+        self._refresh_guard_strip()
+
     # ─────────────────────────────────────────── UI construction ───
     def _build_ui(self, tokens: dict, sprite_sheet_path: str | None):
         outer = QVBoxLayout(self)
@@ -496,6 +531,11 @@ class ChatPopup(QWidget):
         header.addWidget(right)
 
         self.layout_.addWidget(self.header_bar)
+
+        # ── the guard strip: what happens to the next message ────────
+        self.guard_strip = GuardStrip()
+        self.guard_strip.clicked.connect(self._open_guard_settings)
+        self.layout_.addWidget(self.guard_strip)
 
         # ── content stack: chat page (0) + history page (1) ──────────
         self.content_stack = QStackedWidget()
@@ -793,6 +833,11 @@ class ChatPopup(QWidget):
         bubble_w = max(220, int(self.width() * 0.72))
         for b in self._bubbles:
             b.setMaximumWidth(bubble_w)
+        # The refusal card covers the panel at whatever size the panel is now;
+        # a stale geometry would leave a strip of live chat beside it.
+        overlay = getattr(self, "block_overlay", None)
+        if overlay is not None:
+            overlay.setGeometry(self.panel.rect())
         super().resizeEvent(event)
 
     # ─────────────────────────────────────────── positioning ───────
@@ -1103,14 +1148,22 @@ class ChatPopup(QWidget):
             return
         self._hide_empty_state()
         self.input_field.clear()
-        self._add_bubble(text, is_user=True)
+        # record=False, and this is a privacy decision, not a tidy-up.
+        # `_record_message` writes straight into ~/.foxy_audit/chat_history.json,
+        # which is CLEARTEXT ON DISK — so recording here would persist a prompt
+        # the guard is about to refuse, while the refusal card says the text
+        # never left this machine. The turn is recorded once the verdict is
+        # known, in `_on_ai_success`, and a blocked prompt is never recorded.
+        self._add_bubble(text, is_user=True, record=False)
 
         # Handle "open <path>" locally
         result = self._try_open_path(text)
         if result is not None:
+            self._record_message(text, is_user=True)   # a local command, not a prompt
             self._add_bubble(result, is_user=False)
             return
 
+        self._pending_prompt = text
         self.input_field.setEnabled(False)
         self.send_btn.setEnabled(False)
         self._show_typing_indicator()
@@ -1118,7 +1171,7 @@ class ChatPopup(QWidget):
         # Small realistic delay before dispatching to AI
         QTimer.singleShot(400, lambda: self._dispatch_ai(text))
 
-    def _dispatch_ai(self, text: str):
+    def _dispatch_ai(self, text: str, mode: str | None = None):
         self._history.append({"role": "user", "content": text})
         # Kill any previous worker that's somehow still alive
         if self._ai_worker and self._ai_worker.isRunning():
@@ -1126,20 +1179,98 @@ class ChatPopup(QWidget):
             self._ai_worker.wait(400)
 
         self._ai_worker = _AICallWorker(
-            list(self._history), FOX_SYSTEM_PROMPT, self.settings, self)
+            list(self._history), FOX_SYSTEM_PROMPT, self.settings, self,
+            policy_tag=self.settings.guard_policy(),
+            mode=mode or self.settings.guard_mode())
         self._ai_worker.succeeded.connect(self._on_ai_success)
         self._ai_worker.failed.connect(self._on_ai_failure)
         self._ai_worker.start()
 
-    def _on_ai_success(self, reply: str):
+    def _on_ai_success(self, result: dict):
+        """One verdict, rendered. The UI decides nothing about it."""
         self._remove_typing_indicator()
+        prompt = self._pending_prompt
+
+        if foxy_guard.blocked(result):
+            # No assistant bubble: there is no answer, and writing a line of
+            # chat here would be the product telling a small lie about what
+            # happened. The receipt is the reply.
+            #
+            # The prompt is NOT recorded either — see send_message.
+            self._history = self._history[:-1]      # drop it from the model context too
+            self._add_receipt(result, prompt)
+            self._show_block(result, prompt)
+            return
+
+        self._record_message(prompt, is_user=True)
+        reply = result.get("response", "")
         self._history.append({"role": "assistant", "content": reply})
         self._history = self._history[-20:]  # rolling window — no memory leak
         self._add_bubble(reply, is_user=False)
+        self._add_receipt(result, prompt)
         self._re_enable_input()
+
+    # ── the guard's own surfaces ───────────────────────────────────
+    def _add_receipt(self, result: dict, prompt: str):
+        card = GuardReceipt(result, prompt)
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, card)
+        QTimer.singleShot(30, self._scroll_to_bottom)
+
+    def _show_block(self, result: dict, prompt: str):
+        """Raise the refusal card AND take the input out of service.
+
+        ⚠ THE INPUT MUST BE LEFT DISABLED. It was re-enabled here at first,
+        under an opaque overlay: the field kept the caret, so a person could
+        type a second prompt and press Enter — completing a whole turn — while
+        the card in front of them said the last one was blocked. The overlay
+        takes focus itself so Escape reaches it; `_re_enable_input` runs when
+        the card is dismissed, and only then.
+        """
+        self.input_field.setEnabled(False)
+        self.send_btn.setEnabled(False)
+        self.block_overlay.show_for(
+            result,
+            can_redact=foxy_guard.would_redaction_change(prompt, result["policy"]))
+
+    def _edit_blocked_prompt(self):
+        self._re_enable_input()
+        self.input_field.setText(self._pending_prompt)
+        self.input_field.setFocus()
+
+    def _retry_redacted(self):
+        if not self._pending_prompt:
+            self._re_enable_input()
+            return
+        self.settings.set_guard_mode("redact")
+        self._refresh_guard_strip()
+        self._show_typing_indicator()
+        self._dispatch_ai(self._pending_prompt, mode="redact")
+
+    def _refresh_guard_strip(self):
+        self.guard_strip.update_state(
+            policy_tag=self.settings.guard_policy(),
+            mode=self.settings.guard_mode(),
+            endpoint=self.settings.backend_url(),
+            has_key=bool(self.settings.org_api_key()),
+            available=foxy_guard.SDK_AVAILABLE)
+
+    def _open_guard_settings(self):
+        """The strip opens Settings on the Foxy Audit tab — where the org API
+        key already lives. One key, one place."""
+        from settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self.settings, self)
+        dlg.settings_saved.connect(self._refresh_guard_strip)
+        dlg.show_foxy_tab()
+        dlg.exec()
+        self._refresh_guard_strip()
 
     def _on_ai_failure(self, _err: str):
         self._remove_typing_indicator()
+        # The prompt was allowed — it is the provider that failed — so the turn
+        # is recorded like any other. Without this the session would hold a
+        # reply with no question in front of it.
+        if self._pending_prompt:
+            self._record_message(self._pending_prompt, is_user=True)
         fallback = (
             "(Can't reach the AI backend right now — "
             "set your key in Settings › AI Brain.)"

@@ -47,6 +47,7 @@ from foxy_tokens import matte_tokens as _matte_tokens
 from clay_chat_popup import GradientText, _IconButton
 import window_tracker
 import ai_providers
+import foxy_guard
 
 # Ink for text sitting ON the accent — the tab pill, Save, and the two hover
 # states. This used to be picked by `is_dark(acc, 140)`, a crude luminance test
@@ -766,6 +767,14 @@ class SettingsDialog(QDialog):
         self._key_field.setPlaceholderText(
             "Not required for local models" if is_local else "sk-… / sk-ant-…"
         )
+        # `mock` runs in-process: there is no endpoint to reach and no model to
+        # name. Leaving the URL box live invites someone to fill it in and
+        # wonder why nothing uses it.
+        in_process = provider == "mock"
+        self._url_field.setEnabled(not in_process)
+        self._model_field.setEnabled(not in_process)
+        if in_process:
+            self._url_field.setPlaceholderText("Runs in this app — no endpoint")
 
     def _test_connection(self):
         if self._conn_worker and self._conn_worker.isRunning():
@@ -1180,6 +1189,31 @@ class SettingsDialog(QDialog):
         self._backend_url_field.setPlaceholderText("https://app.foxyaudit.tech")
         layout.addWidget(self._make_field_row("Backend URL", self._backend_url_field))
 
+        # ── the copilot's own guard ──
+        # Chosen, never guessed: hipaa and gdpr run the same detector and differ
+        # only in whether a finding is filed as phi or pii, so nothing in a
+        # prompt can decide between them. See foxy_guard.POLICY_TAGS.
+        self._guard_policy_combo = QComboBox()
+        for tag in foxy_guard.POLICY_TAGS:
+            self._guard_policy_combo.addItem(
+                f"{tag} — {foxy_guard.POLICY_BLURB[tag]}", tag)
+        current = self.settings.guard_policy()
+        self._guard_policy_combo.setCurrentIndex(
+            foxy_guard.POLICY_TAGS.index(current)
+            if current in foxy_guard.POLICY_TAGS else 0)
+        layout.addWidget(self._make_field_row("Chat policy", self._guard_policy_combo))
+
+        self._guard_mode_combo = QComboBox()
+        for mode, blurb in (("observe", "record only"),
+                            ("block", "stop it before the model"),
+                            ("redact", "scrub it, then send")):
+            self._guard_mode_combo.addItem(f"{mode} — {blurb}", mode)
+        modes = [m for m, _b in (("observe", ""), ("block", ""), ("redact", ""))]
+        self._guard_mode_combo.setCurrentIndex(
+            modes.index(self.settings.guard_mode())
+            if self.settings.guard_mode() in modes else 1)
+        layout.addWidget(self._make_field_row("Chat mode", self._guard_mode_combo))
+
         # Test button + status label
         test_row = QHBoxLayout()
         self._foxy_test_btn = QPushButton("Test Backend")
@@ -1309,6 +1343,8 @@ class SettingsDialog(QDialog):
         if not self.settings.set_org_api_key(self._org_key_field.text().strip()):
             failed.append("org API key")
         self.settings.set_backend_url(self._backend_url_field.text().strip())
+        self.settings.set_guard_policy(self._guard_policy_combo.currentData())
+        self.settings.set_guard_mode(self._guard_mode_combo.currentData())
 
         if failed:
             self._show_secret_error(failed)
@@ -1324,6 +1360,16 @@ class SettingsDialog(QDialog):
         self._foxy_test_status.setText(
             f"✗ Couldn't store the {what} in the OS keychain — not saved.")
         self._tab_bar._select(self._foxy_tab_index)   # surface it with the message
+        self._stack.setCurrentIndex(self._foxy_tab_index)
+
+    def show_foxy_tab(self):
+        """Open on the Foxy Audit tab — where the org API key already lives.
+
+        The chat's guard strip calls this instead of carrying a second key
+        field. One key, one place: a window with its own copy of a credential
+        input is a window that can disagree with Settings about what the key is.
+        """
+        self._tab_bar._select(self._foxy_tab_index)
         self._stack.setCurrentIndex(self._foxy_tab_index)
 
     def done(self, result: int):
