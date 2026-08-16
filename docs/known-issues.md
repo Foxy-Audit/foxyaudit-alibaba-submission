@@ -7,6 +7,13 @@ so that "we already know" is checkable by the next person to trip over it.
 An entry leaves this file only when the defect is fixed, and the fix cites the
 number.
 
+
+**Closed:** **#220** (`explain()` never checked a row's recorded
+`ruleset_hash`) was fixed in 1.9.0 — S9. `explain()` re-hashes the definition it
+loads and refuses with the status `ruleset_mismatch` when it disagrees with what
+the row recorded, and `ExplainResult` carries `ruleset_verified` beside
+`commitment_verified`. Guards, including the hand-edited-registry re-break, are
+in `sdk/tests/test_explain_verifies_the_ruleset.py`.
 ---
 
 ## #219 — a stray separated digit in front of a card number breaks detection
@@ -98,32 +105,6 @@ on anything currently written.
    whenever a documentation sentence is added or removed. That is intentional —
    a floor was what let a regression through in S8f — but it is friction, and it
    is worth knowing before someone widens it back to `>=`.
-
----
-
-## #220 — `explain()` never checks a row's recorded `ruleset_hash`
-
-**Status:** open · **Found:** 1.9.0 review (S8e)
-
-`introspect.explain()` reads `ruleset_version` from a row, loads that frozen
-definition, and replays it. It never computes `ruleset.hash_of(definition)` and
-compares it against the `ruleset_hash` the row also recorded.
-
-**Consequence.** A registry edited in place — a frozen module changed after
-publication, a partial upgrade, a backported definition — replays as though
-nothing happened. The two provenance keys are written together precisely so the
-second can verify the first, and nothing does.
-
-This is the check that would have caught 2026.08.3 being regenerated in place
-during 1.9.0's review. That was safe only because the version was unpublished;
-after the 1.9.0 tag it would not be, and nothing would notice.
-
-**Shape of the fix.** In `explain()`, after `ruleset.load(version)`: if the row
-carries `ruleset_hash` and it does not equal `hash_of` the loaded definition,
-return a new outcome rather than replaying — the honest answer is "this build's
-copy of that ruleset is not the one that wrote this row". Needs a decision about
-rows written before `ruleset_hash` existed (they carry neither key, so they
-already take the `predates_provenance` path).
 
 ---
 

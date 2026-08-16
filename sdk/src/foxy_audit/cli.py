@@ -177,7 +177,15 @@ def _explain(args) -> int:
     mark = _OK if result.ok else _X
     print(f"{mark} {result.message}")
     if result.ruleset_version:
-        print(f"  ruleset   : {result.ruleset_version}")
+        # ⚠ THE RULESET LINE SAYS WHETHER IT WAS VERIFIED, not only which one it
+        # was. `commitment: verified` has always printed; the ruleset's own
+        # digest was recorded on the row, parsed into the result, and shown
+        # NOWHERE — so a reader could not tell a confirmed replay from an
+        # unconfirmed one. The `ruleset_mismatch` status renders through
+        # `result.message` like every other status, but "which rules, and are
+        # they the ones that ran" is a standing question, not only a failure.
+        state = "verified" if result.ruleset_verified else "NOT VERIFIED"
+        print(f"  ruleset   : {result.ruleset_version} ({state})")
     print(f"  commitment: {'verified' if result.commitment_verified else 'not verified'}")
     for match in result.matches:
         print(f"  {_ARROW} {match.rule_id}  [{match.start}:{match.end}]")

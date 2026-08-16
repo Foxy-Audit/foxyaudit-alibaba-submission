@@ -13,15 +13,20 @@ made to lie. THE 1.9.0 TAG ENDS THAT. From the moment it is cut, this file is
 immutable like 2026.08.1 and 2026.08.2 before it, and any rule change — however
 small, however obviously a fix — mints 2026.08.4.
 
-The check that would have caught an in-place edit does not exist yet, and it is
-worth stating in full HERE rather than pointing anywhere, because this module
-remains in the registry forever and a pointer outlives whatever it pointed at:
+The check that catches an in-place edit now EXISTS, and it is worth stating in
+full HERE rather than pointing anywhere, because this module remains in the
+registry forever and a pointer outlives whatever it pointed at:
 
-    SDK #220 — explain() loads the definition a row NAMES but never compares the
-    row's recorded `ruleset_hash` against `hash_of()` of what it loaded. The two
-    provenance keys are written together precisely so the second can verify the
-    first, and nothing does, so a silently edited registry replays as though
-    nothing happened.
+    SDK #220, fixed in 1.9.0 — explain() loads the definition a row NAMES, then
+    re-hashes it and compares that digest against the `ruleset_hash` the row
+    also recorded. The two provenance keys are written together precisely so the
+    second can verify the first. On a disagreement it refuses, with the status
+    `ruleset_mismatch`, rather than replaying rules that did not run.
+
+    Before that fix nothing compared them, so a silently edited registry
+    replayed as though nothing had happened. That is why the three in-place
+    regenerations of THIS module were survivable only while it was unpublished,
+    and why the paragraph above is now enforced by a test rather than by trust.
 
 There is no public issue tracker to cite: the repository is private, so any
 GitHub URL here would be a 404 on the PyPI page this text reaches.

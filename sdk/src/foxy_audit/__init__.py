@@ -32,11 +32,42 @@ from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 from .introspect import CheckResult, ExplainResult, check, explain
 
-# 1.9.0 — S8. Four defects where the guard said something that was not true.
+# 1.9.0 — S8/S9. Five defects where the guard said something that was not true.
 #
 # MINOR, and every item below is a BEHAVIOUR CHANGE rather than a bug fix in the
 # invisible sense. Read them before upgrading a deployment that runs
 # mode="block" or mode="redact"; mode="observe" (the default) is untouched.
+#
+#   #220 — explain() now VERIFIES the ruleset rather than only naming it.
+#     A guarded row records ruleset_version AND ruleset_hash, written together
+#     so the second can check the first. explain() loaded the definition by
+#     version NAME ALONE and never compared the digest, so `ruleset.load()`
+#     returned whatever the local module happened to contain — a hand-edit, a
+#     partial upgrade, a backported patch — and the replay described rules that
+#     never ran while presenting itself as authoritative.
+#
+#     It now re-hashes the loaded definition and REFUSES on a disagreement, with
+#     a new status `ruleset_mismatch`: same version name, different rules.
+#     Distinct from `unknown_ruleset` (this build does not carry the version)
+#     and from `hash_mismatch` (which is about the PROMPT). ExplainResult gains
+#     `ruleset_verified`, exactly parallel to `commitment_verified`, and
+#     `foxy explain` prints it on the ruleset line.
+#
+#     A row naming a version but recording NO hash is not refused: the version
+#     is known and the commitment matched, so the replay is still the best
+#     available answer. It is reported with ruleset_verified=False and a
+#     sentence saying the check could not run. No shipped SDK produces that
+#     shape — both keys landed together in 1.7.0 and provenance() returns both
+#     or neither — which the message says out loud.
+#
+#     NO WIRE CHANGE. The hash was already emitted, already allowlisted by the
+#     backend, already surviving into /v1/logs/export, already parsed into a
+#     result field. Reading it was the one step missing.
+#
+#     ⚠ The registry's "a published ruleset is IMMUTABLE" rule was enforced by a
+#     comment until now. 2026.08.3 was regenerated in place three times during
+#     this release's own review — defensible only while it was unpublished.
+#     This is the check that makes the rule observable after the tag.
 #
 #   #215 — pii._PHONE_RE / pii._CARD_CANDIDATE_RE OVER-BLOCKED.
 #     Their lookarounds excluded an adjacent DIGIT but not an adjacent LETTER or

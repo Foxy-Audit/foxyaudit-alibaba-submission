@@ -114,14 +114,22 @@ foxy explain --event-id 3f2a… --export logs.json --prompt-file prompt.txt
 It recomputes the commitment from your local key (and the salt sidecar, for a
 `hmac-sha256-salted` row), matches it against the row's `prompt_hash`, reads the
 `ruleset_version` that row recorded, loads **that frozen definition** — not
-today's rules — and replays it, showing which rule matched where.
+today's rules — **re-hashes it and checks that digest against the
+`ruleset_hash` the row also recorded** — and replays it, showing which rule
+matched where.
 
-Three answers are "I cannot", and it says so rather than guessing:
+That second check is what makes the first one mean anything. Loading by version
+*name* trusts your install's registry to be untouched; the row records a digest
+so you do not have to. `foxy explain` prints the outcome on the ruleset line —
+`2026.08.3 (verified)` — and `--json` carries it as `ruleset_verified`.
+
+Four answers are "I cannot", and it says so rather than guessing:
 
 | Situation | What it says |
 |---|---|
 | A salted row whose salt is not in the sidecar | The commitment **cannot be recomputed** — not a mismatch and not a pass. The salt lives only on your machine; Foxy never had it. |
 | A row naming a ruleset newer than your SDK | Upgrade `foxy-audit` to replay it. Replaying whichever rules this build happens to have would describe a different policy than the one that ran. |
+| A row whose `ruleset_hash` disagrees with your copy of that version | Same name, **different rules**. A published ruleset is immutable, so one of the two has been altered — your registry, or the row. It refuses rather than replaying rules that did not run. |
 | A row written before 1.7.0 | It names no ruleset. The commitment may verify, but the rules in force that day were not recorded, and it **will not guess**. |
 
 Reporting a missing salt as "no match" would be a false negative on the exact

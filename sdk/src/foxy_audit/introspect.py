@@ -33,8 +33,23 @@ recorded source text and flags. Replaying current rules against an old row and
 presenting the result as "what fired" would be the fabrication this whole line
 of work exists to remove.
 
-THE THREE ANSWERS THAT ARE "I CANNOT"
-=====================================
+AND THE ROW'S RULESET IS VERIFIED, NOT JUST NAMED
+=================================================
+A guarded row records TWO provenance keys, and they are written together for a
+reason: ``ruleset_version`` says which definition ran, and ``ruleset_hash`` is
+what lets a reader check that the copy in front of them IS that definition.
+Loading by name alone trusts this build's registry to be untouched — and
+``ruleset.load`` returns whatever the local module happens to contain, so a
+hand-edit, a partial upgrade or a backported patch would make the replay
+describe rules that never ran, and report it as authoritative.
+
+So the loaded definition is re-hashed and compared. The frozen registry's
+"never edit a published version" rule was, until this, enforced by a comment;
+this is the check that makes it observable at the point it matters. See
+``ruleset.py``'s "THE REGISTRY IS FROZEN, NOT CURRENT".
+
+THE FOUR ANSWERS THAT ARE "I CANNOT"
+====================================
 Each is a real answer, reported plainly, never a traceback and never a silent
 fallback:
 
@@ -45,7 +60,19 @@ fallback:
   ``unprovable``: could-not-run is its own answer.
 * ``unknown_ruleset`` — a row minted by a newer SDK than this one. Saying so
   beats replaying the wrong rules.
+* ``ruleset_mismatch`` — this build HAS that version name and the bytes under it
+  are not the ones the row was written against. Distinct from
+  ``unknown_ruleset`` (we do not have it) and from ``hash_mismatch`` (which is
+  about the PROMPT): here the registry itself is not what it claims to be, and
+  the replay would be confidently wrong rather than absent.
 * ``predates_provenance`` — a row written before 1.7.0, which names no ruleset.
+
+``ruleset_verified`` is a FIELD rather than a fifth status, exactly as
+``commitment_verified`` is. A row that names a version but records no hash is
+not a failure — the version is known and the commitment matched, so the replay
+is still the best available answer — but the answer is weaker, and the field
+plus a sentence in the message is how the reader learns that instead of being
+told nothing.
 """
 
 from __future__ import annotations
@@ -142,9 +169,10 @@ class Match:
         return out
 
 
-#: Every status :func:`explain` can return. Three of them are "I cannot".
+#: Every status :func:`explain` can return. Four of them are "I cannot".
 STATUSES = ("explained", "no_matches", "hash_mismatch", "row_not_found",
-            "salt_unavailable", "unknown_ruleset", "predates_provenance")
+            "salt_unavailable", "unknown_ruleset", "ruleset_mismatch",
+            "predates_provenance")
 
 
 @dataclass(frozen=True)
@@ -162,6 +190,14 @@ class ExplainResult:
     policy_tag: str = ""
     ruleset_version: str = ""
     commitment_verified: bool = False
+    #: Did the loaded definition hash to what the ROW recorded?
+    #:
+    #: False is not a failure — it is "the row named a version but no hash, so
+    #: the check could not run", which a row from any shipped SDK never does but
+    #: a hand-edited export can. A DISAGREEMENT is the ``ruleset_mismatch``
+    #: status instead, because then the replay would be wrong rather than
+    #: merely unconfirmed. Same shape as :attr:`commitment_verified`.
+    ruleset_verified: bool = False
     matches: list = field(default_factory=list)
 
     @property
@@ -181,6 +217,7 @@ class ExplainResult:
                 "event_id": self.event_id, "policy_tag": self.policy_tag,
                 "ruleset_version": self.ruleset_version,
                 "commitment_verified": self.commitment_verified,
+                "ruleset_verified": self.ruleset_verified,
                 "matches": [m.as_dict(include_text) for m in self.matches]}
 
 
@@ -402,6 +439,56 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             event_id=event_id, policy_tag=policy_tag,
             ruleset_version=str(version), commitment_verified=True)
 
+    # ── is the definition we loaded the one the row was written against? ─────
+    #
+    # ⚠ #220. Until this, `explain` loaded by VERSION NAME ALONE. The row records
+    # a hash precisely so a reader can check that the local copy of that version
+    # is the one that ran, and nothing read it — so a hand-edited, partially
+    # upgraded or backported registry produced a replay of the WRONG RULES,
+    # reported as authoritative.
+    #
+    # Not hypothetical: 2026.08.3 was regenerated in place three times during
+    # 1.9.0's review. That was safe only because it was unpublished, and the
+    # rule that makes it unsafe afterwards was a comment in a docstring.
+    recorded_hash = str(metadata.get("ruleset_hash") or "")
+    loaded_hash = ruleset.hash_of(definition)
+    if recorded_hash and recorded_hash != loaded_hash:
+        return ExplainResult(
+            "ruleset_mismatch",
+            f"Row {event_id} names ruleset {version!r} and records the digest "
+            f"{recorded_hash[:12]}…, but this build's copy of {version!r} hashes "
+            f"to {loaded_hash[:12]}…. Same name, DIFFERENT RULES. A published "
+            f"ruleset is immutable — rows in customers' chains name it — so one "
+            f"of the two has been altered: either this install's registry (a "
+            f"hand-edit, a partial upgrade, a backported patch) or the row's "
+            f"recorded digest. Replaying would describe rules that did not run, "
+            f"so this tool will not. The commitment MATCHED, so the prompt and "
+            f"the row do belong together; it is the rules that cannot be "
+            f"trusted.",
+            event_id=event_id, policy_tag=policy_tag,
+            ruleset_version=str(version), commitment_verified=True)
+
+    # A row can name a version and record no hash. No shipped SDK emits one
+    # without the other — both keys landed together in 1.7.0 and `provenance()`
+    # returns them as one dict or not at all — so this is a hand-edited export
+    # or a non-Foxy producer. It is NOT a refusal: the version is known and the
+    # commitment matched, so the replay is still the best available answer. What
+    # changes is that it is unconfirmed, which `ruleset_verified` and the closing
+    # sentence of the message both say out loud.
+    #
+    # ⚠ THE NOTE IS cp1252-SAFE, and that is not cosmetic. A first draft opened
+    # it with U+26A0 (the warning sign this file's own comments use freely).
+    # Comments are never printed; MESSAGES ARE, and a Windows console is cp1252 —
+    # `foxy explain` died with UnicodeEncodeError on that path, which is the tool
+    # failing to say anything at all. Guarded by
+    # test_every_explain_message_survives_a_cp1252_console.
+    ruleset_verified = bool(recorded_hash)
+    unverified_note = "" if ruleset_verified else (
+        f" NOTE: the row records no ruleset_hash, so this SDK could not confirm "
+        f"that its copy of {version!r} is the definition that actually ran. "
+        f"Every SDK from 1.7.0 records one; a row without it was not written by "
+        f"a released foxy-audit, or was edited after export.")
+
     try:
         matches = replay(definition, str(prompt), policy_tag)
     except UnknownValidator as unknown:
@@ -434,17 +521,24 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             + (f", while the row recorded {', '.join(recorded)}. That is worth "
                f"investigating: the row's rules and its own ruleset disagree."
                if recorded else ". The row recorded no rules either, so the two "
-                                "agree."),
+                                "agree.")
+            + unverified_note,
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True)
+            ruleset_version=str(version), commitment_verified=True,
+            ruleset_verified=ruleset_verified)
 
     return ExplainResult(
         "explained",
         f"Commitment verified against row {event_id}, and ruleset {version} "
-        f"matches {len(matches)} span(s) under policy {policy_tag!r}.",
+        f"— whose definition matches the digest the row recorded — matches "
+        f"{len(matches)} span(s) under policy {policy_tag!r}."
+        if ruleset_verified else
+        f"Commitment verified against row {event_id}, and ruleset {version} "
+        f"matches {len(matches)} span(s) under policy {policy_tag!r}."
+        + unverified_note,
         event_id=event_id, policy_tag=policy_tag,
         ruleset_version=str(version), commitment_verified=True,
-        matches=matches)
+        ruleset_verified=ruleset_verified, matches=matches)
 
 
 #: ``UnknownValidator`` is exported because ``replay`` is, and ``replay`` RAISES
