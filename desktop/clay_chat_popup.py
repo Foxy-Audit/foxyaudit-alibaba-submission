@@ -1143,6 +1143,13 @@ class ChatPopup(QWidget):
             self._typing_wrapper = None
 
     def send_message(self):
+        # A disabled field still HOLDS text, and still answers text() — the
+        # widget being greyed out only stops a person typing into it. So the
+        # invariant "no new turn while one is in flight or a refusal is on
+        # screen" is asserted here rather than left to depend on which widget
+        # happens to have focus.
+        if not self.input_field.isEnabled():
+            return
         text = self.input_field.text().strip()
         if not text:
             return

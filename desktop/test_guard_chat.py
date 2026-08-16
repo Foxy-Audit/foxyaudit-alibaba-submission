@@ -117,6 +117,47 @@ def test_the_window_builds_and_opens_headless(app, settings, history_file):
         host.deleteLater()
 
 
+def test_the_chat_modules_import_before_any_qapplication_exists():
+    """The exact shape of the crash, in the place it happened.
+
+    `glass_tokens()` -> `pick_font()` -> `QFontDatabase` segfaults when no
+    QApplication exists. Constructors may call it — by then the app is up — but
+    NOTHING at module level may. Re-broken by adding `_EAGER = glass_tokens()`
+    to guard_widgets: this subprocess then exits 139 instead of 0.
+    """
+    import subprocess
+    code = (
+        "import sys; sys.path.insert(0, r'%s');"
+        "from PyQt6.QtWidgets import QApplication;"
+        "assert QApplication.instance() is None;"
+        "import guard_widgets, clay_chat_popup;"
+        "assert QApplication.instance() is None, 'a module built a QApplication';"
+        "print('OK')" % HERE
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True)
+    assert out.returncode == 0, (
+        f"importing the chat before a QApplication exits {out.returncode}: "
+        + out.stderr.decode("utf-8", "replace")[-400:])
+
+
+def test_the_guard_never_adopts_an_exported_key(monkeypatch):
+    """`FoxyConfig.resolve` reads $FOXY_API_KEY when api_key is None, so a
+    developer with that variable exported would have this chat shipping while
+    the strip said "local only". Same defect as the one fixed in the demo."""
+    import foxy_guard
+    monkeypatch.setenv("FOXY_API_KEY", "foxy_sk_exported_elsewhere")
+    foxy_guard.reset_clients()
+    try:
+        result = foxy_guard.run("What is the capital of France?", lambda t: "Paris",
+                                policy_tag="default", mode="block", api_key="")
+        client = foxy_guard._client("", "", "block")
+        assert client.cfg.api_key == "", "the chat adopted an ambient key"
+        assert client.cfg.enabled is False
+        assert result["shipped"] is False, "an event was shipped from a keyless chat"
+    finally:
+        foxy_guard.reset_clients()
+
+
 def test_the_guard_module_needs_no_qapplication():
     """foxy_guard must stay importable and runnable with no Qt at all.
 
@@ -156,8 +197,34 @@ def test_the_input_stays_dead_under_the_refusal_card(popup):
     assert not popup.input_field.isEnabled(), \
         "the input is live under the refusal card"
     assert not popup.send_btn.isEnabled(), "send is live under the refusal card"
-    assert not popup.input_field.hasFocus(), \
-        "focus was stolen back to the hidden input, so Escape never reaches the card"
+
+
+def test_a_second_turn_cannot_complete_behind_the_card(popup):
+    """The behavioural version of the test above, and the one that matters.
+
+    Disabling two widgets is an implementation; what was actually wrong is that
+    a person could send another prompt while looking at a refusal. This drives
+    the real entry point — `send_message` — and asserts nothing happened.
+    """
+    _send(popup, "Patient SSN is 123-45-6789.")
+    bubbles_before = len(popup._bubbles)
+
+    popup.input_field.setText("and what about this one")
+    popup.send_message()
+
+    assert len(popup._bubbles) == bubbles_before, \
+        "a second turn started while the refusal card was up"
+
+
+def test_the_card_holds_focus_so_escape_can_reach_it(popup):
+    """Escape is only a dismissal if the card is what receives it."""
+    _send(popup, "Patient SSN is 123-45-6789.")
+
+    # focusWidget(), not hasFocus(): hasFocus() also requires the WINDOW to be
+    # active, which it is for a real user and is not under a headless runner.
+    # What matters is which widget this window will deliver a key press to.
+    assert popup.focusWidget() is popup.block_overlay, \
+        "the card never took focus — Escape goes to whatever did"
 
 
 def test_dismissing_the_card_gives_the_input_back(popup):
@@ -173,8 +240,12 @@ def test_escape_closes_the_refusal_card(popup, app):
     from PyQt6.QtCore import QEvent
     _send(popup, "Patient SSN is 123-45-6789.")
 
-    popup.block_overlay.keyPressEvent(
-        QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
+    # Delivered through Qt to whatever holds focus, NOT called on the overlay
+    # directly: calling keyPressEvent by hand proves the handler works while
+    # saying nothing about whether the key would ever arrive.
+    app.sendEvent(popup.focusWidget(),
+                  QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                            Qt.KeyboardModifier.NoModifier))
 
     assert popup.block_overlay.isHidden(), "Escape did not dismiss the card"
 
