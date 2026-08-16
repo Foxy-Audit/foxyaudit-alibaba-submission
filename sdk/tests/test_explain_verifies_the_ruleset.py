@@ -477,19 +477,36 @@ def test_the_three_CLI_renderings_are_actually_distinct():
 
     Asserting each case shows ITS fragment cannot catch two cases sharing one —
     which is exactly the defect, "NOT VERIFIED" for both a tamper and a wrong
-    prompt. So the strings themselves are compared, and the flattened wording is
-    required to be gone.
+    prompt.
+
+    ⚠ THE STRINGS ARE EXTRACTED FROM THE CODE, NOT LISTED HERE. A first cut
+    wrote them out as a literal and asserted that literal had three distinct
+    members — comparing a hardcoded list to ITSELF, green by construction, and
+    unable to fail however the CLI was changed. Collapsing two states in
+    ``cli._explain`` now fails here, which is the only thing this test is for.
     """
     import inspect
+    import re
     from foxy_audit import cli
-    # ⚠ COMMENTS SHADOW A SELECTOR. The first cut grepped the raw source for
+    # ⚠ COMMENTS SHADOW A SELECTOR. An earlier cut grepped the raw source for
     # "NOT VERIFIED" and failed — on the comment ABOVE the fix explaining why
     # that wording was wrong. Only executable lines are searched.
     source = " ".join(line for line in inspect.getsource(cli._explain).splitlines()
                       if not line.lstrip().startswith("#"))
-    rendered = ["definition verified", "DEFINITION ALTERED", "definition not checked"]
-    assert all(r in source for r in rendered), source
-    assert len({r.lower() for r in rendered}) == 3
+
+    rendered = re.findall(r'state = "([^"]+)"', source)
+    assert len(rendered) == 3, (
+        f"expected three renderings of the ruleset state, found {rendered}")
+    assert len(set(rendered)) == 3, (
+        f"two states share one rendering, so a reader cannot tell them apart: "
+        f"{rendered}")
+
+    # Each says which of the three it is, and none reuses the flattened wording
+    # that could not distinguish an altered registry from an unchecked one.
+    assert all("definition" in r.lower() for r in rendered), rendered
+    assert {"verified", "altered", "checked"} == {
+        next(w for w in ("verified", "altered", "checked") if w in r.lower())
+        for r in rendered}, rendered
     assert "NOT VERIFIED" not in source
 
 
@@ -606,21 +623,46 @@ def test_the_shipped_version_strings_agree_and_are_not_the_published_1_9_0():
             "no root VERSION and no sdist layout either — the anchor is wrong"
 
 
-def test_nothing_shipped_still_says_220_was_fixed_in_1_9_0():
+def test_no_shipped_file_credits_220_to_the_wrong_release():
     """The claim that would be false on every install, hunted by scan.
 
-    A FROZEN module's docstring said it, and frozen modules ship in the wheel
-    forever. Correcting that prose is allowed — it reaches no digest, which is
-    the rule ``ruleset.py`` now states in full — but only if it is corrected
-    everywhere, and a scan is how "everywhere" stops being a hope.
+    A FROZEN module's docstring carries this claim, and frozen modules ship in
+    the wheel forever. Editing that prose is allowed — it reaches no digest,
+    which is the rule ``ruleset.py`` now states in full — but only if it is
+    right everywhere, and a scan is how "everywhere" stops being a hope.
+
+    ⚠ TWO THINGS THIS GUARD LEARNED THE HARD WAY.
+
+    LINES ARE NOT SENTENCES. The first cut required ``#220`` and ``1.9.0`` on
+    the SAME LINE — and the prose this very branch wrote wraps that pair across
+    two lines, so a future writer wrapping the false claim the same way would
+    reintroduce it GREEN, while reflowing an honest correction onto one line
+    would trip it falsely. Whitespace is normalised across the whole file first,
+    so the wrap is irrelevant.
+
+    IT ASKS A POSITIVE QUESTION. Not "does 1.9.0 appear near #220" — a module
+    that honestly RECOUNTS the near miss says both, and blocklisting the wrong
+    answer would forbid the true sentence. What is required instead is that
+    every claim of the form "#220 … fixed in <version>" names THIS release. That
+    keeps working at 1.11.0 without an edit, and it does not police history.
     """
+    import re
     from pathlib import Path
     from foxy_audit import __version__
 
+    # The claim, in either order, across at most ~120 characters of any kind —
+    # newlines included, since they are already spaces by the time this runs.
+    claim = re.compile(r"#220.{0,120}?fixed in (\d+\.\d+\.\d+)"
+                       r"|fixed in (\d+\.\d+\.\d+).{0,120}?#220")
+
     src = Path(__file__).resolve().parents[1] / "src"
-    offenders = [f"{path.name}: {line.strip()}"
-                 for path in sorted(src.rglob("*.py"))
-                 for line in path.read_text(encoding="utf-8").splitlines()
-                 if "#220" in line and "1.9.0" in line]
-    assert not offenders, "#220 shipped in %s, not 1.9.0:\n  %s" % (
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        flat = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+        for found in claim.finditer(flat):
+            named = found.group(1) or found.group(2)
+            if named != __version__:
+                offenders.append(f"{path.name}: ...{found.group(0).strip()}...")
+
+    assert not offenders, "#220 shipped in %s:\n  %s" % (
         __version__, "\n  ".join(offenders))

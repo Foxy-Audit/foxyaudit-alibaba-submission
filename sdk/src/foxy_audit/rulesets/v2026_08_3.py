@@ -13,16 +13,24 @@ made to lie. THE 1.9.0 TAG ENDED THAT. From the moment it was cut, DEFINITION
 below is immutable like 2026.08.1 and 2026.08.2 before it, and any rule change —
 however small, however obviously a fix — mints 2026.08.4.
 
-⚠ THE PROSE YOU ARE READING WAS CORRECTED AFTER THAT TAG, and that is the rule
-working rather than breaking. It named the wrong release for #220 below —
-1.9.0, which shipped from a commit that does not contain that fix — so on every
-1.9.0 install the sentence was FALSE — in the wheel, in the module whose whole job is to be trustworthy.
+⚠ THE PROSE YOU ARE READING WAS EDITED AFTER THAT TAG, and that is the rule
+working rather than breaking. v1.9.0 shipped this module saying the check below
+"does not exist yet" and listing #220 as an OPEN defect, which was true when the
+tag was cut. 1.10.0 built the check, so the paragraph reporting it is written
+here now — an edit to a module that was already published.
+
 What is frozen is DEFINITION, the bytes that reach hash_of(); a docstring reaches
-no hash, so correcting one moves no row's meaning. The digest below is unchanged
-and the pinned-digest test proves it. See ruleset.py, "THE DEFINITION IS
-IMMUTABLE. THE FILE IS NOT." One consequence, stated so nobody reports it as
-tampering: the 1.9.0 wheel's copy of this file is not byte-identical to this one,
-and both hash the same.
+no hash, so editing one moves no row's meaning. The digest below is unchanged and
+the pinned-digest test proves it. See ruleset.py, "THE DEFINITION IS IMMUTABLE.
+THE FILE IS NOT." One consequence, stated so nobody reports it as tampering: the
+v1.9.0 wheel's copy of this file is NOT byte-identical to this one — its
+docstring describes #220 as open — and both hash to the same digest.
+
+A near miss worth recording, since this module's subject is being trustworthy: a
+draft of the paragraph above named 1.9.0 as the release that fixed #220. That was
+wrong — 1.9.0 predates the fix — and it was corrected on the branch, before any
+release carried it. No published wheel ever contained that claim; `git show
+v1.9.0:` is how to confirm it rather than take anyone's word.
 
 The check that catches an in-place edit now EXISTS, and it is worth stating in
 full HERE rather than pointing anywhere, because this module remains in the
