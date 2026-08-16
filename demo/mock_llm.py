@@ -445,7 +445,8 @@ def main() -> int:
     parser.add_argument("--show-wire", action="store_true",
                         help="print the exact payload that left the machine, beside the prompt.")
     parser.add_argument("--desktop-ping", action="store_true",
-                        help="also fire the local UDP ping so the desktop fox reacts.")
+                        help="accepted and ignored: the loopback ping to the desktop fox "
+                             "is always on now, on every path including --live.")
     args = parser.parse_args()
 
     if args.live:
@@ -455,7 +456,14 @@ def main() -> int:
                   "    docker compose logs foxy-seed | findstr FOXY_API_KEY\n"
                   "then  set FOXY_API_KEY=foxy_sk_...   (or pass --api-key)")
             return 2
-        enable_live(args.api_key, args.endpoint, args.desktop_ping)
+        # ⚠ desktop_ping=True, NOT args.desktop_ping. `--live` rebuilds the
+        # module client, and passing the flag's default (False) here switched
+        # the ping back OFF — after `wake_the_fox()` had already started the app
+        # and printed "blocks will raise its card". The demo was telling the
+        # person something and then quietly making it false, on the one path
+        # that gets shown to a judge. The ping is loopback and free; there is no
+        # version of --live that wants it off.
+        enable_live(args.api_key, args.endpoint, True)
         print(f"LIVE — shipping to {args.endpoint}")
         print("  the prompt text stays here; only hashes and labels travel.")
         _report_sdk_version()

@@ -146,15 +146,49 @@ def test_a_second_block_drops_the_previous_receipt(alert):
         "the new refusal is showing the previous one's evidence"
 
 
-def test_a_thin_payload_renders_no_empty_evidence_rows():
+def test_a_thin_payload_renders_no_empty_evidence_rows(app):
     """A row per missing field would read as "the commitment is empty", which is
-    a different and untrue statement from "this sender did not tell us"."""
-    from guard_widgets import GuardReceipt
-    rows = dict(GuardReceipt.build_rows(dict(SDK_PING)))
+    a different and untrue statement from "this sender did not tell us".
 
-    assert "prompt_hash" not in rows
-    assert "llm called?" not in rows
-    assert rows["rules"] == "phi.ssn_pattern"
+    ⚠ THROUGH THE WIDGET, NOT THE STATICMETHOD. The first version of this called
+    `build_rows(SDK_PING)` directly and passed while the shipped path was
+    broken: the widget handed `build_rows` its NORMALISED copy, so "did the
+    sender supply this?" was always true and every default printed. A test that
+    calls a helper the production caller does not call measures nothing about
+    the product.
+    """
+    from guard_widgets import GuardReceipt
+    receipt = GuardReceipt(dict(SDK_PING))
+    try:
+        rows = dict(receipt.rows)
+        assert "prompt_hash" not in rows
+        assert "llm called?" not in rows
+        assert "what left this machine" not in rows
+        assert rows["rules"] == "phi.ssn_pattern"
+    finally:
+        receipt.deleteLater()
+
+
+def test_the_receipt_never_contradicts_the_card_above_it(app):
+    """The shape the defect actually took on screen.
+
+    A response block says the model ran. With `llm_called` defaulted in, the
+    receipt printed "NO (blocked before the model ran)" directly underneath it.
+    """
+    from guard_widgets import BlockAlert, GuardReceipt
+    ping = dict(SDK_PING, decision="blocked_response")
+    alert = BlockAlert()
+    try:
+        alert.show_for(ping)
+        assert "did reach the model" in alert.body.text()
+
+        rows = dict(GuardReceipt(ping).rows)
+        assert "llm called?" not in rows, (
+            "the receipt answered a question the sender never answered, and "
+            "answered it the opposite way to the card")
+    finally:
+        alert.close()
+        alert.deleteLater()
 
 
 def test_the_egress_line_does_not_say_the_opposite_of_the_truth():
@@ -333,8 +367,11 @@ def _fox_init():
 
 def test_the_app_raises_the_card_on_a_breach_ping():
     """The wiring in the shipped class, not only in this file's fixtures."""
-    assert "_show_block_alert" in _connect_targets(_fox_init(), "sdk_bridge",
-                                                   "policy_breach")
+    import ast
+    entry = next(n for n in ast.walk(ast.parse((HERE / "omni_fox.py").read_text(
+        encoding="utf-8")))
+        if isinstance(n, ast.FunctionDef) and n.name == "_on_sdk_breach")
+    assert "_show_block_alert" in ast.unparse(entry)
 
 
 def test_the_app_routes_the_richer_payload_too():
@@ -342,31 +379,85 @@ def test_the_app_routes_the_richer_payload_too():
                                                    "breach_detail")
 
 
+def test_the_bridge_has_exactly_one_entry_point():
+    """⚠ THE ORDER BUG, MADE UNREACHABLE RATHER THAN GUARDED.
+
+    `policy_breach` used to be connected to two slots, and Qt runs them in
+    connection order — so the "is the card up?" guard inside the first asked
+    before the second had built it. Every session's FIRST refusal opened the
+    chat AND the card; later ones did too whenever the card had been dismissed.
+
+    The previous test checked STATEMENT order inside one function, which is why
+    it passed while the defect shipped. What matters is the wiring: one slot, so
+    there is no order for anyone to get wrong.
+    """
+    targets = _connect_targets(_fox_init(), "sdk_bridge", "policy_breach")
+    assert targets == ["_on_sdk_breach"], (
+        f"the bridge fans out to {targets} — whether two windows open now "
+        f"depends on which connect() line was written first")
+
+
 def test_one_refusal_does_not_open_two_windows():
-    """Observed in the real run: the card AND the chat popup both came up for a
-    single block — "Foxy Audit — prompt blocked" and "Foxy Audit — Copilot"
-    side by side. The bubble is still written either way; only the automatic
-    open is suppressed, and only while the card is actually showing."""
+    """The card goes up, and the chat is told so as a FACT about this event
+    rather than by reading a widget's current state."""
     import ast
     src = (HERE / "omni_fox.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_on_policy_breach")
+    entry = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "_on_sdk_breach")
+    handler = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_on_policy_breach")
 
-    # The guard must sit BEFORE the open_chat call, inside this function.
-    body = ast.unparse(fn)
-    assert "block_alert" in body, "nothing checks whether the card is up"
-    assert body.index("isVisible") < body.index("open_chat"), \
-        "the chat opens before anything checks for the card"
-    # …and the bubble must still be written, so the detail is not lost.
-    assert "_add_bubble" in body
+    entry_src = ast.unparse(entry)
+    assert entry_src.index("_show_block_alert") < entry_src.index("_on_policy_breach"), \
+        "the companion reaction runs before the card it is told about exists"
+    assert "card_shown=True" in entry_src
+
+    assert any(a.arg == "card_shown" for a in handler.args.args), \
+        "the chat handler cannot be told a card is already up"
+    body = ast.unparse(handler)
+
+    # The decision reads the EVENT'S FACT, never a widget's current state. The
+    # earlier version asked `block_alert.isVisible()`, which answers about the
+    # PREVIOUS refusal: None on the first of the session, and stale (hidden)
+    # afterwards. An index check on "card_shown" was satisfied by the parameter
+    # name in the signature, so it stayed green through exactly that mutation.
+    assert "if card_shown:" in body, "the guard is not the fact it was handed"
+    assert "isVisible" not in body, \
+        "the chat decision is reading widget state again"
+    assert "block_alert" not in body, \
+        "the chat handler is inspecting the card instead of being told"
+    assert body.index("if card_shown:") < body.index("open_chat"), \
+        "the chat opens before anything checks"
+    assert "_add_bubble" in body, "the detail bubble was dropped with the popup"
+
+
+def test_a_poller_breach_still_opens_the_chat():
+    """The suppression is for the card's event only. A backend-graded breach
+    has no card, and the chat is the only place it is ever explained."""
+    import ast
+    src = (HERE / "omni_fox.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    handler = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_on_policy_breach")
+    default = handler.args.defaults[-1]
+    assert default.value is False, \
+        "card_shown defaults to True, so a poller breach would be silenced too"
+
+    connects = [ast.unparse(n) for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and "breach_detected.connect" in ast.unparse(n)]
+    assert any("_on_policy_breach" in c for c in connects), \
+        "the poller no longer reaches the chat at all"
 
 
 def test_the_flash_survived_the_card():
-    """The card is an addition. The fox's own reaction — and the console row —
-    must still be connected, or a nicer popup will have quietly replaced them."""
-    targets = _connect_targets(_fox_init(), "sdk_bridge", "policy_breach")
-    assert "_on_policy_breach" in targets, \
+    """The card is an addition. The fox's own reaction — flash, toast, tally —
+    must still happen, or a nicer popup will have quietly replaced it."""
+    import ast
+    entry = next(n for n in ast.walk(ast.parse((HERE / "omni_fox.py").read_text(
+        encoding="utf-8")))
+        if isinstance(n, ast.FunctionDef) and n.name == "_on_sdk_breach")
+    assert "_on_policy_breach" in ast.unparse(entry), \
         "the companion reaction (flash, toast, tally) was dropped"
 
 
@@ -411,6 +502,30 @@ def test_a_block_in_the_demo_actually_reaches_the_loopback():
         "the SDK's own block ping never left the demo process"
     assert "policy_breach_detail" in events, \
         "the demo did not follow up with the read-out it already holds"
+
+
+def test_live_does_not_switch_off_the_ping_it_just_promised(monkeypatch):
+    """⚠ `--live` REBUILDS THE CLIENT, and it used to hand `enable_live` the
+    `--desktop-ping` flag, whose default is False — switching the ping back off
+    AFTER `wake_the_fox()` had started the app and printed "blocks will raise
+    its card". The demo made a promise on the one path a judge is shown, then
+    quietly broke it."""
+    demo = _demo()
+    seen = {}
+    monkeypatch.setattr(demo, "enable_live",
+                        lambda key, endpoint, ping: seen.update(ping=ping))
+    monkeypatch.setattr(demo, "run_scenarios", lambda names: 0)
+    monkeypatch.setattr(demo, "_report_live", lambda rc: rc)
+    monkeypatch.setattr(sys, "argv",
+                        ["mock_llm.py", "--live", "--api-key", "foxy_sk_x",
+                         "--scenario", "benign"])
+    try:
+        demo.main()
+    finally:
+        sys.modules.pop("mock_llm", None)
+
+    assert seen.get("ping") is True, \
+        "--live rebuilt the client with the desktop ping disabled"
 
 
 def test_the_demo_detail_carries_no_prompt_or_response_text():

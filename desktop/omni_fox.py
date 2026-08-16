@@ -407,11 +407,17 @@ class OmniAwareFox(QWidget):
         self.sdk_bridge = SDKBridgeListener()
         self.sdk_bridge.evaluating.connect(self._on_sdk_evaluating)
         self.sdk_bridge.hash_confirmed.connect(self._on_sdk_hash_ok)
-        self.sdk_bridge.policy_breach.connect(self._on_policy_breach)
-        # The card the fox raises for a block that happened in SOMEBODY ELSE'S
-        # application. `breach_detail` is the optional richer follow-up; it only
-        # ever enriches a card that is already up.
-        self.sdk_bridge.policy_breach.connect(self._show_block_alert)
+        # ⚠ ONE SLOT, NOT TWO, AND THAT IS THE FIX RATHER THAN A TIDY-UP.
+        # This was two connections — `_on_policy_breach` and then
+        # `_show_block_alert` — and Qt runs slots in connection order, so the
+        # "is the card up?" guard inside the first one asked before the second
+        # had ever built it. `block_alert` was None on the first refusal of
+        # every session, and stale (hidden, from the previous one) on later
+        # ones, so the chat opened on top of the card anyway. Whether two
+        # windows appear must not depend on the order two connect() calls
+        # happen to be written in: the bridge has ONE entry point, and it hands
+        # the fact along explicitly.
+        self.sdk_bridge.policy_breach.connect(self._on_sdk_breach)
         self.sdk_bridge.breach_detail.connect(self._on_breach_detail)
         self.sdk_bridge.start()
 
@@ -1153,6 +1159,18 @@ class OmniAwareFox(QWidget):
         self._last_hash_ok = now
         self._apply(ce.on_sdk_hash(payload))
 
+    def _on_sdk_breach(self, payload: dict):
+        """A block that happened in another application on this machine.
+
+        The card goes up FIRST and the companion reaction is told so, because
+        the two are one event: the fox flashes, the tally moves, the console
+        gets its row — and the chat does not open, since the card already says
+        all of it. A breach from the POLLER does not come through here and
+        still opens the chat exactly as it always did.
+        """
+        self._show_block_alert(payload)
+        self._on_policy_breach(payload, card_shown=True)
+
     def _show_block_alert(self, payload: dict):
         """Raise the block card for a refusal that happened in another process.
 
@@ -1174,8 +1192,13 @@ class OmniAwareFox(QWidget):
         if alert is not None:
             alert.attach_detail(payload)
 
-    def _on_policy_breach(self, payload: dict):
+    def _on_policy_breach(self, payload: dict, card_shown: bool = False):
         """A REAL graded breach, from the poller or the SDK bridge.
+
+        `card_shown` is passed by `_on_sdk_breach` and by nothing else. It is a
+        fact about THIS event — the block card is already on screen for it —
+        rather than a reading of some widget's current state, which is what the
+        earlier version got wrong.
 
         The decision — does this one clear the user's risk threshold, does it
         beep, does it toast — belongs to `companion_events`; what is left here
@@ -1212,15 +1235,13 @@ class OmniAwareFox(QWidget):
             self.chat_popup.popup_closed.connect(self._on_chat_closed)
         self.chat_popup._add_bubble(detail, is_user=False)
 
-        # ⚠ ONE EVENT, ONE WINDOW. The block card now says all of this and says
-        # it better, so opening the chat on top of it put two popups on screen
-        # for a single refusal — observed in the real run: "Foxy Audit — prompt
+        # ⚠ ONE EVENT, ONE WINDOW. The block card says all of this and says it
+        # better, so opening the chat on top of it put two popups on screen for
+        # a single refusal — observed in the real run: "Foxy Audit — prompt
         # blocked" and "Foxy Audit — Copilot" both came up. The bubble is still
-        # written, so it is there when the person opens the chat themselves, and
-        # a breach that arrived from the POLLER (no card) still opens it as it
-        # always did.
-        alert = getattr(self, "block_alert", None)
-        if alert is not None and alert.isVisible():
+        # written above, so it is there when the person opens the chat
+        # themselves. A poller breach never sets this and still opens the chat.
+        if card_shown:
             return
 
         self.open_chat()

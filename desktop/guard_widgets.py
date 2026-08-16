@@ -218,7 +218,17 @@ class GuardReceipt(QFrame):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(5)
         grid.setColumnStretch(1, 1)
-        self.rows = self.build_rows(self.result)
+        # ⚠ THE RAW PAYLOAD, NOT `self.result`. `build_rows` decides whether to
+        # print a row by asking whether the SENDER supplied the field — and
+        # `normalise()` supplies every field, so handing it the normalised copy
+        # made that test always true and the omit-when-absent contract never
+        # held in the running app. The visible consequence was a row reading
+        # "NO (blocked before the model ran)" underneath a card explaining that
+        # the model HAD run: the receipt contradicting the sentence above it,
+        # from a default nobody sent. The test that covered this called the
+        # staticmethod directly with a raw ping, so it never saw the widget's
+        # own path.
+        self.rows = self.build_rows(payload)
         for i, (name, value) in enumerate(self.rows):
             grid.addWidget(_label(name, tokens, size=10, colour=WEB["muted"],
                                   weight=700, caps=True),
