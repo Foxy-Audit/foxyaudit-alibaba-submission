@@ -10,10 +10,16 @@ PHI/PII, default for injection/secrets) and prints, for each prompt: the
 decision, the rules/signals that fired, the prompt+response commitment hashes,
 and whether the wrapped LLM was actually called.
 
-⚠ THE DEFAULT PATH TAKES NO API KEY AND OPENS NO SOCKET, AND MUST STAY THAT WAY.
-`--scenario all` is a merge gate and runs on machines with no stack and no
-network. `--live` is strictly additive: it is the only thing that constructs a
-keyed client, and every offline code path below is unchanged by it.
+⚠ THE DEFAULT PATH TAKES NO API KEY AND OPENS NO NETWORK SOCKET, AND MUST STAY
+THAT WAY. `--scenario all` is a merge gate and runs on machines with no stack
+and no network. `--live` is strictly additive: it is the only thing that
+constructs a keyed client, and every offline code path below is unchanged by it.
+
+  The one socket the default path does open is a LOOPBACK UDP send to
+  127.0.0.1:9999 — the desktop companion's listener — carrying a policy tag, a
+  reason label and rule ids. It leaves no machine, reaches no server, and is
+  dropped on the floor when the app is not running. It is the point of the
+  demo: an outside application is blocked, and the FOX is what reacts.
 
 CONTENT-BLINDNESS IS THE POINT, NOT A DISCLAIMER
 ------------------------------------------------
@@ -82,7 +88,20 @@ class MockLLM:
 # "" and None are different instructions to the SDK: None means "look it up",
 # "" means "there is no key". The keyed path is unaffected — --live reads the
 # same variable through argparse and hands it to enable_live() explicitly.
-foxy = FoxyClient(api_key="", desktop_ping=False)
+# ⚠ desktop_ping=True IS THE DEMO. The point of this file is not the terminal
+# read-out: it is that an OUTSIDE application gets blocked and the Foxy desktop
+# app reacts — card, fox, a row in the console. That reaction is driven by the
+# loopback datagram the SDK fires on a block (client.py), and with the ping off
+# it never left this process.
+#
+# ⚠ IT DOES NOT REOPEN THE OFFLINE-GATE DEFECT, and the two must not be
+# confused. `api_key=""` above is about SHIPPING TO A BACKEND: with no key the
+# HTTP path is disabled and nothing reaches a ledger. The ping is a UDP
+# datagram to 127.0.0.1:9999 — one machine, one loopback interface, no network
+# and no server — carrying a policy tag, a reason label and rule ids, never
+# prompt text. `--scenario all` still ships nothing; it now also waves at a
+# desktop app that is probably not running, and that is free.
+foxy = FoxyClient(api_key="", desktop_ping=True)
 mock = MockLLM()
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8000"
@@ -131,6 +150,48 @@ def _hashes(prompt: str, response: str) -> tuple[str, str]:
             hashing.sha256_hex(hashing.canonical_json(response)))
 
 
+#: The only fields of the result dict that may cross the loopback. Everything
+#: else in it — `response`, `model_input`, and the prompt itself — is CONTENT
+#: and stays in this process. A datagram that never leaves the machine is still
+#: not a licence to put a prompt on it: content-blindness is a property of the
+#: product, not of the network hop, and the desktop app has no business holding
+#: text either.
+_DETAIL_FIELDS = ("policy", "mode", "decision", "reason", "rules", "signals",
+                  "prompt_hash", "response_hash", "llm_called")
+
+
+def _ping_detail(result: dict) -> None:
+    """Follow the SDK's ping with the fuller read-out this demo happens to hold.
+
+    ⚠ A SECOND DATAGRAM, NOT A BIGGER FIRST ONE. The SDK's ping is what every
+    customer sends and it carries the least it can — policy, reason, rules,
+    decision — and the desktop block card is built to be complete from those
+    four fields alone. This demo computes commitments for its own terminal
+    output anyway, so it can offer them, and the app shows a receipt when they
+    arrive. Putting these fields into the SDK's ping instead would push hashes
+    onto every customer's loopback to make one demo prettier.
+
+    Never raises. It runs immediately after a policy decision, and a desktop app
+    that is not listening must not become an exception in a guard path.
+    """
+    try:
+        from foxy_audit import ruleset, udp
+        payload = {"event": "policy_breach_detail", "app": "mock_llm demo"}
+        payload.update({k: result[k] for k in _DETAIL_FIELDS if k in result})
+        payload["sdk_version"] = getattr(__import__("foxy_audit"), "__version__", "")
+        try:
+            payload["ruleset_version"] = str(
+                ruleset.provenance().get("ruleset_version", ""))
+        except Exception:                              # noqa: BLE001
+            pass
+        # Whether anything was actually shipped to a ledger, so the receipt can
+        # say "local only" without guessing. cfg.enabled is False with no key.
+        payload["shipped"] = bool(foxy.cfg.enabled)
+        udp.send_ping(payload, foxy.cfg.udp_host, foxy.cfg.udp_port)
+    except Exception:                                  # noqa: BLE001
+        pass
+
+
 def guarded_call(prompt: str, policy_tag: str, mode: str) -> dict:
     """Run the prompt through the REAL SDK guard and report what happened."""
     mock.calls = 0
@@ -154,7 +215,7 @@ def guarded_call(prompt: str, policy_tag: str, mode: str) -> dict:
                                        else "allowed")
     # On a block the fn never ran, so there is no response: hash "" like the SDK.
     prompt_hash, response_hash = _hashes(prompt, "" if blocked else response)
-    return {
+    result = {
         "policy": policy_tag,
         "mode": mode,
         "decision": final,
@@ -167,6 +228,11 @@ def guarded_call(prompt: str, policy_tag: str, mode: str) -> dict:
         "response": response,
         "model_input": seen.get("prompt", ""),
     }
+    if blocked:
+        # The SDK has already pinged the desktop app with the four fields every
+        # customer sends; this adds the ones only this demo holds.
+        _ping_detail(result)
+    return result
 
 
 def _choose_policy(prompt: str) -> str:
@@ -300,11 +366,47 @@ def run_scenarios(names: list[str]) -> int:
     return 0 if ok else 1
 
 
+def wake_the_fox() -> str:
+    """Bring the desktop app up, so a block has something to react in.
+
+    ⚠ CALLED FROM THE INTERACTIVE PATH ONLY, NEVER FROM `run_scenarios`.
+    `--scenario all` is a merge gate that runs on CI; a gate that launches a
+    windowed application on the build machine is a gate nobody can run twice.
+    A person at a `prompt>` is a different situation entirely — they are here to
+    watch the fox react, and an app that is not running is the one thing that
+    stops that.
+
+    The launcher lives in `desktop/`, not in the SDK, and this reaches it by
+    path because the demo runs from a source checkout. A customer's application
+    does not do this: their fox is already running, started at login by
+    `autostart.py`. See desktop/foxy_wake.py for why the SDK must not spawn it.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    desktop_dir = os.path.abspath(os.path.join(here, os.pardir, "desktop"))
+    try:
+        import sys as _sys
+        if desktop_dir not in _sys.path:
+            _sys.path.insert(0, desktop_dir)
+        import foxy_wake
+    except Exception:                                  # noqa: BLE001
+        return "unavailable"
+    state = foxy_wake.ensure_awake()
+    note = foxy_wake.EXPLANATION.get(state, "")
+    if state == "already":
+        print("  the Foxy desktop app is listening — blocks will raise its card")
+    elif state == "started":
+        print("  started the Foxy desktop app — blocks will raise its card")
+    elif note:
+        print(f"  ⚠ {note}")
+    return state
+
+
 def interactive(mode: str) -> int:
     print("Foxy Audit mock LLM - interactive preflight-guard sandbox")
     where = f"shipping to {_LIVE['endpoint']}" if _LIVE else "no API key, no network"
     print(f"  mode={mode}  ({where})  -  Ctrl-D or 'quit' to exit")
     print("  policy is auto-selected: hipaa for PHI/PII, default for injection/secrets")
+    wake_the_fox()
     while True:
         try:
             prompt = input("\nprompt> ").strip()

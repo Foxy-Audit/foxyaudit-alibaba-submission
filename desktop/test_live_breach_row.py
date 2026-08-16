@@ -67,8 +67,19 @@ def test_the_row_still_records_the_breach_itself():
     assert event["kind"] == "breach"
     assert event["reason"] == "prompt_injection"
     assert event["policy"] == "hipaa"
-    assert console._logs_total == 1 and console._flagged_total == 1
     assert console.refreshed == 1
+
+    # ⚠ THE COUNTERS PART SPLIT IN TWO, and this is the re-aim rather than a
+    # relaxation. `_flagged_total` still rises: the guard really did stop
+    # something, and "breaches stopped" is true whether or not the evidence has
+    # been delivered. `_logs_total` no longer does: it drives the hero number,
+    # which reads as interactions recorded IN THE LEDGER, and this event arrived
+    # as a loopback datagram from a guard that — with no API key — never reaches
+    # a ledger at all. The count could not correct itself either, because the
+    # /v1/stats poll takes max(). See test_guard_bridge.py for the full case.
+    assert console._flagged_total == 1, "a real block stopped being counted"
+    assert console._logs_total == 0, \
+        "a loopback ping is claiming a chain entry that may not exist"
 
 
 def test_a_graded_row_still_shows_its_real_score():

@@ -353,6 +353,7 @@ class OmniAwareFox(QWidget):
 
         # ── Debouncing for SDK events ─────────────────────────────────────
         self._last_evaluating = 0.0
+        self.block_alert = None          # built on the first refusal, not before
         self._last_hash_ok = 0.0
         self.roam_target_x  = None
         self._roam_paused   = False
@@ -407,6 +408,11 @@ class OmniAwareFox(QWidget):
         self.sdk_bridge.evaluating.connect(self._on_sdk_evaluating)
         self.sdk_bridge.hash_confirmed.connect(self._on_sdk_hash_ok)
         self.sdk_bridge.policy_breach.connect(self._on_policy_breach)
+        # The card the fox raises for a block that happened in SOMEBODY ELSE'S
+        # application. `breach_detail` is the optional richer follow-up; it only
+        # ever enriches a card that is already up.
+        self.sdk_bridge.policy_breach.connect(self._show_block_alert)
+        self.sdk_bridge.breach_detail.connect(self._on_breach_detail)
         self.sdk_bridge.start()
 
         # ── System Tray ───────────────────────────────────────────────────
@@ -1147,6 +1153,27 @@ class OmniAwareFox(QWidget):
         self._last_hash_ok = now
         self._apply(ce.on_sdk_hash(payload))
 
+    def _show_block_alert(self, payload: dict):
+        """Raise the block card for a refusal that happened in another process.
+
+        This is the product's own story, and until now the desktop app only
+        flashed for it: an application on this machine tried to send a prompt,
+        the guard refused it before the model ran, and the fox is what tells
+        the person so. The card is built from the SDK's four ping fields alone
+        — no richer payload is required for any sentence on it.
+        """
+        if getattr(self, "block_alert", None) is None:
+            from guard_widgets import BlockAlert
+            self.block_alert = BlockAlert()
+            self.block_alert.console_requested.connect(self.open_dashboard)
+        self.block_alert.show_for(payload, near=self)
+
+    def _on_breach_detail(self, payload: dict):
+        """The optional follow-up, from a sender that had commitments to give."""
+        alert = getattr(self, "block_alert", None)
+        if alert is not None:
+            alert.attach_detail(payload)
+
     def _on_policy_breach(self, payload: dict):
         """A REAL graded breach, from the poller or the SDK bridge.
 
@@ -1184,6 +1211,17 @@ class OmniAwareFox(QWidget):
             self.chat_popup = ChatPopup(self, settings=self.settings)
             self.chat_popup.popup_closed.connect(self._on_chat_closed)
         self.chat_popup._add_bubble(detail, is_user=False)
+
+        # ⚠ ONE EVENT, ONE WINDOW. The block card now says all of this and says
+        # it better, so opening the chat on top of it put two popups on screen
+        # for a single refusal — observed in the real run: "Foxy Audit — prompt
+        # blocked" and "Foxy Audit — Copilot" both came up. The bubble is still
+        # written, so it is there when the person opens the chat themselves, and
+        # a breach that arrived from the POLLER (no card) still opens it as it
+        # always did.
+        alert = getattr(self, "block_alert", None)
+        if alert is not None and alert.isVisible():
+            return
 
         self.open_chat()
 

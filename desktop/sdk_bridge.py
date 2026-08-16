@@ -15,8 +15,21 @@ The SDK sends a small JSON payload over UDP:
     {"event": "policy_breach", "reason": "Anomalous token count",
      "risk_score": 87, "ts": 1719300000}
 
+  Optional richer detail, from a sender that has more to give:
+    {"event": "policy_breach_detail", "prompt_hash": …, "llm_called": false, …}
+
 This thread parses the JSON, emits the appropriate Qt signal,
 and silently discards malformed or oversized packets.
+
+⚠ `policy_breach_detail` IS NOT PART OF THE SDK's PING and must never become
+part of it. The SDK crosses a process boundary on a customer's machine, and it
+sends the least it can: policy, reason, rules, decision. That is enough for the
+whole block card. A sender that already holds the commitments for its own
+reasons — `demo/mock_llm.py` computes them in its result dict — may follow the
+ping with this second datagram, and the card gains a receipt. Nothing requires
+it, and a customer who never sends one sees no difference in what the card
+claims. Adding these fields to the SDK ping instead would put hashes on the
+local wire for every customer to buy one demo a nicer screenshot.
 """
 
 from __future__ import annotations
@@ -38,6 +51,7 @@ class SDKBridgeListener(QThread):
     evaluating     = pyqtSignal(dict)   # {"event": "evaluating", ...} — grading pending
     hash_confirmed = pyqtSignal(dict)   # {"event": "hash_ok", ...} (legacy)
     policy_breach  = pyqtSignal(dict)   # {"event": "policy_breach", ...}
+    breach_detail  = pyqtSignal(dict)   # {"event": "policy_breach_detail", ...}
 
     def __init__(self, host: str = SDK_LISTEN_HOST,
                  port: int = SDK_LISTEN_PORT, parent=None):
@@ -86,6 +100,8 @@ class SDKBridgeListener(QThread):
             self.hash_confirmed.emit(payload)
         elif event == "policy_breach":
             self.policy_breach.emit(payload)
+        elif event == "policy_breach_detail":
+            self.breach_detail.emit(payload)
         # Unknown event types are silently ignored
 
     def _cleanup(self):

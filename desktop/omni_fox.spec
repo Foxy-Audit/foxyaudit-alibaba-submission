@@ -64,17 +64,6 @@ datas += kr_datas
 pyqt_binaries += kr_binaries
 pyqt_hidden += kr_hidden
 
-# The SDK the chat's preflight guard runs on. `foxy_guard` imports it inside a
-# try/except and degrades to SDK_AVAILABLE = False, which is the right behaviour
-# for a missing dependency and the WRONG thing to discover in a shipped build:
-# the window would open, the strip would read "guard unavailable", and no prompt
-# would ever be checked. It also carries a `rulesets/` data directory that
-# static analysis does not follow, so collect_all rather than a bare import name.
-fa_datas, fa_binaries, fa_hidden = collect_all("foxy_audit")
-datas += fa_datas
-pyqt_binaries += fa_binaries
-pyqt_hidden += fa_hidden
-
 a = Analysis(
     [os.path.join(HERE, "omni_fox.py")],
     pathex=[HERE],

@@ -396,7 +396,13 @@ class AuditTable(QTableWidget):
         muted = t.get("text_muted", "#888")
         self.setItem(0, 0, self._item(ev["time"], muted, mono=True))
         self.setItem(0, 1, self._item(ev["policy"], t["text"]))
-        self.setItem(0, 2, self._item(ev["hash"][:22] + "…", muted, mono=True))
+        # A row that came from a loopback ping has no chain hash and may never
+        # get one — a keyless guard reaches no ledger at all. Saying so in the
+        # hash column is the whole marker: "…" alone read as a hash that had
+        # simply been trimmed, which is a claim of evidence that does not exist.
+        self.setItem(0, 2, self._item(
+            "local only · not in the ledger" if ev.get("local")
+            else ev["hash"][:22] + "…", muted, mono=True))
         self.setItem(0, 3, self._item(str(ev.get("tokens", "")), t["text"],
                                       align=Qt.AlignmentFlag.AlignRight))
         ok = ev["kind"] == "ok"
@@ -1466,21 +1472,38 @@ class DashboardWindow(QWidget):
             self.m_batt.set_value(hw.get("battery", 100))
 
     def on_hash_ok(self, payload: dict):
-        # Live UDP event → session counter + table row for instant feedback. The
-        # real chain hash for this interaction is computed server-side; a live ping
-        # doesn't carry it, so we don't fabricate one (it arrives via the /v1/logs
-        # refresh). The tiles are corrected by the next /v1/stats poll.
-        self._logs_total += 1
+        # Live UDP event → a table row for instant feedback. The real chain hash
+        # is computed server-side; a live ping doesn't carry it, so we don't
+        # fabricate one (it arrives via the /v1/logs refresh).
+        #
+        # ⚠ THE COUNTER WAS WRONG AND THE COMMENT EXCUSING IT WAS TOO. This used
+        # to do `self._logs_total += 1` under a note saying "the tiles are
+        # corrected by the next /v1/stats poll". They are not: that poll does
+        # `self._logs_total = max(self._logs_total, total)`, so a ping-inflated
+        # hero number stays inflated for the life of the session. The ping means
+        # "committed and queued locally", which with no API key never becomes a
+        # ledger row at all.
         policy = payload.get("policy", "default")
         self._add_event({
             "time": datetime.now().strftime("%H:%M:%S"),
-            "kind": "captured", "policy": policy, "hash": "",
+            "kind": "captured", "policy": policy, "hash": "", "local": True,
             "tokens": payload.get("tokens", ""), "risk": None,
         })
         self._refresh_stats()
 
     def on_policy_breach(self, payload: dict):
-        self._logs_total += 1
+        # ⚠ `_logs_total` IS NOT TOUCHED HERE ANY MORE, and that is a decision
+        # about honesty rather than tidiness. It drives the hero number, which
+        # reads as interactions recorded in the ledger — but this event arrived
+        # as a loopback datagram, and a guard running without an API key never
+        # reaches a ledger at all. The count was therefore claiming chain
+        # entries that may not exist, and it could not correct itself: the poll
+        # at the bottom of this file takes `max(self._logs_total, total)`, so an
+        # inflated figure never comes back down. /v1/stats owns that number now.
+        #
+        # `_flagged_total` is still counted: a block is a thing the guard did
+        # locally, and "breaches stopped" is true whether or not the evidence
+        # has been delivered yet. The row itself says which it is.
         self._flagged_total += 1
         reason = payload.get("reason", "Policy violation")
         # The SDK bridge routes the SAME scoreless UDP payload here as to the
@@ -1492,7 +1515,7 @@ class DashboardWindow(QWidget):
         policy = payload.get("policy", "default")
         self._add_event({
             "time": datetime.now().strftime("%H:%M:%S"),
-            "kind": "breach", "policy": policy, "hash": "",
+            "kind": "breach", "policy": policy, "hash": "", "local": True,
             "tokens": payload.get("tokens", ""), "risk": risk, "reason": reason,
         })
         self._refresh_stats()
