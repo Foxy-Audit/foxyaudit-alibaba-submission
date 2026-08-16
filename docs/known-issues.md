@@ -124,3 +124,42 @@ return a new outcome rather than replaying — the honest answer is "this build'
 copy of that ruleset is not the one that wrote this row". Needs a decision about
 rows written before `ruleset_hash` existed (they carry neither key, so they
 already take the `predates_provenance` path).
+
+---
+
+## #222 — two `conftest.py` files are importable as the same top-level module
+
+**Found 2026-08-16, while fixing a sibling of it.** `pytest sdk/tests
+sdk/tests_testbed` — the combined run a developer types, and which CI never does
+because it runs the two as separate steps — used to fail at COLLECTION, because
+`sdk/tests/test_cli.py` (the `foxy doctor` tests, there since July) and
+`sdk/tests_testbed/test_cli.py` (T1's REPL suite) share a basename and neither
+directory is a package. That half is fixed: the testbed one is now
+`test_repl.py`.
+
+Underneath it sits the same defect one level down. `sdk/conftest.py` defines
+`snapshot_dispatcher_paths` / `rollback_dispatcher_paths`, and
+`sdk/tests_testbed/conftest.py` is a second file importable under the same
+top-level name `conftest`. In a combined run the bare `import conftest` in
+`test_response_policy.py::test_the_shared_dispatcher_does_not_hoard_dead_spool_paths`
+resolves to the testbed one, which does not define those helpers.
+
+**Measured on `59085de` + the rename:** combined run is `1 failed, 859 passed`;
+that test alone passes; both suites separately are 635 and 225.
+
+⚠ **Why it matters more than a red developer run.** The helpers it cannot reach
+are the ones that roll back the module-level dispatcher's spool paths — the
+guard's own docstring records 69 stale paths accumulating over 223 tests before
+that teardown existed. A collision that silently disarms an isolation helper is
+how that comes back.
+
+**Shape of the fix.** Make the helpers importable by an unambiguous name rather
+than by `conftest` — a small `sdk/tests/_dispatcher_paths.py` (or the same under
+`sdk/`) that both conftests and the test import — or make the two directories
+packages so pytest addresses them by dotted path. Do not simply rename the
+second `conftest.py`; pytest requires that name.
+
+⚠ **The general rule, now twice paid for:** two files with the same basename and
+no package boundary are one file to Python's import system. That applies to
+`conftest.py` as much as to `test_cli.py`, and it applies across sibling test
+directories that CI happens to run separately.
