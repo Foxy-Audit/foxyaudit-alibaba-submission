@@ -12,6 +12,11 @@ psutil>=5.9,<7
 pynput>=1.7,<2
 requests>=2.31,<3
 keyring>=24,<26
+# The SDK the chat's preflight guard runs on (desktop/foxy_guard.py). NOT
+# optional: without it the chat still opens, but every prompt goes to the model
+# unchecked and the guard strip reads "guard unavailable". 1.10 is the floor
+# because the guard reads ruleset.provenance().
+foxy-audit>=1.10,<2
 
 # ── Optional ────────────────────────────────────────────────────────────────
 # Window-following on non-Windows (import is guarded — safe to omit on Windows):

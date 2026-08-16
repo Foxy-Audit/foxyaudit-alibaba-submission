@@ -210,6 +210,23 @@ class FoxSettings:
         if mode in ("observe", "block", "redact"):
             self._s.setValue("foxy/guard_mode", mode)
 
+    def guard_response_scan(self) -> str:
+        """"off" | "observe" | "block" for what the model SENDS BACK.
+
+        Separate from `guard_mode`, and that separation is the fix for a real
+        defect: the scan used to be derived from the prompt mode, so choosing
+        "block the prompt" silently discarded answers too — a reply mentioning
+        support@foxyaudit.tech vanished as `response_pii.email`. Defaults to
+        `observe` (the SDK's own default): record what the scan found, show it
+        on the receipt, and still hand over the answer.
+        """
+        value = self._s.value("foxy/guard_response_scan", "observe", type=str)
+        return value if value in ("off", "observe", "block") else "observe"
+
+    def set_guard_response_scan(self, scan: str):
+        if scan in ("off", "observe", "block"):
+            self._s.setValue("foxy/guard_response_scan", scan)
+
     def guard_policy(self) -> str:
         """Which policy tag the copilot's prompts are judged under.
 

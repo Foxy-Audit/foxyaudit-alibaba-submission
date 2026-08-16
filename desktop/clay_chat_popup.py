@@ -113,6 +113,7 @@ class _AICallWorker(QThread):
                 api_key=self._settings.org_api_key(),
                 endpoint=self._settings.backend_url(),
                 agent=self._settings.ai_provider(),
+                response_scan=self._settings.guard_response_scan(),
             ))
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -735,6 +736,10 @@ class ChatPopup(QWidget):
         dlg = SettingsDialog(self.settings, self)
         dlg.settings_saved.connect(lambda: self.apply_theme(_glass_tokens()))
         dlg.exec()
+        # That dialog now carries the guard controls, so the strip can be stale
+        # the moment it closes — advertising a policy that is not the one the
+        # next prompt will be judged under. Both doors into Settings refresh it.
+        self._refresh_guard_strip()
 
     # ─────────────────────────────────── move + edge-resize ────────
     _RESIZE_MARGIN = 8
@@ -1209,13 +1214,46 @@ class ChatPopup(QWidget):
             self._show_block(result, prompt)
             return
 
-        self._record_message(prompt, is_user=True)
+        # ⚠ FROM HERE ON THE TURN IS WHAT THE MODEL SAW, NOT WHAT WAS TYPED.
+        #
+        # `model_input` is the guard's own output — the scrubbed text on the
+        # redact path, the original everywhere else. Carrying the typed prompt
+        # forward instead leaked it twice, both reproduced:
+        #
+        #   · `_history` kept the original, so the NEXT turn shipped the whole
+        #     conversation to the provider with the SSN back in it, verbatim.
+        #     The guard scrubbed it and the chat put it back.
+        #   · `_record_message` persisted the original into chat_history.json,
+        #     which is cleartext on disk, and used it as the session TITLE in
+        #     the sidebar.
+        #
+        # One assignment fixes both, and fixes them for every path that can
+        # rewrite a prompt — redact, and retry-after-block — rather than for
+        # the one that was reported.
+        delivered = result.get("model_input") or prompt
+        if self._history and self._history[-1].get("role") == "user":
+            self._history[-1]["content"] = delivered
+        if delivered != prompt:
+            # The window must not keep showing text the model never received.
+            self._rewrite_last_user_bubble(delivered)
+        self._record_message(delivered, is_user=True)
+
         reply = result.get("response", "")
         self._history.append({"role": "assistant", "content": reply})
         self._history = self._history[-20:]  # rolling window — no memory leak
         self._add_bubble(reply, is_user=False)
+        # The ORIGINAL goes to the receipt, not `delivered`: its content-blindness
+        # row searches the shipped payload for the words that were typed, and
+        # searching for the scrubbed copy instead would be a weaker claim that
+        # always passes.
         self._add_receipt(result, prompt)
         self._re_enable_input()
+
+    def _rewrite_last_user_bubble(self, text: str):
+        for bubble in reversed(self._bubbles):
+            if bubble.is_user:
+                bubble.setText(text)
+                return
 
     # ── the guard's own surfaces ───────────────────────────────────
     def _add_receipt(self, result: dict, prompt: str):
@@ -1237,7 +1275,7 @@ class ChatPopup(QWidget):
         self.send_btn.setEnabled(False)
         self.block_overlay.show_for(
             result,
-            can_redact=foxy_guard.would_redaction_change(prompt, result["policy"]))
+            can_redact=foxy_guard.redaction_would_clear(prompt, result["policy"]))
 
     def _edit_blocked_prompt(self):
         self._re_enable_input()
@@ -1245,11 +1283,17 @@ class ChatPopup(QWidget):
         self.input_field.setFocus()
 
     def _retry_redacted(self):
+        """Redact THIS prompt and send it — once.
+
+        ⚠ The mode is passed per call and NOT written to QSettings. Persisting
+        it here downgraded enforcement permanently: one click on a refusal card
+        and every future session in this app ran in `redact` instead of `block`,
+        silently, because a retry is a decision about one message and a setting
+        is a decision about all of them.
+        """
         if not self._pending_prompt:
             self._re_enable_input()
             return
-        self.settings.set_guard_mode("redact")
-        self._refresh_guard_strip()
         self._show_typing_indicator()
         self._dispatch_ai(self._pending_prompt, mode="redact")
 
@@ -1273,16 +1317,18 @@ class ChatPopup(QWidget):
 
     def _on_ai_failure(self, _err: str):
         self._remove_typing_indicator()
-        # The prompt was allowed — it is the provider that failed — so the turn
-        # is recorded like any other. Without this the session would hold a
-        # reply with no question in front of it.
-        if self._pending_prompt:
-            self._record_message(self._pending_prompt, is_user=True)
+        # ⚠ NOTHING IS RECORDED ON THIS PATH, and that is the third instance of
+        # the same defect — found by auditing every writer rather than by being
+        # reported. This handler only receives an error string, so it does not
+        # know what the guard actually sent; recording `_pending_prompt` here
+        # would persist the ORIGINAL of a prompt that was redacted before it
+        # went out. A failed turn produced no answer, so it leaves no entry at
+        # all rather than an entry that might be wrong.
         fallback = (
             "(Can't reach the AI backend right now — "
             "set your key in Settings › AI Brain.)"
         )
-        self._add_bubble(fallback, is_user=False)
+        self._add_bubble(fallback, is_user=False, record=False)
         self._re_enable_input()
 
     def _re_enable_input(self):

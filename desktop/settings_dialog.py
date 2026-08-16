@@ -773,8 +773,12 @@ class SettingsDialog(QDialog):
         in_process = provider == "mock"
         self._url_field.setEnabled(not in_process)
         self._model_field.setEnabled(not in_process)
-        if in_process:
-            self._url_field.setPlaceholderText("Runs in this app — no endpoint")
+        # Set on BOTH branches. Setting it only on the mock branch left "Runs in
+        # this app — no endpoint" sitting under an empty, required URL box after
+        # switching back to a provider that needs one.
+        self._url_field.setPlaceholderText(
+            "Runs in this app — no endpoint" if in_process
+            else "https://api.example.com/v1/chat/completions")
 
     def _test_connection(self):
         if self._conn_worker and self._conn_worker.isRunning():

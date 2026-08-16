@@ -307,6 +307,128 @@ def test_a_blocked_prompt_leaves_the_model_context_clean(popup):
         "the refused prompt stayed in the history sent to the next model call"
 
 
+# ══ 4b. no path re-sends or persists a prompt the guard rewrote ════════════
+#
+# ⚠ DERIVED FROM ONE TABLE, ON PURPOSE. The block path was fixed and tested
+# per-case; its sibling — the redact path, and the "Retry with redaction" button
+# that reaches it — kept both defects, because a per-case test covers the case
+# that was reported and nothing else. Every row here is a path that can end with
+# the model seeing different text from what was typed.
+SENSITIVE = "Email jane.doe@acme.co about invoice 55"
+SECRET_TOKEN = "jane.doe@acme.co"
+
+REWRITING_PATHS = [
+    ("redact mode", "redact"),
+    ("retry after a block", "retry"),
+]
+
+
+def _retry(popup, text):
+    """Exactly what `_retry_redacted` does, minus the QThread.
+
+    It does NOT call `send_message`, so no second user bubble appears — the one
+    already on screen from the refused turn is the one that gets rewritten. An
+    earlier version of this helper sent again and produced a bubble the product
+    never creates, which then failed for a reason the product did not have.
+    """
+    import foxy_guard
+    popup._pending_prompt = text
+    popup._history.append({"role": "user", "content": text})
+    result = foxy_guard.run(
+        text,
+        lambda t: __import__("ai_providers").call_ai(
+            [{"role": "user", "content": t}], "sys", popup.settings),
+        policy_tag=popup.settings.guard_policy(), mode="redact",
+        response_scan=popup.settings.guard_response_scan())
+    popup._on_ai_success(result)
+    return result
+
+
+def _drive(popup, text, path):
+    """Run `text` through one of the rewriting paths and hand back the turn."""
+    if path == "retry":
+        _send(popup, text, mode="block")            # refused first
+        popup.block_overlay.dismiss()
+        return _retry(popup, text)                  # what the button does
+    return _send(popup, text, mode=path)
+
+
+@pytest.mark.parametrize("name,path", REWRITING_PATHS)
+def test_a_rewritten_prompt_is_not_carried_forward(popup, name, path):
+    """What goes to the model next turn is what the model saw, not what was typed."""
+    result = _drive(popup, SENSITIVE, path)
+    assert result["decision"] == "redacted", f"{name}: expected a redaction"
+    assert SECRET_TOKEN not in result["model_input"], f"{name}: nothing was scrubbed"
+
+    carried = json.dumps(popup._history)
+    assert SECRET_TOKEN not in carried, (
+        f"{name}: the original is still in the conversation, so the NEXT turn "
+        f"ships it to the provider verbatim")
+
+
+@pytest.mark.parametrize("name,path", REWRITING_PATHS)
+def test_a_rewritten_prompt_is_not_persisted(popup, history_file, name, path):
+    """chat_history.json is cleartext on disk, and the title is the sidebar label."""
+    _drive(popup, SENSITIVE, path)
+
+    written = history_file.read_text(encoding="utf-8") if history_file.exists() else ""
+    assert SECRET_TOKEN not in written, f"{name}: the original was persisted"
+    for session in (json.loads(written) if written else []):
+        assert SECRET_TOKEN not in session.get("title", ""), \
+            f"{name}: the original became the session title"
+
+
+@pytest.mark.parametrize("name,path", REWRITING_PATHS)
+def test_the_window_shows_what_was_actually_sent(popup, name, path):
+    result = _drive(popup, SENSITIVE, path)
+    user_bubbles = [b.text() for b in popup._bubbles if b.is_user]
+    assert all(SECRET_TOKEN not in t for t in user_bubbles), (
+        f"{name}: the chat still displays text the model never received")
+    assert any(result["model_input"] == t for t in user_bubbles)
+
+
+def test_a_provider_failure_persists_nothing(popup, history_file):
+    """The third writer, found by auditing every one rather than by report.
+
+    `_on_ai_failure` receives only an error string, so it cannot know what the
+    guard actually sent — and recording `_pending_prompt` there persisted the
+    ORIGINAL of a prompt that had already been redacted on its way out.
+    """
+    popup.input_field.setEnabled(True)
+    popup.input_field.setText(SENSITIVE)
+    popup.send_message()
+    popup._on_ai_failure("the provider exploded")
+
+    written = history_file.read_text(encoding="utf-8") if history_file.exists() else ""
+    assert SECRET_TOKEN not in written
+    assert written.strip() in ("", "[]"), \
+        "a turn that produced no answer still wrote a session"
+
+
+def test_the_retry_reuses_the_refused_turns_bubble(popup):
+    """Pins the fact the helper above relies on: the retry sends the same
+    message again, it does not post a second one."""
+    _send(popup, SENSITIVE, mode="block")
+    popup.block_overlay.dismiss()
+    before = len([b for b in popup._bubbles if b.is_user])
+
+    _retry(popup, SENSITIVE)
+
+    assert len([b for b in popup._bubbles if b.is_user]) == before, \
+        "the retry posted the message a second time"
+
+
+def test_the_retry_does_not_downgrade_enforcement_for_good(popup):
+    """One click on a refusal card used to write guard_mode=redact to QSettings,
+    silently running every future session in redact instead of block."""
+    assert popup.settings.guard_mode() == "block"
+    popup._pending_prompt = SENSITIVE
+    popup._retry_redacted()
+
+    assert popup.settings.guard_mode() == "block", \
+        "a per-message retry rewrote the persistent enforcement setting"
+
+
 # ══ 5. the policy is chosen, not guessed ═══════════════════════════════════
 def test_hipaa_and_gdpr_cannot_be_told_apart_from_the_prompt():
     """The measurement the design rests on, kept live.
@@ -348,6 +470,184 @@ def test_no_auto_selector_came_back():
     assert not hasattr(foxy_guard, "choose_policy")
 
 
+# ══ 5a. the retry offer is per finding, not per byte ═══════════════════════
+def test_the_retry_offer_asks_surviving_rules_not_did_the_text_change(monkeypatch):
+    """#216's lesson, in the place it had not travelled to.
+
+    "Did the text change" is satisfied by a neighbouring redaction that DID
+    work: scrub an SSN sitting beside a finding that cannot be redacted and the
+    bytes move, while the redact path still fail-closes and blocks. Offering the
+    retry there is a dead-end loop that mints one more blocked event per click.
+    """
+    import foxy_guard
+    from foxy_audit import policy
+    prompt = "Email jane.doe@acme.co about invoice 55"
+
+    # The text demonstrably changes, so the old per-byte test would say yes.
+    assert policy.redact(prompt, "gdpr") != prompt
+    assert foxy_guard.redaction_would_clear(prompt, "gdpr") is True
+
+    # One finding survives redaction -> the retry would block again -> not offered.
+    monkeypatch.setattr(policy, "surviving_rules",
+                        lambda decision, redacted, tag: ["pii.presidio:date_time"])
+    assert foxy_guard.redaction_would_clear(prompt, "gdpr") is False, \
+        "the offer ignored what survived and only asked whether bytes moved"
+
+
+def test_nothing_to_redact_is_not_offered_either(monkeypatch):
+    import foxy_guard
+    assert foxy_guard.redaction_would_clear("What is the capital of France?",
+                                            "gdpr") is False
+
+
+# ══ 5b. two questions, two settings ════════════════════════════════════════
+def test_blocking_prompts_does_not_silently_block_answers(settings):
+    """`response_scan` was derived from the prompt mode, so choosing "stop it
+    before the model" also started discarding replies. Measured under the
+    shipped gdpr default: an answer containing support@foxyaudit.tech was thrown
+    away as response_pii.email."""
+    import foxy_guard
+    assert settings.guard_mode() == "block"
+    assert settings.guard_response_scan() == "observe"
+
+    foxy_guard.reset_clients()
+    try:
+        result = foxy_guard.run(
+            "who do I contact about billing?",
+            lambda t: "Write to support@foxyaudit.tech and they will help.",
+            policy_tag=settings.guard_policy(), mode=settings.guard_mode(),
+            response_scan=settings.guard_response_scan())
+    finally:
+        foxy_guard.reset_clients()
+
+    assert result["decision"] != "response_blocked", \
+        "blocking prompts silently discarded the answer too"
+    assert "support@foxyaudit.tech" in result["response"], \
+        "the answer was withheld from the person who asked for it"
+    assert result["rules"], "the finding should still be recorded on the receipt"
+
+
+def test_the_response_scan_still_blocks_when_asked_to(settings):
+    """The other half: `block` must actually stop an answer."""
+    import foxy_guard
+    settings.set_guard_response_scan("block")
+    foxy_guard.reset_clients()
+    try:
+        result = foxy_guard.run(
+            "who do I contact?",
+            lambda t: "Write to support@foxyaudit.tech and they will help.",
+            policy_tag="gdpr", mode="block",
+            response_scan=settings.guard_response_scan())
+    finally:
+        foxy_guard.reset_clients()
+
+    assert result["decision"] == "response_blocked"
+    assert result["stage"] == "response"
+    assert result["llm_called"] is True
+
+
+# ══ 5c. no fabricated activity in the console ══════════════════════════════
+def test_a_keyless_turn_pings_nothing(monkeypatch):
+    """The UDP ping adds a row to the Compliance Command Center's live table and
+    bumps its total. With no key the event reaches NO ledger, so those rows were
+    activity that never happened — and dashboard.py takes a max() of the polled
+    total, so an inflated count never comes back down."""
+    import foxy_guard
+    pings: list = []
+    monkeypatch.setattr(foxy_guard.foxy_audit.udp, "send_ping",
+                        lambda payload, host=None, port=None: pings.append(payload))
+    foxy_guard.reset_clients()
+    try:
+        foxy_guard.run("Patient SSN is 123-45-6789.", lambda t: "x",
+                       policy_tag="gdpr", mode="block", api_key="")
+        assert pings == [], "a keyless turn painted a row in the console"
+
+        foxy_guard.run("Patient SSN is 123-45-6789.", lambda t: "x",
+                       policy_tag="gdpr", mode="block",
+                       api_key="foxy_sk_test_only", endpoint="http://127.0.0.1:8000")
+        assert pings, "a keyed turn should still make the fox react"
+    finally:
+        foxy_guard.reset_clients()
+
+
+# ══ 5d. the dependency that makes it all moot ══════════════════════════════
+def _code_only(text: str) -> str:
+    """The lines with their `#` comments removed.
+
+    ⚠ A PLAIN SUBSTRING GREP DOES NOT WORK HERE, and this is the second time
+    that has bitten in this repo. `assert "foxy-audit" in reqs` stayed green
+    when the requirement was replaced by `# foxy-audit removed`: the mutation
+    deleted the dependency and left the words behind, which is exactly what a
+    real person does when they comment a line out.
+    """
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
+def test_the_sdk_is_a_declared_desktop_dependency():
+    """`foxy_guard` imports foxy_audit in a try/except and degrades to
+    SDK_AVAILABLE = False — correct for a missing dependency, and the wrong
+    thing to discover in a shipped build. A documented install brought the whole
+    feature up dead with nothing noticing."""
+    reqs = _code_only((HERE / "requirements.txt").read_text(encoding="utf-8"))
+    declared = [line.strip() for line in reqs.splitlines()
+                if line.strip().lower().replace("_", "-").startswith("foxy-audit")]
+    assert declared, "the SDK is not a live requirement in desktop/requirements.txt"
+
+    spec = _code_only((HERE / "omni_fox.spec").read_text(encoding="utf-8"))
+    assert 'collect_all("foxy_audit")' in spec, \
+        "the frozen build does not bundle the SDK, so the guard ships disabled"
+
+
+# ══ 5e. the strip cannot advertise a policy that is not in force ═══════════
+def test_both_doors_into_settings_refresh_the_strip(popup, monkeypatch):
+    """The gear opens the dialog that now carries the guard controls, so it can
+    leave the strip claiming a policy the next prompt will not be judged under."""
+    import settings_dialog
+
+    def change_it_and_close(self):
+        self.settings.set_guard_policy("hipaa")
+        return 0
+
+    monkeypatch.setattr(settings_dialog.SettingsDialog, "exec", change_it_and_close)
+    assert "gdpr" in popup.guard_strip.left.text()
+
+    popup._open_settings()                       # the gear
+    assert "hipaa" in popup.guard_strip.left.text(), \
+        "the gear left the strip advertising the old policy"
+
+    popup.settings.set_guard_policy("gdpr")
+    popup._open_guard_settings()                 # the strip
+    popup.settings.set_guard_policy("hipaa")
+    popup._open_guard_settings()
+    assert "hipaa" in popup.guard_strip.left.text()
+
+
+def test_the_mock_placeholder_is_cleared_when_a_url_is_needed(app, settings):
+    """Set on one branch only, "Runs in this app — no endpoint" stayed under an
+    empty, required URL box after switching back."""
+    import autostart as asm
+    from settings_dialog import SettingsDialog
+    # autostart= is not optional here, and an existing guard enforces it:
+    # test_d13_companion_settings::test_no_test_in_this_tree_talks_to_the_real_login_items
+    # walks every test file's AST for a SettingsDialog built without the seam,
+    # because a bare one reads — and could write — the login items of whoever
+    # runs the suite. It caught this test in the full run.
+    dlg = SettingsDialog(settings, autostart=asm.Autostart(asm.MemoryBackend()))
+    try:
+        dlg._provider_combo.setCurrentIndex(
+            [dlg._provider_combo.itemData(i)
+             for i in range(dlg._provider_combo.count())].index("mock"))
+        assert "no endpoint" in dlg._url_field.placeholderText()
+
+        dlg._provider_combo.setCurrentIndex(
+            [dlg._provider_combo.itemData(i)
+             for i in range(dlg._provider_combo.count())].index("openai"))
+        assert "no endpoint" not in dlg._url_field.placeholderText()
+        assert dlg._url_field.isEnabled()
+    finally:
+        dlg.deleteLater()
+
+
 # ══ 6. the receipt renders the guard's own dict ════════════════════════════
 def test_the_receipt_shows_what_the_guard_returned(popup):
     from guard_widgets import GuardReceipt
@@ -370,21 +670,24 @@ def test_the_receipt_reports_no_egress_when_there_is_no_key(popup):
     assert "nothing" in rows["what left this machine"]
 
 
-def test_a_shipped_payload_carries_no_prompt_text():
+def test_a_shipped_payload_carries_no_prompt_text(monkeypatch):
     """Content-blindness, measured on the real payload rather than asserted."""
     import foxy_guard
     captured: list = []
-    original = foxy_guard.dispatch.submit
-    foxy_guard.install_tee()
+    # monkeypatch, not a hand-rolled save/restore: the first cut restored the
+    # PRE-TEE submit and left `_TEE_INSTALLED` true, which disabled the wire tee
+    # for the rest of the process and made every later "what left this machine"
+    # assertion pass for the wrong reason. A test that disarms a later test is
+    # worse than a missing test.
+    monkeypatch.setattr(foxy_guard.dispatch, "submit",
+                        lambda cfg, payload, wait=False: captured.append(payload))
     foxy_guard.reset_clients()
     try:
-        foxy_guard.dispatch.submit = lambda cfg, payload, wait=False: captured.append(payload)
         prompt = "Patient Kowalczyk SSN 123-45-6789 needs escalation urgently"
         result = foxy_guard.run(prompt, lambda t: "ok", policy_tag="hipaa",
                                 mode="block", api_key="foxy_sk_test_only",
                                 endpoint="http://127.0.0.1:8000")
     finally:
-        foxy_guard.dispatch.submit = original
         foxy_guard.reset_clients()
 
     assert captured, "nothing was shipped, so this proves nothing"
@@ -392,6 +695,23 @@ def test_a_shipped_payload_carries_no_prompt_text():
     from guard_widgets import leaked_words
     assert leaked_words(prompt, body) == [], "prompt text left the machine"
     assert result["prompt_hash"], "no commitment was recorded"
+
+
+def test_the_wire_tee_survives_a_test_that_replaced_submit():
+    """The tee reinstalls itself over whatever it finds.
+
+    Re-broken by restoring the flag check (`if _TEE_INSTALLED: return`): this
+    then fails, because the previous test left a foreign `submit` in place.
+    """
+    import foxy_guard
+    foxy_guard.dispatch.submit = _plain_submit          # something that is not ours
+    foxy_guard.install_tee()
+    assert getattr(foxy_guard.dispatch.submit, "_foxy_tee", False), \
+        "the tee did not reinstall over a replaced submit"
+
+
+def _plain_submit(cfg, payload, wait=False):
+    return None
 
 
 # ══ 7. the mock model matches the demo's ═══════════════════════════════════

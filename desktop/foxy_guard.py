@@ -115,13 +115,24 @@ _TEE_INSTALLED = False
 def install_tee() -> None:
     """Tee `dispatch.submit` so `run()` can report the bytes. Idempotent.
 
-    Called from `run()` itself rather than from any one caller's setup: a
-    window opened by a different code path would otherwise report "nothing left
-    this machine" while events were shipping, and a surface that under-reports
-    egress is worse than one that shows none.
+    Called from `run()` itself rather than from any one caller's setup: a window
+    opened by a different code path would otherwise report "nothing left this
+    machine" while events were shipping, and a surface that under-reports egress
+    is worse than one that shows none.
+
+    ⚠ THE CHECK IS ON THE FUNCTION, NOT ON A FLAG. A bare `_TEE_INSTALLED` bool
+    said "installed" while `dispatch.submit` had been replaced by somebody else
+    — a test that restored the pre-tee original left the flag true and silently
+    disabled the tee for the whole process, so every later "what left this
+    machine" row read `nothing` and every assertion about it passed for the
+    wrong reason. Marking our own wrapper and looking for the mark means the tee
+    reinstalls itself over whatever it finds instead of trusting a flag.
     """
     global _TEE_INSTALLED
-    if _TEE_INSTALLED or not SDK_AVAILABLE:
+    if not SDK_AVAILABLE:
+        return
+    if getattr(dispatch.submit, "_foxy_tee", False):
+        _TEE_INSTALLED = True
         return
     original = dispatch.submit
 
@@ -130,6 +141,7 @@ def install_tee() -> None:
             _WIRE.append(payload)
         return original(cfg, payload, wait=wait)
 
+    submit._foxy_tee = True
     dispatch.submit = submit
     _TEE_INSTALLED = True
 
@@ -139,22 +151,30 @@ _CLIENTS: dict = {}
 _CLIENT_LOCK = threading.Lock()
 
 
-def _client(api_key: str, endpoint: str, mode: str):
+def _client(api_key: str, endpoint: str, response_scan: str):
     """One client per (key, endpoint, response_scan), built once and reused.
 
-    `response_scan` is a CLIENT setting with no per-decorator override — the SDK
-    chose that because a response block raises into the caller and should be a
-    deployment decision. Here the mode switch IS the deployment, so the cache is
-    keyed by it and `block` turns the response scan on with it. Without that,
-    a response could never be stopped and the "Blocked on the way back" state
-    would be unreachable.
+    ⚠ `response_scan` IS ITS OWN SETTING, NOT THE PROMPT MODE. It was derived
+    from `mode` here — "block" turned the response scan on with it — so choosing
+    "block: stop it before the model" silently started discarding ANSWERS too.
+    Measured under the shipped gdpr default: a reply containing
+    support@foxyaudit.tech was thrown away as `response_pii.email`. "Do not send
+    this prompt" and "do not show me this answer" are two different questions,
+    and the SDK keeps them separate on purpose.
+
+    ⚠ `desktop_ping` FOLLOWS THE KEY. The ping makes the console's live table add
+    a row and bump its total. With no key the event reaches no ledger, so those
+    rows were activity that never happened — fabricated data in the UI, which is
+    a hard rule here, and NOT self-correcting: `dashboard.py` takes a max() of
+    the polled total, so a ping-inflated count never comes back down. With a key
+    the event really is on its way and the row is real.
 
     ⚠ `api_key or ""`, never None. `FoxyConfig.resolve` reads $FOXY_API_KEY when
     api_key is None, so a developer with that variable exported would have this
     chat shipping while the UI said "local only". Same defect as the one fixed
     in demo/mock_llm.py.
     """
-    scan = "block" if mode == "block" else "observe"
+    scan = response_scan if response_scan in ("off", "observe", "block") else "observe"
     cache_key = (api_key, endpoint, scan)
     with _CLIENT_LOCK:
         client = _CLIENTS.get(cache_key)
@@ -164,11 +184,7 @@ def _client(api_key: str, endpoint: str, mode: str):
                 endpoint=endpoint or DEFAULT_ENDPOINT,
                 spool_path=spool_path(),
                 response_scan=scan,
-                # ON, and the point of it: a block emits {"event":
-                # "policy_breach"} to 127.0.0.1:9999, where this app's own
-                # sdk_bridge listener is already waiting and the fox already
-                # answers with SecurityOverlay.flash_red().
-                desktop_ping=True,
+                desktop_ping=bool(api_key),
             )
             _CLIENTS[cache_key] = client
     return client
@@ -188,16 +204,28 @@ def reset_clients() -> None:
 # row it touches.
 
 
-def would_redaction_change(prompt: str, policy_tag: str) -> bool:
-    """True when `redact` mode would actually scrub something out of this prompt.
+def redaction_would_clear(prompt: str, policy_tag: str) -> bool:
+    """True when redacting this prompt removes EVERY finding that fired on it.
 
-    The overlay offers "Retry with redaction" only when the answer is yes. An
-    action that provably changes nothing is a worse dead end than none.
+    ⚠ NOT "did the text change". That is the per-byte test `surviving_rules`
+    exists to replace (#216, four rounds of it): a prompt carrying a redactable
+    SSN beside a Presidio-only date of birth has its SSN scrubbed — so the text
+    moved — while the date of birth still trips the check, and the redact path
+    correctly fail-closes and blocks. Offering "Retry with redaction" there
+    produces a dead-end loop that mints one more blocked event per click.
+
+    So the question is asked per FINDING, using the SDK's own function: evaluate,
+    redact, re-evaluate, and intersect. If anything survives, the retry would
+    block again and is not offered.
     """
     if not SDK_AVAILABLE:
         return False
     try:
-        return policy.redact(prompt, policy_tag) != prompt
+        decision = policy.evaluate(prompt, policy_tag)
+        if not decision.triggered:
+            return False
+        redacted = policy.redact(prompt, policy_tag)
+        return not policy.surviving_rules(decision, redacted, policy_tag)
     except Exception:                       # noqa: BLE001
         return False
 
@@ -239,7 +267,7 @@ def _merge(first, second) -> list:
 
 def run(prompt: str, call_model, *, policy_tag: str = "default",
         mode: str = "block", api_key: str = "", endpoint: str = "",
-        agent: str | None = None) -> dict:
+        agent: str | None = None, response_scan: str = "observe") -> dict:
     """Run `call_model` behind the guard and report everything that happened.
 
     `call_model(text) -> str` receives whatever the guard decided the model may
@@ -253,7 +281,7 @@ def run(prompt: str, call_model, *, policy_tag: str = "default",
                        response=call_model(prompt), model_input=prompt)
 
     install_tee()
-    client = _client(api_key, endpoint, mode)
+    client = _client(api_key, endpoint, response_scan)
     seen: dict = {}
 
     @client.audit(policy=policy_tag, mode=mode, agent=agent)
