@@ -6,6 +6,25 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.10.0 — `explain()` verifies the ruleset it replays
+
+One change, and it is to the *proof* rather than to the guard: nothing about what
+gets blocked, redacted or sent moves. `mode="observe"` and every other mode
+behave exactly as in 1.9.0.
+
+`explain()` read a row's `ruleset_version`, loaded that frozen definition **by
+name**, and replayed it — never comparing the `ruleset_hash` the row also
+recorded. So an install whose registry had been hand-edited, partially upgraded
+or backported replayed *different rules* and reported the result as
+authoritative. It now re-hashes what it loaded and **refuses** on a
+disagreement, with a new status `ruleset_mismatch`. `ExplainResult` gains a
+three-state `ruleset_verified` and `foxy explain` shows it. Details, including
+exactly what "verified" claims, are under [Replaying a recorded
+row](#replaying-a-recorded-row).
+
+> Why 1.10.0 and not 1.9.1: 1.9.0 was already published from a commit without
+> this fix, and PyPI does not accept a re-upload of a released version.
+
 ## 1.9.0 — the guard stops over-blocking, and the ledger stops over-claiming
 
 Four behaviour changes. `mode="observe"` (the default) is untouched; read these
@@ -120,8 +139,26 @@ matched where.
 
 That second check is what makes the first one mean anything. Loading by version
 *name* trusts your install's registry to be untouched; the row records a digest
-so you do not have to. `foxy explain` prints the outcome on the ruleset line —
-`2026.08.3 (verified)` — and `--json` carries it as `ruleset_verified`.
+so you do not have to. `foxy explain` prints the outcome on the ruleset line, and
+`--json` carries it as `ruleset_verified`. There are **three** outcomes, kept
+distinct because "your registry was altered" and "the check never ran" are
+opposite news:
+
+| Line | `ruleset_verified` | Means |
+|---|---|---|
+| `2026.08.3 (definition verified)` | `true` | The digest was checked and agreed. |
+| `2026.08.3 (DEFINITION ALTERED — see above)` | `false` | Checked and **disagreed**. The status is `ruleset_mismatch` and it refuses to replay. |
+| `2026.08.3 (definition not checked)` | `null` | The check did not run — the row records no digest, or an earlier answer (wrong prompt, missing salt) came first. |
+
+**What "verified" claims, exactly.** That the frozen **definition** — every
+pattern and flag, every validator *name*, the policy map, the reasons — is the
+one the row was written against. That is all `ruleset_hash` covers. It does *not*
+cover the validator **implementations** those names point at: those are SDK code,
+no row records a digest of them, so there is nothing to check a local copy
+against. What bounds that gap is a rule the SDK keeps — a validator name's
+meaning is fixed forever, new behaviour takes a new name, and a name this build
+cannot implement raises rather than silently skipping. The word is "definition"
+throughout for that reason.
 
 Four answers are "I cannot", and it says so rather than guessing:
 

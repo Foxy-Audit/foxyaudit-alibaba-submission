@@ -9,15 +9,26 @@ edit a rule without doing so.
 ⚠ THIS MODULE WAS REGENERATED IN PLACE THREE TIMES DURING 1.9.0's REVIEW, against
 the instruction directly above. That was defensible ONLY because the version was
 UNPUBLISHED: no tag existed, so no row anywhere named it and nothing could be
-made to lie. THE 1.9.0 TAG ENDS THAT. From the moment it is cut, this file is
-immutable like 2026.08.1 and 2026.08.2 before it, and any rule change — however
-small, however obviously a fix — mints 2026.08.4.
+made to lie. THE 1.9.0 TAG ENDED THAT. From the moment it was cut, DEFINITION
+below is immutable like 2026.08.1 and 2026.08.2 before it, and any rule change —
+however small, however obviously a fix — mints 2026.08.4.
+
+⚠ THE PROSE YOU ARE READING WAS CORRECTED AFTER THAT TAG, and that is the rule
+working rather than breaking. It named the wrong release for #220 below —
+1.9.0, which shipped from a commit that does not contain that fix — so on every
+1.9.0 install the sentence was FALSE — in the wheel, in the module whose whole job is to be trustworthy.
+What is frozen is DEFINITION, the bytes that reach hash_of(); a docstring reaches
+no hash, so correcting one moves no row's meaning. The digest below is unchanged
+and the pinned-digest test proves it. See ruleset.py, "THE DEFINITION IS
+IMMUTABLE. THE FILE IS NOT." One consequence, stated so nobody reports it as
+tampering: the 1.9.0 wheel's copy of this file is not byte-identical to this one,
+and both hash the same.
 
 The check that catches an in-place edit now EXISTS, and it is worth stating in
 full HERE rather than pointing anywhere, because this module remains in the
 registry forever and a pointer outlives whatever it pointed at:
 
-    SDK #220, fixed in 1.9.0 — explain() loads the definition a row NAMES, then
+    SDK #220, fixed in 1.10.0 — explain() loads the definition a row NAMES, then
     re-hashes it and compares that digest against the `ruleset_hash` the row
     also recorded. The two provenance keys are written together precisely so the
     second can verify the first. On a disagreement it refuses, with the status

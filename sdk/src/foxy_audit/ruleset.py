@@ -22,6 +22,34 @@ emits the FROZEN hash, never a recomputed one — a build that has drifted shoul
 be caught by a red test, not paper over itself by silently emitting a hash for
 rules nobody published.
 
+THE DEFINITION IS IMMUTABLE. THE FILE IS NOT.
+---------------------------------------------
+Said precisely, because "NEVER EDIT" above is a file-level sentence and the rule
+it stands for is narrower:
+
+* IMMUTABLE, once a version is published: ``DEFINITION`` — every byte that
+  reaches :func:`hash_of`. Change any of it and rows already naming that version
+  claim rules that were never theirs. There is no exception, however small and
+  however obviously a fix; a rule change mints the NEXT version.
+* CORRECTABLE, at any time: the module's PROSE — docstrings and comments. They
+  reach no hash, so no row's meaning moves when they change.
+
+That asymmetry is deliberate, not a loophole. A published module's prose can
+turn out to be WRONG — it can cite the release a defect was fixed in and be
+overtaken by events, as this registry's own 2026.08.3 was — and a file-level
+freeze would require the wheel to carry a false sentence forever, in a module
+whose entire job is to be trustworthy. The digest is what customers' rows depend
+on, and it is exactly what stays fixed.
+
+⚠ THE CONSEQUENCE, STATED SO NOBODY REPORTS IT AS TAMPERING: after a prose
+correction, the copy of a frozen module inside an already-published wheel is not
+byte-identical to the copy in this repository. That is expected and provable —
+both hash to the same pinned digest, ``drift()`` is None for both, and
+``introspect.explain`` verifies the DEFINITION, which is why its result field is
+called what it is and says "definition" rather than "ruleset". A prose edit that
+moved a digest would not be a prose edit; the pinned-digest test is what tells
+the two apart.
+
 WHAT THE HASH COVERS, AND WHY
 -----------------------------
 Everything that determines WHICH RULE IDS CAN APPEAR on a row, and nothing else:

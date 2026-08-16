@@ -184,7 +184,22 @@ def _explain(args) -> int:
         # unconfirmed one. The `ruleset_mismatch` status renders through
         # `result.message` like every other status, but "which rules, and are
         # they the ones that ran" is a standing question, not only a failure.
-        state = "verified" if result.ruleset_verified else "NOT VERIFIED"
+        #
+        # ⚠ THREE RENDERINGS, NOT TWO, because `ruleset_verified` is three-state.
+        # A first cut printed "NOT VERIFIED" for anything that was not True —
+        # including `hash_mismatch` and `salt_unavailable`, where the digest
+        # check NEVER RAN and the row's hash in fact agrees with this build. The
+        # same words for "your registry was altered" and "you supplied the wrong
+        # prompt" is the misdiagnosis this whole module exists to prevent.
+        #
+        # It says DEFINITION, not "ruleset": the digest covers the frozen dict,
+        # not the validator code that dict names. See ExplainResult's field.
+        if result.ruleset_verified is True:
+            state = "definition verified"
+        elif result.ruleset_verified is False:
+            state = "DEFINITION ALTERED — see above"
+        else:
+            state = "definition not checked"
         print(f"  ruleset   : {result.ruleset_version} ({state})")
     print(f"  commitment: {'verified' if result.commitment_verified else 'not verified'}")
     for match in result.matches:

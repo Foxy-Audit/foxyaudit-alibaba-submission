@@ -9,11 +9,17 @@ number.
 
 
 **Closed:** **#220** (`explain()` never checked a row's recorded
-`ruleset_hash`) was fixed in 1.9.0 — S9. `explain()` re-hashes the definition it
-loads and refuses with the status `ruleset_mismatch` when it disagrees with what
-the row recorded, and `ExplainResult` carries `ruleset_verified` beside
-`commitment_verified`. Guards, including the hand-edited-registry re-break, are
-in `sdk/tests/test_explain_verifies_the_ruleset.py`.
+`ruleset_hash`) was fixed in **1.10.0** — S9. Not 1.9.0: that release was tagged
+and published from a commit predating the fix, and PyPI does not accept a
+re-upload. `explain()` re-hashes the definition it loads and refuses with the
+status `ruleset_mismatch` when it disagrees with what the row recorded, and
+`ExplainResult` carries a three-state `ruleset_verified` beside
+`commitment_verified` — `None` meaning the check did not run, which is not the
+same news as `False`. It verifies the **definition**, not the validator code that
+definition names; see the field's docstring for the boundary. Guards, including
+the hand-edited-registry re-break, are in
+`sdk/tests/test_explain_verifies_the_ruleset.py`.
+
 ---
 
 ## #219 — a stray separated digit in front of a card number breaks detection

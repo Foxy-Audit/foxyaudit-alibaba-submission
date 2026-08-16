@@ -67,12 +67,35 @@ fallback:
   the replay would be confidently wrong rather than absent.
 * ``predates_provenance`` — a row written before 1.7.0, which names no ruleset.
 
-``ruleset_verified`` is a FIELD rather than a fifth status, exactly as
-``commitment_verified`` is. A row that names a version but records no hash is
-not a failure — the version is known and the commitment matched, so the replay
-is still the best available answer — but the answer is weaker, and the field
-plus a sentence in the message is how the reader learns that instead of being
-told nothing.
+``ruleset_verified`` is a FIELD rather than a fifth status, and it is
+THREE-STATE: ``True`` checked and agreed, ``False`` checked and disagreed (which
+is the ``ruleset_mismatch`` refusal above), ``None`` NOT CHECKED. A row that
+names a version but records no hash is not a failure — the version is known and
+the commitment matched, so the replay is still the best available answer — but
+the answer is weaker, and the field plus a sentence in the message is how the
+reader learns that instead of being told nothing. The third state exists because
+"your registry was altered" and "the check never ran" are opposite news, and one
+``False`` for both would hand a reader the wrong alarm.
+
+WHAT THE DIGEST COVERS, AND WHAT IT DOES NOT
+============================================
+``ruleset_hash`` is ``hash_of()`` of the frozen DEFINITION: pattern sources and
+flags, validator NAMES, the policy map, the reasons. Verifying it proves the
+loaded definition is the one that ran — and stops exactly there.
+
+It does not reach ``_VALIDATORS``. Those implementations are live code in this
+module, versioned with the SDK rather than with the ruleset, and no row records
+a digest of them: there is nothing a local copy could be compared against, so
+extending the check would compare this build to itself and pass unconditionally.
+The partial-upgrade case this module names can therefore still change a replay's
+result through the validator code while the definition verifies.
+
+Two rules bound that gap rather than closing it: a validator name's meaning is
+FIXED FOREVER — new behaviour takes a NEW name, never a redefinition (see
+:func:`replay`) — and a name this build does not implement raises rather than
+silently skipping the check. Both are SDK-side discipline, not something the row
+can prove, which is why every message here says "definition" where it would be
+easy and wrong to say "ruleset".
 """
 
 from __future__ import annotations
@@ -190,14 +213,38 @@ class ExplainResult:
     policy_tag: str = ""
     ruleset_version: str = ""
     commitment_verified: bool = False
-    #: Did the loaded definition hash to what the ROW recorded?
+    #: Did the loaded DEFINITION hash to what the row recorded? Three-state.
     #:
-    #: False is not a failure — it is "the row named a version but no hash, so
-    #: the check could not run", which a row from any shipped SDK never does but
-    #: a hand-edited export can. A DISAGREEMENT is the ``ruleset_mismatch``
-    #: status instead, because then the replay would be wrong rather than
-    #: merely unconfirmed. Same shape as :attr:`commitment_verified`.
-    ruleset_verified: bool = False
+    #: * ``True``  — the digest check ran and AGREED.
+    #: * ``False`` — the digest check ran and DISAGREED. Always accompanied by
+    #:   the ``ruleset_mismatch`` status, because then the replay would be
+    #:   confidently wrong rather than merely unconfirmed.
+    #: * ``None``  — THE CHECK DID NOT RUN. Either the row records no
+    #:   ``ruleset_hash`` (no shipped SDK emits one without the other, so that is
+    #:   a hand-edited export), or ``explain`` answered before reaching it —
+    #:   ``row_not_found``, ``hash_mismatch``, ``salt_unavailable``,
+    #:   ``predates_provenance``, an unknown version.
+    #:
+    #: ⚠ NOT A BOOL, and the third state is the point. Collapsing "altered" and
+    #: "never checked" into one ``False`` tells a reader their registry may have
+    #: been tampered with when in fact they simply supplied the wrong prompt.
+    #:
+    #: ⚠ WHAT ``True`` ASSERTS, AND WHAT IT DOES NOT. It asserts that the frozen
+    #: DEFINITION — every pattern source and flag, every validator NAME, the
+    #: policy map, the reasons — is byte-identical, canonically, to the one the
+    #: row was written against. That is the whole of what ``ruleset_hash``
+    #: covers, because it is ``hash_of()`` of that dict and nothing else.
+    #:
+    #: It does NOT assert that the validator IMPLEMENTATIONS behind those names
+    #: are the same code. ``_VALIDATORS`` lives in this module and is versioned
+    #: with the SDK, not with the ruleset; a row records no digest of it, so
+    #: there is nothing to compare a local copy against — a check would compare
+    #: this build to itself and always pass. What holds instead is a rule this
+    #: SDK keeps: a validator name's meaning is FIXED FOREVER and a new
+    #: behaviour gets a new name (see :func:`replay`), and a name this build
+    #: cannot implement RAISES rather than silently skipping. Those bound the
+    #: gap; they do not close it, and this field does not claim they do.
+    ruleset_verified: bool | None = None
     matches: list = field(default_factory=list)
 
     @property
@@ -466,7 +513,8 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             f"the row do belong together; it is the rules that cannot be "
             f"trusted.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True)
+            ruleset_version=str(version), commitment_verified=True,
+            ruleset_verified=False)
 
     # A row can name a version and record no hash. No shipped SDK emits one
     # without the other — both keys landed together in 1.7.0 and `provenance()`
@@ -482,7 +530,12 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # `foxy explain` died with UnicodeEncodeError on that path, which is the tool
     # failing to say anything at all. Guarded by
     # test_every_explain_message_survives_a_cp1252_console.
-    ruleset_verified = bool(recorded_hash)
+    #
+    # None, NOT False: the check did not run. `False` is reserved for a digest
+    # that ran and DISAGREED, which is the refusal above. See the field's
+    # docstring — collapsing the two would report a hand-edited export in the
+    # same words as a tampered registry.
+    ruleset_verified = True if recorded_hash else None
     unverified_note = "" if ruleset_verified else (
         f" NOTE: the row records no ruleset_hash, so this SDK could not confirm "
         f"that its copy of {version!r} is the definition that actually ran. "
@@ -511,7 +564,15 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             f"replay this row. Replaying it without that validator would report "
             f"matches the SDK which wrote the row had discarded.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True)
+            ruleset_version=str(version), commitment_verified=True,
+            # ⚠ THIS PATH IS PAST THE DIGEST CHECK, so it carries the verdict
+            # rather than dropping back to the default. The distinction is the
+            # whole diagnosis here: a VERIFIED definition naming a validator
+            # this build lacks means "upgrade the SDK", while the same message
+            # with the digest unchecked leaves open that the definition itself
+            # is not what it claims. Defaulting would have thrown away an
+            # answer already computed three lines up.
+            ruleset_verified=ruleset_verified)
     recorded = list((metadata.get("policy_rules") or []))
     if not matches:
         return ExplainResult(
