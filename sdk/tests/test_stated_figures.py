@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from foxy_audit import pii
+from foxy_audit import pii, ruleset
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -68,11 +68,22 @@ needs_checkout = pytest.mark.skipif(
 #: The files whose numbers ship. README goes to PyPI; the changelog block is read
 #: at the REPL; pii.py's header is what the next person to touch the detectors
 #: reads; the frozen module explains a version rows will name forever.
+#: ⚠ THE FROZEN MODULES ARE GLOBBED, NOT LISTED. Written as a hand-list this
+#: named v2026_08_3 alone, so when 1.11.0 minted v2026_08_4 — a module whose
+#: docstring states 2 016, 621, 10.08%, 3.10% and 504 of 540, and which ships in
+#: the wheel forever — every one of those numbers went unscanned. Each new
+#: version would have had to be remembered here, which is the failure mode this
+#: whole file exists to remove.
+_FROZEN = sorted(
+    "sdk/src/foxy_audit/rulesets/" + p.name
+    for p in (REPO / "sdk/src/foxy_audit/rulesets").glob("v2026_*.py")
+) if _IN_A_REPO_CHECKOUT else []
+
 DOC_FILES = [
     "sdk/README.md",
     "sdk/src/foxy_audit/__init__.py",
     "sdk/src/foxy_audit/pii.py",
-    "sdk/src/foxy_audit/rulesets/v2026_08_3.py",
+    *_FROZEN,
     "docs/known-issues.md",
 ]
 
@@ -277,6 +288,12 @@ _NOT_A_MEASUREMENT = {
     (555, 111): "phone-number literals in prose (\"reserved 555/111/222 numbers\")",
 }
 
+#: How many figure claims the shipped docs make. ONE definition, used by both
+#: the assertion and its failure message — they were two literals, and the
+#: message still said 22 after the assertion moved to 39, so the guard that
+#: exists to catch a stale number was itself telling readers a stale one.
+_EXPECTED_CLAIMS = 40
+
 #: ``N of M``, ``N/M`` and ``N -> M``: the three shapes a figure claim takes in
 #: these files. Numbers may carry thin-space grouping ("2 849", "20 000").
 #: A grouped number is 1-3 digits plus AT LEAST ONE space-separated 3-digit
@@ -384,8 +401,9 @@ def test_the_scan_actually_finds_the_claims():
     # table gained a fifth row and a re-derived cost sentence, and the README
     # gained a 1.11.0 section. Every one of the 17 new claims was checked against
     # measured() by the guard above before this line was moved.
-    assert len(claims) == 39, (
-        f"the extractor finds {len(claims)} claims, expected 22. A doc sentence "
+    assert len(claims) == _EXPECTED_CLAIMS, (
+        f"the extractor finds {len(claims)} claims, expected {_EXPECTED_CLAIMS}. "
+        f"A doc sentence "
         f"was added or removed, or the extractor stopped matching a form: "
         f"{sorted((n, d, rel) for n, d, rel, _ in claims)}")
 
@@ -694,6 +712,11 @@ def test_the_sdist_sweep_actually_reads_the_shipped_files():
     assert "sdk/src/foxy_audit/pii.py" in shipped
     assert "sdk/src/foxy_audit/rulesets/v2026_08_3.py" in shipped, \
         "the frozen module — which carried this exact defect — is not swept"
+    # EVERY frozen module, not the one someone remembered. Each ships in the
+    # wheel forever and each states numbers.
+    assert len(_FROZEN) == len(ruleset.known_versions()), _FROZEN
+    for rel in _FROZEN:
+        assert rel in shipped, rel
     # ⚠ TESTS SHIP. Building the sdist and unpacking it shows 23 files under
     # tests/ and 6 more under tests_testbed/, so excluding them here — as an
     # earlier version did, on the strength of a comment asserting the opposite —

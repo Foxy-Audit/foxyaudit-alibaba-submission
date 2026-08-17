@@ -127,7 +127,7 @@ def describe_live() -> dict:
     Compared against the frozen entry to detect an unversioned edit. It is NOT
     what goes on the wire — see the module docstring.
     """
-    from . import pii, policy, response_policy
+    from . import issuer_ranges, pii, policy, response_policy
 
     return {
         "schema": _SCHEMA,
@@ -187,7 +187,18 @@ def describe_live() -> dict:
                             # rows recorded "luhn+distinct" and it still means
                             # Luhn plus not-one-repeated-digit, exactly what it
                             # meant on the day they were written.
-                            "validator": "luhn+iin+distinct"},
+                            "validator": "luhn+iin+distinct",
+                            # ⚠ AND THE VALIDATOR'S DATA, NOT ONLY ITS NAME.
+                            # `luhn+iin+distinct` consults an issuer table that
+                            # lives in code. Recording only the name left that
+                            # table OUTSIDE the hash: adding one prefix flipped
+                            # replay() from no match to phi.credit_card while
+                            # this digest and drift() both stayed put — SDK #220
+                            # one layer down, in the one detector 1.11.0
+                            # changes. The digest is over the FLAT PREFIX SET,
+                            # so a presentation-only regrouping mints nothing.
+                            # See issuer_ranges.TABLE_DIGEST.
+                            "validator_data_sha256": issuer_ranges.TABLE_DIGEST},
         },
         "policy_map": {
             "baseline": sorted(policy._BASELINE_CHECKS),

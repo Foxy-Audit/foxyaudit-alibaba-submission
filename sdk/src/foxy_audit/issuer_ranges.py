@@ -31,25 +31,50 @@ holes rather than being a range:
     8  healthcare, telecommunications
     9  national assignment
 
-⚠ ``81`` IS DELIBERATELY ABSENT. It is listed as UnionPay by several secondary
-sources, but MII 8 is healthcare and telecommunications, and UnionPay's own
-assignment is 62. Measured on the checked-in corpora, including it changed no
-PAN detection (nothing in ``REAL_PANS`` begins 81) and cost 20 extra build-id
-false positives plus the ONE zero-heavy false positive that keeps that column at
-zero: ``00000000-0000-0819-8108-420735282737``. Excluded on the evidence, and
-recorded here rather than silently, because a genuinely-assigned range excluded
-from this table becomes a MISSED CARD — see the limit stated in
-:func:`starts_with_assigned_iin`.
+⚠ ``81`` IS RuPay, AND IT IS DELIBERATELY ABSENT. Getting this label right
+matters more than the decision does. An earlier draft of this paragraph called
+81 a UnionPay mislabel and reasoned from the MII: WRONG. 81 is a real, assigned
+range belonging to **RuPay**, India's domestic card network — so excluding it is
+not the removal of a bogus listing, it is a **deliberate false negative on real
+cards**, and the next reader has to see it as that.
 
-⚠ THIS TABLE IS AN INPUT TO A FROZEN RULESET. It is not itself hashed — the
-ruleset records the VALIDATOR NAME ``luhn+iin+distinct``, and this table is the
-code behind that name. Widening or narrowing it changes what fires without
-changing any digest, which is precisely the gap ``introspect``'s
-``ruleset_verified`` field documents. A change here is a change to what the
-validator MEANS, so it takes a NEW validator name and a NEW ruleset version.
+RuPay's ranges are 60, 6521, 6522, 81, 82 and 508. Two of them, 6521 and 6522,
+are ALREADY ACCEPTED here — they fall under Discover's ``65``. The other four
+are not, so a RuPay PAN outside 65xxxx is missed.
+
+The trade stands on the measurement: adding 81 detects no PAN in the obligation
+corpus and costs 20 build-id false positives plus the ONE zero-heavy false
+positive that keeps that column at zero,
+``00000000-0000-0819-8108-420735282737``. So it buys nothing measurable and
+costs something measurable — but there is NO RuPay CARD ANYWHERE IN THE CORPUS,
+so "buys nothing" is a statement about the fixtures and not about the world.
+That is exactly the blind spot :func:`starts_with_assigned_iin` warns about. If RuPay
+coverage matters to you, add 60, 81, 82 and 508, mint a ruleset, and expect the
+build-id column to rise. That is a product decision, not a fact about the
+payment system, and it is recorded here so it stays a decision.
+
+⚠ THIS TABLE IS AN INPUT TO THE FROZEN RULESET, AND IT IS NOW HASHED INTO IT.
+It did not used to be. The ruleset recorded the validator NAME
+``luhn+iin+distinct`` and nothing more, so adding one prefix here flipped
+``replay(load("2026.08.4"), …)`` from no match to ``phi.credit_card`` while the
+ruleset digest stayed ``13569591…`` and ``drift()`` stayed None — a sealed
+ruleset whose meaning moved with its fingerprint unmoved. That is SDK #220 one
+layer down: 1.10.0 exists to make the digest identify the rules, and a rule that
+consults unhashed data is not identified by it.
+
+:data:`TABLE_DIGEST` closes it. ``describe_live`` records the digest inside the
+``credit_card`` entry, so it reaches ``hash_of`` like any pattern: an edit here
+moves the ruleset hash, ``drift()`` goes non-None, and a row minted under a
+different table is caught by ``explain``'s existing ``ruleset_mismatch`` rather
+than replayed under rules that were never its own. A change to this table is
+still a change to what the validator MEANS, and still takes a new validator name
+and a new ruleset version — but now nothing has to remember that for it to hold.
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
 
 
 def _span(low: int, high: int) -> tuple[str, ...]:
@@ -90,6 +115,23 @@ _PREFIXES: tuple[str, ...] = tuple(sorted(
     key=lambda p: (-len(p), p)))
 
 
+#: SHA-256 over the canonical JSON of the SORTED FLAT PREFIX SET — the thing
+#: that actually decides an answer.
+#:
+#: Deliberately NOT over ``ASSIGNED_IINS``. The grouping by network is for
+#: readers: moving ``37`` from ``amex`` to ``visa`` would be wrong and confusing
+#: and would change no verdict, so hashing the grouped mapping would mint a
+#: ruleset version for an edit that alters nothing. Same asymmetry ``ruleset.py``
+#: already applies to rule ordering, and for the same reason — a version that
+#: moves on inert edits teaches people to ignore it moving.
+#:
+#: Same recipe as :func:`ruleset.hash_of` so an independent verifier
+#: reimplementing one gets the other for free.
+TABLE_DIGEST: str = hashlib.sha256(
+    json.dumps(sorted(_PREFIXES), sort_keys=True, separators=(",", ":"),
+               ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
 def starts_with_assigned_iin(digits: str) -> bool:
     """Do these digits begin with a prefix any card network actually issues?
 
@@ -104,4 +146,4 @@ def starts_with_assigned_iin(digits: str) -> bool:
     return digits.startswith(_PREFIXES)
 
 
-__all__ = ["ASSIGNED_IINS", "starts_with_assigned_iin"]
+__all__ = ["ASSIGNED_IINS", "TABLE_DIGEST", "starts_with_assigned_iin"]

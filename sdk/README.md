@@ -37,9 +37,19 @@ Measured on the checked-in obligation corpora, one run, same populations:
 > obligation corpus is built from mainstream test cards (`4111…`, `5500…`,
 > `6011…`, `3782…`) which all carry valid IINs *by construction*, so it cannot
 > show what a regional or private-label issuer outside the table would do — it
-> would now be **missed**. SDK #219 is the standing reminder that a corpus only
-> disproves what it contains. If you issue or process cards outside the eight
-> networks above, measure before upgrading.
+> would now be **missed**.
+>
+> **A named example, not a hypothetical: RuPay.** India's domestic network
+> issues from 60, 6521, 6522, 81, 82 and 508. Only 6521 and 6522 are covered
+> here, because they fall inside Discover's `65`. **A RuPay card on 60, 81, 82
+> or 508 is not detected as a card.** That is a deliberate trade — those ranges
+> cost false positives and the corpus contains no RuPay card to weigh against
+> them — and it is reversible: add the ranges, mint a ruleset, expect the
+> build-id column to rise.
+>
+> SDK #219 is the standing reminder that a corpus only disproves what it
+> contains. If you issue or process cards outside the eight networks above,
+> measure before upgrading.
 
 Rows are stamped **ruleset 2026.08.4**, validator `luhn+iin+distinct`. That is a
 new name, not a redefinition: a row stamped 2026.08.3 records `luhn+distinct` and

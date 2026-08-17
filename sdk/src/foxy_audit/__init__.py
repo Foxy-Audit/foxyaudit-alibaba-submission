@@ -68,8 +68,18 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #   obligation corpus is built from mainstream test cards (4111…, 5500…, 6011…,
 #   3782…) which all carry valid IINs BY CONSTRUCTION, so it cannot show what a
 #   regional or private-label issuer outside the table would do — it would now
-#   be MISSED. #219 is the standing reminder that a corpus only disproves what
-#   it contains. If you issue or process cards outside the eight networks named
+#   be MISSED.
+#
+#   NAMED, BECAUSE IT IS NOT HYPOTHETICAL: RuPay. India's domestic network
+#   issues from 60, 6521, 6522, 81, 82 and 508, and only the two 65-prefixed
+#   ranges are covered
+#   (they sit inside Discover's 65). A RuPay card on 60, 81, 82 or 508 is NOT
+#   detected. A deliberate trade — those ranges cost false positives, and no
+#   RuPay card exists in the corpus to weigh against them — and a reversible
+#   one: add the ranges, mint a ruleset, expect the build-id column to rise.
+#
+#   #219 is the standing reminder that a corpus only disproves what it
+#   contains. If you issue or process cards outside the eight networks named
 #   above, measure before you upgrade.
 #
 #   RULESET 2026.08.4, VALIDATOR `luhn+iin+distinct`. A new name, not a

@@ -193,8 +193,11 @@ def _is_card_number(digits: str) -> bool:
     CORPUS and unproven in general: ``PAN_SHAPES`` is built from mainstream test
     cards (4111…, 5500…, 6011…, 3782…) which all carry valid IINs BY
     CONSTRUCTION. A regional or private-label issuer outside the table would now
-    be missed, and this corpus cannot see that. #219 is the standing reminder
-    that a corpus only disproves what it contains.
+    be missed, and this corpus cannot see that. It is not hypothetical: RuPay's
+    60, 81, 82 and 508 ranges are outside the table today, so those cards are a
+    known false negative — see :mod:`foxy_audit.issuer_ranges` for why, and for
+    the two RuPay ranges that ARE covered. #219 is the standing reminder that a
+    corpus only disproves what it contains.
 
     Kept SEPARATE from :func:`_luhn_ok` on purpose. That function stays the plain
     checksum because ``introspect.replay`` reimplements it to replay rows written

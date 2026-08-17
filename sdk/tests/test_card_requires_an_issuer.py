@@ -136,16 +136,61 @@ def test_the_issuer_table_reads_like_a_table():
     assert pii._is_card_number("2223003122003222"), "a real 2-series Mastercard"
 
 
-def test_81_is_absent_and_the_reason_is_written_down():
-    """⚠ A DELIBERATE EXCLUSION MUST NOT LOOK LIKE AN OVERSIGHT.
+def test_81_is_absent_and_recorded_as_a_deliberate_false_negative():
+    """⚠ A DELIBERATE EXCLUSION MUST NOT LOOK LIKE AN OVERSIGHT — AND THE REASON
+    RECORDED FOR IT MUST BE THE TRUE ONE.
 
-    ``81`` is listed as UnionPay by several secondary sources; MII 8 is
-    healthcare and telecommunications, and UnionPay's own assignment is 62. It
-    was excluded on measured evidence, and the next person to "fix the missing
-    UnionPay range" needs to find that reasoning, not rediscover it.
+    The first version of this guard enforced a WRONG reason. It asserted the
+    docstring named UnionPay and 62, because the docstring claimed 81 was a
+    UnionPay mislabel and reasoned from the major industry identifier. 81 is
+    RuPay, India's domestic network: a real assigned range. So excluding it is
+    not the removal of a bogus listing, it is a deliberate FALSE NEGATIVE ON REAL
+    CARDS — and a guard that locks in the comfortable version of the reason is
+    worse than no guard, because it certifies it.
+
+    What is required now is the accurate account: the network named, the fact
+    that the range is real, and the measurement the trade rests on.
     """
-    assert not any(p.startswith("81") for p in issuer_ranges.ASSIGNED_IINS["unionpay"])
-    assert "81" in issuer_ranges.__doc__ and "62" in issuer_ranges.__doc__
+    assert not any(p.startswith("81")
+                   for prefixes in issuer_ranges.ASSIGNED_IINS.values()
+                   for p in prefixes)
+
+    doc = issuer_ranges.__doc__
+    assert "RuPay" in doc, "name the network whose cards are missed"
+    assert "81" in doc
+    # RuPay's other ranges, so the gap is stated in full rather than as one case.
+    for other in ("60", "6521", "6522", "82", "508"):
+        assert other in doc, other
+    # And the two halves of an honest trade: what it costs, and that the corpus
+    # containing no RuPay card is why it looks free.
+    assert "false negative" in doc.lower()
+    # ⚠ POSITIVE, NOT A BLOCKLIST. The first cut asserted the word "mislabel"
+    # was absent — and went red on THIS module, whose paragraph uses that word to
+    # disavow it. Forbidding the vocabulary of an honest correction is the same
+    # mistake as forbidding a module from recounting its own near miss. What is
+    # required instead is the substance a wrong version cannot carry: that the
+    # range is REAL and ASSIGNED, which is the whole reason excluding it costs
+    # something.
+    assert "real" in doc.lower() and "assigned" in doc.lower()
+    assert "deliberate" in doc.lower(), "an exclusion must not read as an oversight"
+    assert "no rupay card" in doc.lower(), (
+        "say that the corpus contains no RuPay card, which is why the trade "
+        "looks free")
+
+
+def test_the_RuPay_ranges_the_table_DOES_accept_are_stated_correctly():
+    """The docstring's factual claim, executed rather than believed.
+
+    It says 6521 and 6522 are already accepted, via Discover's ``65``, and that
+    the other four are not. Both halves are checked here, because a sentence
+    about which cards get through is exactly the kind that rots silently.
+    """
+    accepted = {"6521", "6522"}
+    missed = {"60", "81", "82", "508"}
+    for prefix in accepted | missed:
+        padded = prefix + "0" * (16 - len(prefix))
+        got = issuer_ranges.starts_with_assigned_iin(padded)
+        assert got is (prefix in accepted), f"RuPay {prefix}: accepted={got}"
 
 
 # ── 2. old evidence replays under its own rules ──────────────────────────────
@@ -286,9 +331,15 @@ def test_the_corpus_limit_is_stated_wherever_the_improvement_is(where, rel, ):
         pytest.skip("cross-checks repository documentation, absent from the sdist")
 
     text = (repo / rel).read_text(encoding="utf-8")
-    # The three parts of the claim, each in whatever words the surface uses.
+    # The four parts of the claim, each in whatever words the surface uses.
     assert "by construction" in text.lower(), f"{where}: why the corpus cannot see it"
     assert "#219" in text or "219" in text, f"{where}: the standing reminder"
+    # ⚠ AND THE NAMED EXAMPLE. "a regional issuer might be missed" is an
+    # abstraction a reader skims; "a RuPay card on 60, 81, 82 or 508 is not
+    # detected" is a fact they can act on. Deleting the name from any one
+    # surface was silent until this line — measured in the mutation sweep.
+    assert "rupay" in text.lower(), (
+        f"{where}: name the network whose cards this actually misses")
     assert any(word in text.lower() for word in ("regional", "private-label")),         f"{where}: what would actually be missed"
 
 

@@ -17,7 +17,8 @@ import time
 
 import pytest
 
-from foxy_audit import dispatch, policy, response_policy, ruleset
+from foxy_audit import (dispatch, issuer_ranges, policy, response_policy,
+                        ruleset)
 
 
 # ── the registry is frozen, not current ──────────────────────────────────────
@@ -76,8 +77,75 @@ PUBLISHED = {
     # 2026.08.4 — the card validator becomes "luhn+iin+distinct" (SDK 1.11.0).
     # Added here, never in place of the line above it: .3 keeps its digest
     # because rows in customers' chains name it.
-    "2026.08.4": "13569591ec9854f5f83e61cb0a50025fd5055f9b66d10b5918570ed24feb57ce",
+    "2026.08.4": "998de7e3ae678f0a5c47ade7ffeaee1c996b8b132827dbc9b0585d5cf5249cc6",
 }
+
+#: The ISSUER TABLE's own digest, pinned for the same reason the ruleset digests
+#: above are: a coordinated edit cannot satisfy a literal.
+#:
+#: ⚠ WHY A SECOND PIN, WHEN THE TABLE IS NOW INSIDE THE RULESET HASH. Because
+#: the two catch different things, and this one catches the case that got
+#: through. Deleting a prefix, or adding one the corpora can SEE, is already
+#: caught by the rate assertions in test_card_requires_an_issuer.py — the `81`
+#: mutation failed nine tests. An addition the corpora CANNOT see — a prefix no
+#: fixture happens to start with — changed `replay(load("2026.08.4"), ...)` from
+#: no match to `phi.credit_card` with 706 tests still passing. Folding the table
+#: into the definition makes drift() catch that; this literal is what catches
+#: someone regenerating the frozen module to make drift() quiet again.
+ISSUER_TABLE_DIGEST = (
+    "da701750bb3d6ae78700831ca37fe4ef70c9c1fbf103f91ab3f22c549ce2ab8b")
+
+
+def test_the_issuer_table_still_hashes_to_the_number_that_was_published():
+    """⚠ IF THIS FAILS, DO NOT UPDATE IT. The table decides what `credit_card`
+    fires on, and 2026.08.4 rows in customers' chains were written under it.
+    A change here is a change to what `luhn+iin+distinct` MEANS: give the
+    validator a new name and mint a new ruleset, exactly as a pattern change
+    would."""
+    assert issuer_ranges.TABLE_DIGEST == ISSUER_TABLE_DIGEST
+
+
+def test_the_issuer_table_reaches_the_ruleset_hash():
+    """The fix for the defect the pin above documents, asserted directly.
+
+    Not "the field exists" — that a CHANGE to the table moves the ruleset digest.
+    The field could be present and stale and this is what would notice.
+    """
+    frozen = ruleset.load("2026.08.4")
+    assert (frozen["pii_detectors"]["credit_card"]["validator_data_sha256"]
+            == issuer_ranges.TABLE_DIGEST)
+
+    before = ruleset.hash_of(ruleset.describe_live())
+    original = issuer_ranges._PREFIXES
+    try:
+        # ⚠ A PREFIX NO CORPUS CAN REACH. `713` is not an issuer and no fixture
+        # in identifier_corpora starts with it, so every rate assertion in the
+        # suite stays green — which is precisely the case that shipped.
+        issuer_ranges._PREFIXES = original + ("713",)
+        issuer_ranges.TABLE_DIGEST = _table_digest_of(issuer_ranges._PREFIXES)
+        after = ruleset.hash_of(ruleset.describe_live())
+    finally:
+        issuer_ranges._PREFIXES = original
+        issuer_ranges.TABLE_DIGEST = _table_digest_of(original)
+
+    assert before != after, (
+        "adding an issuer prefix left the ruleset digest unmoved: a sealed "
+        "ruleset's meaning can change with its fingerprint intact")
+    assert ruleset.drift() is None, "the fixture must restore the live table"
+
+
+def _table_digest_of(prefixes):
+    """The digest recipe, applied to an arbitrary prefix set.
+
+    Written out here rather than imported so the test computes the number
+    independently — a helper borrowed from the module under test would agree
+    with it by construction.
+    """
+    import hashlib
+    import json
+    return hashlib.sha256(
+        json.dumps(sorted(prefixes), sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=True).encode("utf-8")).hexdigest()
 
 
 @pytest.mark.parametrize("version,digest", sorted(PUBLISHED.items()))
@@ -213,6 +281,50 @@ def test_2026_08_3_differs_from_its_predecessor_in_EXACTLY_the_named_fields():
     # addition is a decision someone made rather than something that slipped in.
     assert set(flatten(new)) - set(flatten(old)) == {"pii_detectors.phone.validator"}
     assert not set(flatten(old)) - set(flatten(new)), "a FIELD was REMOVED"
+
+
+def test_2026_08_4_differs_from_its_predecessor_in_EXACTLY_the_named_fields():
+    """The same claim for SDK 1.11.0's mint, and the guard that was missing.
+
+    2026.08.3 got a field-by-field diff and 2026.08.4 did not, so "only the card
+    validator moved" was a sentence in a release note with nothing executing it.
+    An accidental second change riding along in the regenerated literal — a
+    pattern edited in the same session, a policy family added — would have been
+    invisible: `drift()` compares the live code to the module regenerated FROM
+    that live code, so it agrees with whatever the mint captured.
+    """
+    old = ruleset.load("2026.08.3")
+    new = ruleset.load("2026.08.4")
+
+    def flatten(node, prefix=""):
+        if isinstance(node, dict):
+            out = {}
+            for key, value in node.items():
+                out.update(flatten(value, f"{prefix}.{key}" if prefix else str(key)))
+            return out
+        return {prefix: node}
+
+    moved = {path for path, value in flatten(old).items()
+             if flatten(new).get(path) != value}
+    assert moved == {
+        # The WHOLE of the behaviour change: "luhn+distinct" becomes
+        # "luhn+iin+distinct". The PATTERN did not move — the issuer test is
+        # applied to the assembled digits, deliberately, because applying an
+        # issuer rule to the separator-chained candidate is what lost real PANs
+        # twice in the S8 rounds.
+        "pii_detectors.credit_card.validator",
+    }, sorted(moved)
+
+    # A FIELD was ADDED, and exactly one: the digest of the issuer table the new
+    # validator consults. Without it the table sat OUTSIDE the ruleset hash and a
+    # sealed ruleset's meaning could move with its fingerprint unchanged.
+    assert set(flatten(new)) - set(flatten(old)) == {
+        "pii_detectors.credit_card.validator_data_sha256"}
+    assert not set(flatten(old)) - set(flatten(new)), "a FIELD was REMOVED"
+
+    # Rule IDS are unchanged, which is what decides whether a 2026.08.3 row
+    # still resolves at all.
+    assert ruleset.explained_ids(old) == ruleset.explained_ids(new)
     assert ruleset.explained_ids(old) == ruleset.explained_ids(new), \
         "the rule id vocabulary moved — a row naming 2026.08.2 may stop resolving"
 
@@ -304,7 +416,10 @@ def test_the_card_VALIDATOR_replays_under_the_name_the_row_recorded():
 
     # ...and a REAL card still replays as one under every version, so the split
     # is about the placeholder class and not about the detector being weakened.
-    for version in ("2026.08.1", "2026.08.2", "2026.08.3"):
+    # ⚠ EVERY REGISTERED VERSION, not a list that has to be remembered. Written
+    # as a literal tuple it stopped at 2026.08.3, so the version 1.11.0 minted
+    # never went through the loop that exists to cover every version.
+    for version in ruleset.known_versions():
         hits = {m.rule_id for m in introspect.replay(ruleset.load(version),
                                                      "card 4111111111111111",
                                                      "hipaa")}

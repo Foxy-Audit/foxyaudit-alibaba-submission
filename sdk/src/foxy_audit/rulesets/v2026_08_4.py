@@ -45,13 +45,21 @@ missed (SDK #219). That is true ON THIS CORPUS and unproven in general.
 PAN_SHAPES is built from mainstream test cards (4111..., 5500..., 6011...,
 3782...) which all carry valid IINs BY CONSTRUCTION, so the corpus cannot show
 what a regional or private-label issuer outside the table would do -- it would be
-MISSED. #219 is the standing reminder that a corpus only disproves what it
-contains.
+MISSED.
+
+NAMED, BECAUSE IT IS NOT HYPOTHETICAL: RuPay, India's domestic network, issues
+from 60, 6521, 6522, 81, 82 and 508. Only the two 65-prefixed ranges are covered
+here, inside Discover's `65`. A RuPay card on 60, 81, 82 or 508 is NOT detected
+under this ruleset. That is a deliberate trade recorded in
+`foxy_audit.issuer_ranges`, not an oversight, and reversing it means a NEW
+validator name and a NEW version -- not an edit to this table.
+
+#219 is the standing reminder that a corpus only disproves what it contains.
 
 There is no public issue tracker to cite: the repository is private, so any
 GitHub URL here would be a 404 on the PyPI page this text reaches.
 
-sha256 over canonical JSON: 13569591ec9854f5f83e61cb0a50025fd5055f9b66d10b5918570ed24feb57ce
+sha256 over canonical JSON: 998de7e3ae678f0a5c47ade7ffeaee1c996b8b132827dbc9b0585d5cf5249cc6
 """
 
 VERSION = "2026.08.4"
@@ -59,7 +67,8 @@ VERSION = "2026.08.4"
 DEFINITION = {'pii_detectors': {'credit_card': {'flags': [],
                                    'pattern': '(?<![0-9A-Za-z])[1-9](?:[ '
                                               '\\-]?\\d){12,18}(?![0-9A-Za-z])',
-                                   'validator': 'luhn+iin+distinct'},
+                                   'validator': 'luhn+iin+distinct',
+                                   'validator_data_sha256': 'da701750bb3d6ae78700831ca37fe4ef70c9c1fbf103f91ab3f22c549ce2ab8b'},
                    'email': {'flags': [], 'pattern': '[\\w.\\-]+@[\\w\\-]+\\.\\w+'},
                    'ip_address': {'flags': [],
                                   'pattern': '\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b'},

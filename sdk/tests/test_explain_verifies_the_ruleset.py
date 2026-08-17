@@ -107,8 +107,14 @@ def _tamper(monkeypatch, version: str, mutate):
 def test_an_ALTERED_registry_is_caught_and_named(tmp_path, monkeypatch):
     """⚠ THE POINT OF #220, driven end to end.
 
-    The row is minted against the real 2026.08.3. This build's copy is then
-    edited — one character of one pattern — and the replay must refuse.
+    The row is minted against the real CURRENT_VERSION — whichever that is;
+    ``_honest_metadata`` reads it, and this sentence used to name 2026.08.3 as
+    though it were fixed. That is the staleness class the test twelve lines
+    below now avoids by reading the validator name from the definition, and it
+    had already happened here.
+
+    This build's copy is then edited — one character of one pattern — and the
+    replay must refuse.
     """
     metadata = _honest_metadata()          # digest taken BEFORE the tamper
 
