@@ -1,0 +1,734 @@
+{
+  "started": "2026-08-17T14:53:14.959023+00:00",
+  "finished": "2026-08-17T14:53:14.960802+00:00",
+  "providers": [],
+  "settings": {
+    "stability_runs": 5,
+    "rpm": 8.0,
+    "retries": 3
+  },
+  "corpus_rows": 40,
+  "measurements": {
+    "deterministic_labeled_baseline": {
+      "labeled_rows": 20,
+      "correct": 20,
+      "accuracy_pct": 100.0,
+      "wrong": []
+    },
+    "combine": {
+      "exhaustive": {
+        "clean+clean": {
+          "decision": "clean",
+          "policy_breach": false,
+          "risk_score": 10
+        },
+        "clean+breach": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "clean+contradictory_clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "clean+unknown_unavailable": {
+          "decision": "clean",
+          "policy_breach": false,
+          "risk_score": 10
+        },
+        "clean+unknown_quarantined": {
+          "decision": "clean",
+          "policy_breach": false,
+          "risk_score": 10
+        },
+        "breach+clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "breach+breach": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "breach+contradictory_clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "breach+unknown_unavailable": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "breach+unknown_quarantined": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "contradictory_clean+clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "contradictory_clean+breach": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "contradictory_clean+contradictory_clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "contradictory_clean+unknown_unavailable": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "contradictory_clean+unknown_quarantined": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "unknown_unavailable+clean": {
+          "decision": "clean",
+          "policy_breach": false,
+          "risk_score": 10
+        },
+        "unknown_unavailable+breach": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "unknown_unavailable+contradictory_clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "unknown_unavailable+unknown_unavailable": {
+          "decision": "unknown",
+          "policy_breach": false,
+          "risk_score": 0
+        },
+        "unknown_unavailable+unknown_quarantined": {
+          "decision": "unknown",
+          "policy_breach": false,
+          "risk_score": 0
+        },
+        "unknown_quarantined+clean": {
+          "decision": "clean",
+          "policy_breach": false,
+          "risk_score": 10
+        },
+        "unknown_quarantined+breach": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 80
+        },
+        "unknown_quarantined+contradictory_clean": {
+          "decision": "breach",
+          "policy_breach": true,
+          "risk_score": 40
+        },
+        "unknown_quarantined+unknown_unavailable": {
+          "decision": "unknown",
+          "policy_breach": false,
+          "risk_score": 0
+        },
+        "unknown_quarantined+unknown_quarantined": {
+          "decision": "unknown",
+          "policy_breach": false,
+          "risk_score": 0
+        }
+      },
+      "empirical": []
+    }
+  },
+  "rows": [
+    {
+      "id": "L01",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L02",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L03",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L04",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L05",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L06",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L07",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 70,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal",
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L08",
+      "expected": "breach",
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L09",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L10",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L11",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L12",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L13",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L14",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L15",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L16",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L17",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L18",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L19",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "L20",
+      "expected": "clean",
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U01",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U02",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U03",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U04",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U05",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U06",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U07",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U08",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U09",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U10",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U11",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "local_pii_signal"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U12",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U13",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U14",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U15",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U16",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U17",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U18",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U19",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": false,
+        "reason": "deterministic metadata checks passed; semantic content not evaluated",
+        "risk_score": 0,
+        "decision": "clean",
+        "rules": [],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    },
+    {
+      "id": "U20",
+      "expected": null,
+      "deterministic": {
+        "policy_breach": true,
+        "reason": "deterministic metadata policy rule matched",
+        "risk_score": 60,
+        "decision": "breach",
+        "rules": [
+          "token_threshold_exceeded"
+        ],
+        "judge_provider": null,
+        "judge_model": null
+      },
+      "runs": {}
+    }
+  ]
+}

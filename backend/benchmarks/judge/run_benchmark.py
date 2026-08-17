@@ -268,10 +268,14 @@ def main() -> int:
     ap.add_argument("--rpm", type=float, default=8.0,
                     help="max requests/minute per provider")
     ap.add_argument("--estimate-only", action="store_true")
+    ap.add_argument("--offline", action="store_true",
+                    help="no provider calls: deterministic baseline + "
+                         "combine() exhaustive table only")
     ap.add_argument("--corpus", default=str(HERE / "corpus.json"))
     args = ap.parse_args()
 
-    providers = [p.strip() for p in args.providers.split(",") if p.strip()]
+    providers = ([] if args.offline
+                 else [p.strip() for p in args.providers.split(",") if p.strip()])
     for p in providers:
         if p not in EVALUATORS:
             ap.error(f"unknown provider {p!r}")
@@ -357,7 +361,7 @@ def main() -> int:
     out_dir = HERE / "results"
     out_dir.mkdir(exist_ok=True)
     stamp = started.strftime("%Y%m%dT%H%M%SZ")
-    out_path = out_dir / f"run-{stamp}-{'-'.join(providers)}.json"
+    out_path = out_dir / f"run-{stamp}-{'-'.join(providers) or 'offline'}.json"
     out_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"\nwrote {out_path}")
     print(json.dumps(m, indent=2))
