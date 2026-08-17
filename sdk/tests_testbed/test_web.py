@@ -347,12 +347,46 @@ def test_a_long_label_no_longer_welds_itself_to_its_value():
     """``_field("reached model", "yes")`` rendered ``reached modelyes``.
 
     ``ljust`` pads only while the label is shorter than the field, and at
-    ``len(first) >= indent`` it is a no-op. Eleven characters is the boundary,
-    because ``_field`` prepends two spaces to a fourteen-column field.
+    ``len(first) >= indent`` it is a no-op. ``_field`` prepends two spaces to a
+    fourteen-column field, so TWELVE characters is the boundary -- see
+    :func:`test_the_boundary_is_where_the_module_says_it_is`, which computes it
+    rather than trusting this sentence.
     """
     lines = scoreboard._field("reached model", "yes")
     assert "reached modelyes" not in lines[0]
     assert lines[0] == "  reached model yes"
+
+
+def test_the_boundary_is_where_the_module_says_it_is():
+    """⚠ THE NUMBER ITSELF, MEASURED -- because it was stated wrong.
+
+    Three places said "eleven characters", including this file, and the
+    arithmetic is ``2 + len(label) >= FIELD_INDENT``, which makes it twelve: an
+    eleven-character label still lands its value in column fourteen exactly.
+    Nothing was broken by the wrong sentence, and that is precisely why it
+    survived review twice -- a comment cannot be wrong in a way a test notices
+    unless a test reads it.
+
+    So the boundary is derived here and the prose points at this function. The
+    longest label shipping today is checked too: the day one grows past the
+    boundary, this is what says so.
+    """
+    first_colliding = next(
+        n for n in range(1, 40)
+        if len("  " + "x" * n) >= scoreboard.FIELD_INDENT)
+    assert first_colliding == 12
+    # One below the boundary still aligns exactly; the boundary itself does not.
+    assert scoreboard._field("x" * 11, "V")[0].index("V") == scoreboard.FIELD_INDENT
+    assert scoreboard._field("x" * 12, "V")[0].index("V") == scoreboard.FIELD_INDENT + 1
+
+    shipping = set()
+    for module in (cli, scoreboard):
+        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+        body = _python_code(source)          # docstring examples are not calls
+        shipping |= set(re.findall(r'_field\(\s*"([^"]+)"', body))
+    assert shipping, "no _field call sites found -- has the renderer moved?"
+    longest = max(shipping, key=len)
+    assert len(longest) < first_colliding, (longest, len(longest))
 
 
 @pytest.mark.parametrize("length", range(1, 26))
@@ -360,10 +394,11 @@ def test_there_is_always_a_separator_whatever_the_label_length(length):
     """⚠ THE PROPERTY, DERIVED FROM THE MODULE, not the one reported case.
 
     The bug was reported as "reached model"; testing that one string would leave
-    every other label of eleven-or-more characters unguarded, and the boundary
-    itself is computed from ``FIELD_INDENT`` rather than restated as 14 -- a
-    guard that restates the implementation's own constant is green by
-    construction.
+    every other over-long label unguarded. The range deliberately spans both
+    sides of the boundary and the boundary is computed from ``FIELD_INDENT``
+    rather than written in -- a guard that restates the implementation's own
+    constant is green by construction, and a guard that restates a number a
+    human worked out is green until the human was wrong.
     """
     label = "x" * length
     head = scoreboard._field(label, "VALUE")[0]
@@ -465,6 +500,78 @@ def test_nothing_on_the_page_is_assigned_through_innerhtml():
     for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write",
                    "eval("):
         assert banned not in PAGE_CODE, banned
+
+
+# ── 6b · what survives High Contrast ──────────────────────────────────────────
+def _style() -> str:
+    return PAGE_SOURCE.split("<style", 1)[1].split("</style>", 1)[0]
+
+
+def _forced_colors_block() -> str:
+    style = _style()
+    start = style.index("@media (forced-colors:active)")
+    depth, i = 0, style.index("{", start)
+    for end in range(i, len(style)):
+        if style[end] == "{":
+            depth += 1
+        elif style[end] == "}":
+            depth -= 1
+            if depth == 0:
+                return style[i:end]
+    raise AssertionError("the forced-colors block does not close")
+
+
+def test_the_descendant_form_of_the_sector_rule_appears_nowhere():
+    """⚠ THE SAME NESTED-CARD DEFECT, IN THE MODE NOBODY LOOKS AT.
+
+    ``.sector span`` matches ``.nm`` and ``.ti`` as well as the card, so every
+    sector renders as a bordered box inside a bordered box. It was fixed in the
+    main stylesheet, explained in a comment there, and then written again in the
+    forced-colors block -- where it shipped, because the only way to see it is to
+    render High Contrast on purpose. A fix described in one comment is not a fix
+    applied everywhere, so this bans the pattern rather than trusting the prose.
+    """
+    style = re.sub(r"/\*.*?\*/", "", _style(), flags=re.S)
+    assert re.search(r"\.sector\s+span", style) is None, (
+        "use `.sector > span`: the descendant form also matches .nm and .ti")
+
+
+def test_every_selection_state_is_re_established_for_forced_colors():
+    """⚠ HIGH CONTRAST OVERRIDES EVERY PROPERTY THE SELECTED SECTOR USED.
+
+    Selection was carried by ``border-color`` plus ``background``, both of which
+    forced-colors replaces with system colours, and the radio that would have
+    said which sector is chosen is ``opacity:0``. All three rendered identically.
+    Screenshot-confirmed under ``--force-high-contrast``, before and after.
+
+    So every ``:checked`` rule must have a counterpart inside the forced-colors
+    block. It is scoped to ``:checked`` deliberately: a SELECTION has no other
+    carrier, whereas the verdict marks -- which also distinguish themselves by
+    fill -- carry the word BLOCKED or ALLOWED inside them and lose nothing when
+    the fill goes. Colour is never the only carrier on this page; this is the one
+    state where it nearly was.
+    """
+    style = re.sub(r"/\*.*?\*/", "", _style(), flags=re.S)
+    forced = _forced_colors_block()
+    outside = style.replace(forced, "")
+    checked = {sel.strip() for sel in re.findall(r"([^{}]*:checked[^{}]*)\{", outside)}
+    assert checked, "no :checked rules found -- has the sector switch changed?"
+    for selector in checked:
+        assert selector in forced, (
+            "{0!r} carries a selection state that High Contrast erases, and the "
+            "forced-colors block does not re-establish it".format(selector))
+
+
+def test_the_real_radio_is_what_carries_selection_in_forced_colors():
+    """The platform draws a native radio's checked state whatever the palette.
+
+    Dressing the state up in system colours would work too, and would keep the
+    page one repaint away from the same failure. Bringing the control back is
+    the repair that does not depend on this stylesheet being right.
+    """
+    forced = _forced_colors_block()
+    assert "opacity:1" in forced.replace(" ", "")
+    assert "position:static" in forced.replace(" ", "")
 
 
 def test_every_response_replaces_the_nonce_placeholder(server):
@@ -596,6 +703,75 @@ def test_a_rebound_hostname_is_refused(server):
     with pytest.raises(urllib.error.HTTPError) as caught:
         urllib.request.urlopen(request, timeout=10)
     assert caught.value.code == 421
+
+
+def test_an_idle_connection_does_not_wedge_the_server():
+    """⚠ A SERIAL SERVER HAS EXACTLY ONE REQUEST SLOT, so a stalled client is an
+    outage rather than a slowdown -- and with no handler timeout it is a
+    permanent one, with nothing logged and nothing raised.
+
+    A browser's speculative preconnect opens a socket and sends nothing. So does
+    a port scan. This opens one, sends nothing, and requires a NORMAL request
+    made afterwards to still be answered.
+
+    The shipped timeout is ten seconds, which no test should wait for, so this
+    builds its own server with a short one. That is the only value it changes:
+    the mechanism under test is the class attribute existing at all, which is
+    asserted separately below.
+    """
+    import socket
+
+    handler = type("Brief", (web.Handler,), {"timeout": 0.4})
+    built = web.build_server(web.Testbed(), port=0)
+    built.RequestHandlerClass = type(
+        "BriefBound", (handler,),
+        {"testbed": built.RequestHandlerClass.testbed,
+         "bind": built.RequestHandlerClass.bind})
+    thread = threading.Thread(target=built.serve_forever, daemon=True)
+    thread.start()
+    try:
+        stalled = socket.create_connection(("127.0.0.1", built.server_address[1]),
+                                           timeout=5)
+        try:
+            status, payload = call(built, "/session")
+        finally:
+            stalled.close()
+        assert status == 200
+        assert payload["provider"]["name"] == "mock"
+    finally:
+        built.shutdown()
+        built.server_close()
+        thread.join(timeout=5)
+
+
+def test_the_handler_carries_a_timeout_at_all():
+    assert isinstance(web.Handler.timeout, (int, float))
+    assert web.Handler.timeout > 0
+
+
+def test_the_body_cap_cannot_bite_before_the_prompt_cap():
+    """⚠ TWO LIMITS ON ONE QUANTITY, AND THE DOCUMENTED ONE NEVER FIRED.
+
+    The body cap was a flat 64 KiB checked against raw bytes, so a prompt of
+    astral characters hit it at roughly 5,400 -- and ``MAX_PROMPT_CHARS``, the
+    number a user is actually told, was unreachable for anything but Latin text.
+
+    Asserted by ENCODING a worst-case prompt rather than by re-deriving the
+    constant: ``json.dumps`` defaults to ``ensure_ascii``, which is the pessimal
+    encoder and worse than any browser, so clearing it clears every real client.
+    """
+    worst = "\U0001f600" * web.MAX_PROMPT_CHARS       # one char, twelve bytes escaped
+    body = json.dumps({"sector": "healthcare", "mode": "block", "prompt": worst})
+    assert len(body.encode("utf-8")) <= web.MAX_BODY_BYTES, (
+        len(body.encode("utf-8")), web.MAX_BODY_BYTES)
+
+
+def test_an_over_long_non_latin_prompt_is_refused_for_the_reason_it_is_too_long(server):
+    """The reason matters: a body-size refusal names a limit the user cannot see."""
+    status, payload = ask(server, prompt="\U0001f600" * (web.MAX_PROMPT_CHARS + 1))
+    assert status == 413
+    assert payload["error"] == "prompt too long"
+    assert str(web.MAX_PROMPT_CHARS) in payload["detail"]
 
 
 @pytest.mark.parametrize("body,expected", [

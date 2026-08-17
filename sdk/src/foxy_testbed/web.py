@@ -87,13 +87,29 @@ PAGE_FILENAME = "page.html"
 #: ``<style>`` and one ``<script>`` are the only ones its CSP admits.
 NONCE_PLACEHOLDER = "__CSP_NONCE__"
 
-#: A bound on the request body. A demo prompt is a paragraph; anything past this
-#: is a mistake or a probe, and reading it into memory first is how a local
-#: listener becomes a way to exhaust one.
-MAX_BODY_BYTES = 64 * 1024
-#: A bound on the prompt itself, applied after decoding. Bigger than any probe
-#: in the corpus by two orders of magnitude.
+#: A bound on the prompt, in CHARACTERS. Bigger than any probe in the corpus by
+#: two orders of magnitude, and the limit a person can actually hit.
 MAX_PROMPT_CHARS = 20_000
+
+#: The most bytes one character can become inside a JSON request body. A Python
+#: ``str`` counts an astral character as ONE, and the pessimal encoder --
+#: ``json.dumps`` with its default ``ensure_ascii`` -- writes it as an escaped
+#: surrogate pair, ``\uXXXX\uXXXX``, which is twelve bytes. A browser's
+#: ``JSON.stringify`` sends raw UTF-8 and never exceeds four.
+_WORST_JSON_BYTES_PER_CHAR = 12
+
+#: A bound on the whole request body, so a local listener cannot be made to read
+#: an arbitrary amount into memory.
+#:
+#: ⚠ DERIVED FROM THE PROMPT LIMIT RATHER THAN CHOSEN, BECAUSE THE TWO WERE
+#: MEASURING THE SAME THING AND DISAGREEING. It was a flat 64 KiB, checked first
+#: against raw bytes -- so a prompt of emoji hit the byte cap at about 5,400
+#: characters and :data:`MAX_PROMPT_CHARS` was unreachable for anything but
+#: Latin text. Two limits on one quantity, where the one a user is told about is
+#: the one that never fires. Now the body cap cannot bite before the character
+#: cap does, whatever the script; ``test_web.py`` asserts the derivation by
+#: encoding a worst-case prompt rather than trusting this arithmetic.
+MAX_BODY_BYTES = MAX_PROMPT_CHARS * _WORST_JSON_BYTES_PER_CHAR + 4096
 
 #: Where each live provider's key is read from when --api-key is not given.
 #: The same map ``__main__`` uses, so one flag cannot mean two things.
@@ -252,6 +268,19 @@ class Handler(BaseHTTPRequestHandler):
 
     server_version = "foxy-testbed"
     sys_version = ""
+
+    #: ⚠ WITHOUT THIS A SINGLE IDLE CONNECTION WEDGES THE WHOLE SERVER, silently.
+    #: :func:`build_server` is deliberately serial (see its docstring), so the
+    #: one request in progress is the only one there is -- and a client that
+    #: opens a socket and sends nothing leaves ``readline`` blocked forever with
+    #: no error anywhere. That is not a hypothetical: a browser's speculative
+    #: preconnect does exactly this, and so does any port scan.
+    #:
+    #: ``socketserver.StreamRequestHandler.setup`` applies it to the connection,
+    #: and ``BaseHTTPRequestHandler.handle_one_request`` already treats the
+    #: resulting timeout as a closed connection rather than an error. Generous,
+    #: because a human pasting into a textarea is not the slow client here.
+    timeout = 10
 
     # ── guards ────────────────────────────────────────────────────────────────
     def _origin_ok(self) -> bool:

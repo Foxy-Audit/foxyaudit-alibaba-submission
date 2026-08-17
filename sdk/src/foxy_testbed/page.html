@@ -25,28 +25,70 @@
    and fails on a stale digit. Ten of the eleven numbers here were wrong by about
    1.5% when they were first written from hand arithmetic, and that guard is what
    found them. A number in prose it does not parse is a number nothing checks, so
-   the prose below states relationships and the block states quantities. Every status fill is checked against the CARD BEHIND IT as well as
-   against its own ink: this project has shipped a chip whose text cleared 4.5:1
-   while the pill itself was all but indistinguishable from the card behind it,
-   so the mark dissolved and only the letters were left.  */
+   the prose here states relationships and the block below states quantities.
+
+   Every status fill is checked against the CARD BEHIND IT as well as against
+   its own ink: this project has shipped a chip whose text cleared 4.5:1 while
+   the pill itself was all but indistinguishable from the card behind it, so the
+   mark dissolved and only the letters were left.  */
 :root{
-  --bg:#0e0c0a;          /* page ground                                       */
-  --surf:#1c1815;        /* card                                              */
-  --surf2:#221d18;       /* inset: the prompt box, the reply, code            */
-  --sel:#2a2018;         /* the chosen sector; --muted clears 4.83:1 on it     */
+  --bg:#0e0c0a;          /* page ground                                      */
+  --surf:#1c1815;        /* card                                             */
+  --surf2:#221d18;       /* inset: the prompt box, the reply, code           */
+  --sel:#2a2018;         /* the chosen sector -- a tint, never the state      */
   --line:#322b23;        /* container edge; decorative, carries no state      */
-  --ctl:#7a6f62;         /* control edge; 3.59:1 on --surf                    */
-  --ink:#f7f1e8;         /* primary text; 15.70:1 on --surf                   */
-  --muted:#978c7e;       /* secondary text; 5.35:1 on --surf, 5.07 --surf2    */
-  --fox:#ff7a2e;         /* brand, primary action, focus; 6.78:1 on --surf    */
+  --ctl:#7a6f62;         /* control edge; held to 3:1, unlike --line          */
+  --ink:#f7f1e8;         /* primary text                                     */
+  --muted:#978c7e;       /* secondary text                                   */
+  --fox:#ff7a2e;         /* brand, primary action, focus ring                */
 
   /* Verdict marks. Solid fills with dark ink, so both halves are measurable:
      fill-vs-card is the check a chip usually fails.                          */
-  --st-allowed:#3ddc84;  /* nothing fired             9.88:1 on --surf        */
-  --st-enforced:#c9b7ff; /* the guard acted           9.83:1 on --surf        */
-  --st-flagged:#ffc83d;  /* recorded, not prevented  11.40:1 on --surf        */
-  --st-fault:#ff6b5e;    /* the provider failed       6.31:1 on --surf        */
-  --on-status:#0e0c0a;   /* ink on any status fill; 6.99:1 at its worst       */
+  --st-allowed:#3ddc84;  /* nothing fired                                    */
+  --st-enforced:#c9b7ff; /* the guard acted                                  */
+  --st-flagged:#ffc83d;  /* recorded, not prevented                          */
+  --st-fault:#ff6b5e;    /* the provider failed                              */
+  --on-status:#0e0c0a;   /* ink on any status fill                           */
+
+  /* ⚠ EVERY RATIO THIS PAGE CLAIMS, IN ONE FORM A GUARD CAN PARSE, AND THE
+     COUNT IS ASSERTED TOO. These used to live as prose on the token lines, and
+     the checker's regex matched only the shape "N.NN:1 on --token" -- so three
+     of the fourteen were silently skipped for writing it another way: "clears
+     ... on it", "... --surf2" with no colon, "... at its worst" naming no
+     ground at all. Mutating those three to nonsense left the suite green: the
+     values were right and the COVERAGE claim was not.
+
+     So the syntax is uniform, and test_web_contrast.py asserts that the number
+     of claims it parses equals the number of "N.NN:1" strings anywhere in this
+     stylesheet. A ratio written in prose, or in a shape this line does not
+     match, now fails the suite rather than being quietly ignored.
+
+     @contrast --ink         on --surf        15.70:1
+     @contrast --ink         on --surf2       14.88:1
+     @contrast --ink         on --sel         14.19:1
+     @contrast --ink         on --bg          17.39:1
+     @contrast --muted       on --bg           5.92:1
+     @contrast --muted       on --surf         5.35:1
+     @contrast --muted       on --surf2        5.07:1
+     @contrast --muted       on --sel          4.83:1
+     @contrast --ctl         on --surf         3.59:1
+     @contrast --ctl         on --surf2        3.40:1
+     @contrast --ctl         on --sel          3.24:1
+     @contrast --fox         on --bg           7.51:1
+     @contrast --fox         on --surf         6.78:1
+     @contrast --fox         on --surf2        6.42:1
+     @contrast --fox         on --sel          6.13:1
+     @contrast --st-allowed  on --surf         9.88:1
+     @contrast --st-enforced on --surf         9.83:1
+     @contrast --st-flagged  on --surf        11.40:1
+     @contrast --st-fault    on --surf         6.31:1
+     @contrast --on-status   on --st-allowed  10.94:1
+     @contrast --on-status   on --st-enforced 10.88:1
+     @contrast --on-status   on --st-flagged  12.63:1
+     @contrast --on-status   on --st-fault     6.99:1
+     @contrast --on-status   on --fox          7.51:1
+     @contrast --sel         on --surf         1.11:1
+     @contrast --line        on --surf         1.26:1                          */
 
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   /* Monospace for rule ids, ruleset versions, decision stamps and timings --
@@ -195,6 +237,7 @@ textarea::placeholder{color:var(--muted);opacity:1}
 }
 .send:hover:not(:disabled){filter:brightness(1.08)}
 .send:disabled{opacity:.55;cursor:progress}
+textarea:disabled{opacity:.55;cursor:not-allowed}
 .ghost{
   min-height:38px;padding:8px 14px;border:1px solid var(--ctl);border-radius:8px;
   background:transparent;color:var(--muted);cursor:pointer;
@@ -330,9 +373,38 @@ textarea::placeholder{color:var(--muted);opacity:1}
 }
 @media (forced-colors:active){
   /* Every fill and shadow here is dropped by High Contrast, so the marks that
-     carry state get a border that survives it. */
-  .mark,.sector span,.probe,.record,.panel,.reply,.nothing,.empty{border:1px solid}
+     carry state get a border that survives it.
+
+     ⚠ `.sector > span`, WITH THE CHILD COMBINATOR, for the same reason the rule
+     near the top of this file has one. This block said `.sector span` and so
+     re-created the nested-card defect that comment describes -- three boxes per
+     sector -- in the one mode nobody looks at. A fix explained in a comment is
+     not a fix applied everywhere it belongs. */
+  .mark,.sector > span,.probe,.record,.panel,.reply,.nothing,.empty{border:1px solid}
   .send,.ghost,select,textarea{border:1px solid}
+
+  /* ⚠ THE CHOSEN SECTOR WAS INVISIBLE HERE, AND EVERY SIGNAL IT USED IS ONE
+     HIGH CONTRAST OVERRIDES. Selection was carried by `border-color:var(--fox)`
+     plus `background:var(--sel)`; forced-colors replaces both with system
+     colours, so all three sectors rendered identically -- and the radio that
+     would have said which is which is `opacity:0`. Screenshot-confirmed under
+     --force-high-contrast. This repo has paid for the same class of thing
+     before: a transparent border survives forced-colors and a `border:0` grep
+     cannot find it.
+
+     The repair is to stop dressing up a control and show the real one. The
+     native radio is drawn by the platform, which draws its checked state
+     whatever the palette is, so it is returned to the flow instead of being
+     left stretched invisibly across the whole card. The `Highlight` outline is
+     a second and independent signal: a system colour, so forced-colors keeps
+     it rather than overriding it. */
+  .sector{display:flex;align-items:center;gap:10px}
+  .sector input{
+    position:static;inset:auto;width:auto;height:auto;opacity:1;
+    flex:0 0 auto;margin:0;
+  }
+  .sector > span{flex:1 1 auto;min-height:0}
+  .sector input:checked + span{outline:3px solid Highlight;outline-offset:-1px}
 }
 </style>
 </head>
@@ -374,10 +446,13 @@ textarea::placeholder{color:var(--muted);opacity:1}
     <div class="work">
     <form class="panel" id="composer" novalidate>
       <label class="vh" for="prompt">Prompt</label>
-      <textarea id="prompt" placeholder="Type a prompt and send it through the guard." autocomplete="off" spellcheck="false"></textarea>
+      <!-- Dead in the markup, not merely disabled by script on load: the page is
+           useless until /session names a sector, and a control that accepts a
+           prompt it cannot send is worse than one that visibly waits. -->
+      <textarea id="prompt" disabled placeholder="Type a prompt and send it through the guard." autocomplete="off" spellcheck="false"></textarea>
       <div class="composer-foot">
         <span class="keyhint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> sends</span>
-        <button class="send" id="send" type="submit">Send prompt</button>
+        <button class="send" id="send" type="submit" disabled>Send prompt</button>
       </div>
     </form>
 
@@ -496,7 +571,9 @@ textarea::placeholder{color:var(--muted);opacity:1}
   // than from the `decision` label -- see familyOf.
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { config: null, sector: "", mode: "", turns: 0 };
+  // `inFlight` is the send lock. It lives here rather than being read off the
+  // button, because Ctrl+Enter never looks at the button.
+  var state = { config: null, sector: "", mode: "", turns: 0, inFlight: false };
 
   // ── DOM helpers ───────────────────────────────────────────────────────────
   // Everything reaches the page through textContent. Nothing is ever assigned
@@ -728,20 +805,41 @@ textarea::placeholder{color:var(--muted);opacity:1}
   }
 
   // ── talking to the server ─────────────────────────────────────────────────
-  function problem(text) {
+  // ⚠ THE LEAD IS AN ARGUMENT BECAUSE THERE ARE TWO FAILURES, NOT ONE. This
+  // said "Could not run that turn." unconditionally, and the bootstrap reused
+  // it -- so a server that never answered /session reported a failed turn, on an
+  // empty transcript, before the user had sent anything.
+  function problem(lead, text) {
     var box = $("problem");
     box.textContent = "";
-    box.appendChild(el("b", "", "Could not run that turn. "));
+    box.appendChild(el("b", "", lead + " "));
     box.appendChild(document.createTextNode(text));
     show(box, true);
   }
 
+  // Enabled only once /session has answered -- see the bootstrap at the bottom.
+  function setComposerReady(ready) {
+    $("prompt").disabled = !ready;
+    $("send").disabled = !ready;
+  }
+
   function send(event) {
     if (event) { event.preventDefault(); }
+    // ⚠ GATED ON THE FLAG, NOT ON THE BUTTON'S `disabled`. Ctrl+Enter reaches
+    // this function directly, so disabling the button locked one entrance and
+    // left the other open: three rapid presses ran three turns for one prompt,
+    // which on a live provider is three billed calls. The flag is the lock; the
+    // button's state is only how the lock is drawn.
+    if (state.inFlight) { return; }
+    // The composer is dead until the rail is built. Without this, a prompt sent
+    // during the bootstrap posts sector:"" and comes back 400 "unknown sector",
+    // naming a control the user never touched.
+    if (!state.config) { return; }
     var text = $("prompt").value;
     if (!text.trim()) { return; }
 
     var button = $("send");
+    state.inFlight = true;
     button.disabled = true;
     button.textContent = "Sending…";
     $("stream").setAttribute("aria-busy", "true");
@@ -762,9 +860,13 @@ textarea::placeholder{color:var(--muted);opacity:1}
     }).catch(function (err) {
       // Errors name the problem and the recovery. A turn that failed here proved
       // nothing about the guard, and saying so beats a red box.
-      problem(err.message + " Nothing was recorded for it, and it says nothing "
+      problem("Could not run that turn.",
+        err.message + " Nothing was recorded for it, and it says nothing "
         + "about what the guard would have done. Your prompt is still in the box.");
     }).then(function () {
+      // Released here rather than in either branch above, so a thrown render
+      // cannot leave the composer locked for the rest of the session.
+      state.inFlight = false;
       button.disabled = false;
       button.textContent = "Send prompt";
       $("stream").setAttribute("aria-busy", "false");
@@ -785,14 +887,21 @@ textarea::placeholder{color:var(--muted);opacity:1}
   });
 
   afterStreamChange();
+  setComposerReady(false);
   fetch("/session").then(function (response) {
     return response.json();
   }).then(function (config) {
     state.config = config;
     buildRail();
+    setComposerReady(true);
   }).catch(function () {
-    problem("the testbed server did not answer. It may have been stopped — "
-      + "restart it with python -m foxy_testbed.web and reload this page.");
+    // A DIFFERENT LEAD, because this is a different failure: nothing has been
+    // sent, so there is no turn that could have failed. The composer stays dead
+    // rather than inviting a prompt this page has nowhere to send.
+    problem("Could not reach the testbed server.",
+      "It did not answer, and may have been stopped. Restart it with "
+      + "python -m foxy_testbed.web and reload this page. Nothing you typed "
+      + "has gone anywhere.");
   });
 }());
 </script>

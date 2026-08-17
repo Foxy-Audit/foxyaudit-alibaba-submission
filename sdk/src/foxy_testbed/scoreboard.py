@@ -345,11 +345,17 @@ def _wrap(text: str, indent: int, first: str = "") -> list:
     to be ``first.ljust(indent) + body[0]``, which pads only while the label is
     SHORTER than the field; at ``len(first) >= indent`` it is a no-op and the
     value is welded onto the label. ``_field("reached model", "yes")`` rendered
-    as ``reached modelyes`` -- measured, not theorised. The label that trips it
-    is eleven characters, because :func:`_field` prepends two spaces to a
-    fourteen-column field, and the longest one shipping today is ten
-    (``"  provider"``, ``"  STILL SENT"`` at twelve) -- so this was latent, and
-    T2 and T3 both render fields through here.
+    as ``reached modelyes`` -- measured, not theorised.
+
+    THE BOUNDARY IS TWELVE CHARACTERS, and this paragraph said eleven until
+    someone checked it. :func:`_field` prepends two spaces to a fourteen-column
+    field, so the collision is ``2 + len(label) >= 14``: an eleven-character
+    label still lands its value in column fourteen exactly, and a TWELVE-character
+    one is the first that cannot. The longest label shipping today is
+    ``"STILL SENT"`` at ten, which is why this was latent -- and T2 and T3 both
+    render fields through here, so the first surface wanting a longer one would
+    have shipped it. Do not restate the number without recomputing it from
+    :data:`FIELD_INDENT`; ``test_web.py`` derives it rather than repeating it.
 
     A single space is appended when the label cannot fit, rather than the value
     being pushed onto its own line: it costs no line, and the misalignment stays
@@ -378,9 +384,9 @@ def _wrap(text: str, indent: int, first: str = "") -> list:
 
 
 #: The column a field's value starts in. Two of those columns are the leading
-#: indent :func:`_field` adds, so a label of eleven characters or more is the one
-#: that overflows -- see :func:`_wrap`. Named so a guard can derive the boundary
-#: instead of restating 14.
+#: indent :func:`_field` adds, so a label of TWELVE characters or more is the one
+#: that overflows (``2 + 12 >= 14``) -- see :func:`_wrap`. Named so a guard can
+#: derive that boundary instead of restating either number.
 FIELD_INDENT = 14
 
 
