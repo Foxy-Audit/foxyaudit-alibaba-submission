@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Foxy Audit &mdash; compliance testbed</title>
+<style nonce="__CSP_NONCE__">
+/* ── tokens ────────────────────────────────────────────────────────────────
+   The project's warm-orange dark palette, inherited from foxy-sale-page/site.css
+   rather than invented here. Two deliberate divergences, both measured:
+
+   --muted is #978c7e, not the sale page's #8c8174. That value falls UNDER 4.5:1
+   against --surf2 -- this surface's lightest fill, and the one the prompt box
+   uses -- so placeholder text on it would have missed AA. The sale page never
+   puts muted text on that fill and so never had the problem. One token that
+   clears AA on all three grounds beats three tokens that each clear one.
+
+   --ctl exists because a form control's edge is the only thing that says it is a
+   control, so it is held to 3:1. The decorative --line is nowhere near that,
+   which is right for a container edge and wrong for a border carrying state.
+
+   ⚠ EVERY PRECISE RATIO ON THIS PAGE IS WRITTEN IN THE BLOCK BELOW AND NOWHERE
+   ELSE, because test_web_contrast.py recomputes each one from these very lines
+   and fails on a stale digit. Ten of the eleven numbers here were wrong by about
+   1.5% when they were first written from hand arithmetic, and that guard is what
+   found them. A number in prose it does not parse is a number nothing checks, so
+   the prose below states relationships and the block states quantities. Every status fill is checked against the CARD BEHIND IT as well as
+   against its own ink: this project has shipped a chip whose text cleared 4.5:1
+   while the pill itself was all but indistinguishable from the card behind it,
+   so the mark dissolved and only the letters were left.  */
+:root{
+  --bg:#0e0c0a;          /* page ground                                       */
+  --surf:#1c1815;        /* card                                              */
+  --surf2:#221d18;       /* inset: the prompt box, the reply, code            */
+  --sel:#2a2018;         /* the chosen sector; --muted clears 4.83:1 on it     */
+  --line:#322b23;        /* container edge; decorative, carries no state      */
+  --ctl:#7a6f62;         /* control edge; 3.59:1 on --surf                    */
+  --ink:#f7f1e8;         /* primary text; 15.70:1 on --surf                   */
+  --muted:#978c7e;       /* secondary text; 5.35:1 on --surf, 5.07 --surf2    */
+  --fox:#ff7a2e;         /* brand, primary action, focus; 6.78:1 on --surf    */
+
+  /* Verdict marks. Solid fills with dark ink, so both halves are measurable:
+     fill-vs-card is the check a chip usually fails.                          */
+  --st-allowed:#3ddc84;  /* nothing fired             9.88:1 on --surf        */
+  --st-enforced:#c9b7ff; /* the guard acted           9.83:1 on --surf        */
+  --st-flagged:#ffc83d;  /* recorded, not prevented  11.40:1 on --surf        */
+  --st-fault:#ff6b5e;    /* the provider failed       6.31:1 on --surf        */
+  --on-status:#0e0c0a;   /* ink on any status fill; 6.99:1 at its worst       */
+
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  /* Monospace for rule ids, ruleset versions, decision stamps and timings --
+     data and measurement, which is what mono is for. Not for prose.          */
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Consolas,"Liberation Mono",Menlo,monospace;
+
+  --r:10px;
+  --shadow:0 10px 24px -12px rgba(0,0,0,.75);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font:400 1rem/1.55 var(--sans);
+}
+h1,h2,h3{margin:0;font-weight:650;line-height:1.25}
+p{margin:0}
+:focus-visible{outline:2px solid var(--fox);outline-offset:2px;border-radius:4px}
+
+/* ── page frame ───────────────────────────────────────────────────────────── */
+.masthead{
+  border-bottom:1px solid var(--line);
+  background:var(--surf);
+  padding:14px 20px;
+}
+.masthead-in{
+  max-width:1180px;margin:0 auto;
+  display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;
+}
+.wordmark{font-size:1rem;letter-spacing:-.01em}
+.wordmark b{color:var(--fox);font-weight:650}
+/* The claim this whole surface rests on, in the header where it is read first.
+   It is true because of where the socket is, not because the page says so. */
+.locality{font-size:.875rem;color:var(--muted);margin-left:auto}
+.locality code{font-family:var(--mono);font-size:.875rem;color:var(--ink)}
+
+.shell{
+  max-width:1180px;margin:0 auto;padding:22px 20px 72px;
+  display:grid;gap:22px;
+  grid-template-columns:minmax(0,1fr);
+}
+/* ⚠ THE RAIL IS ON THE RIGHT, AND THE DOM ORDER IS WHY. With the rail first
+   in the source, a phone had to scroll past four panels of configuration to
+   reach the prompt box -- the task, buried under its own settings. The obvious
+   repair is `order` on the grid children, and it is the wrong one: it moves the
+   boxes without moving the tab stops, so a keyboard user gets a focus order
+   contradicting what is on screen. Putting the secondary column second in the
+   SOURCE fixes both at once and needs no `order` at any breakpoint -- and a
+   right-hand inspector is the standard arrangement for a surface whose left
+   column is the work. */
+@media (min-width:960px){
+  .shell{grid-template-columns:minmax(0,1fr) 340px;align-items:start}
+  .rail{position:sticky;top:22px}
+}
+
+.panel{
+  background:var(--surf);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:18px;
+}
+.panel + .panel{margin-top:18px}
+.panel h2{
+  font-size:.875rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);font-weight:650;margin-bottom:12px;
+}
+
+/* ── sector switch ────────────────────────────────────────────────────────── */
+.sectors{display:grid;gap:8px;border:0;padding:0;margin:0}
+.sectors legend{padding:0;font-size:.875rem;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);font-weight:650;margin-bottom:10px}
+.sector{position:relative;display:block}
+.sector input{
+  position:absolute;inset:0;width:100%;height:100%;margin:0;
+  opacity:0;cursor:pointer;
+}
+/* ⚠ THE CHILD COMBINATOR IS LOAD-BEARING. As a descendant selector this also
+   matched .nm and .ti, so every sector rendered as a bordered box inside a
+   bordered box -- a nested card, which is always wrong, and produced by exactly
+   the kind of type-vs-class specificity collision that is easy to write and
+   invisible until something is rendered. */
+.sector > span{
+  display:block;min-height:52px;padding:9px 12px;
+  border:1px solid var(--ctl);border-radius:8px;background:transparent;
+  transition:border-color .16s ease,background-color .16s ease;
+}
+.sector .nm{display:block;font-weight:600}
+.sector .ti{display:block;font-size:.875rem;color:var(--muted)}
+.sector input:hover + span{background:var(--surf2)}
+.sector input:checked + span{
+  /* The state is carried by the BORDER: --fox clears 3:1 against this fill,
+     which the fill itself does not against the unselected card -- so colour
+     alone never carries it. A literal rather than color-mix(), so the ratios
+     here are recomputable from this file; a probe that parses only rgb()
+     measures the wrong surface and reports a plausible wrong number. */
+  border-color:var(--fox);
+  background:var(--sel);
+}
+.sector input:focus-visible + span{outline:2px solid var(--fox);outline-offset:2px}
+
+/* ── mode + provider ──────────────────────────────────────────────────────── */
+.row{display:grid;gap:6px;margin-top:14px}
+.row label{font-size:.875rem;color:var(--muted);font-weight:600}
+select,textarea,button{font:inherit;color:inherit}
+select{
+  min-height:44px;padding:9px 12px;
+  background:var(--surf2);border:1px solid var(--ctl);border-radius:8px;
+}
+.hint{font-size:.875rem;color:var(--muted);margin-top:6px}
+
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:.875rem}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-size:.875rem;word-break:break-word}
+#policy-tag-wrap{margin-top:14px}
+
+/* The provenance note the mock provider requires beside every reply. Not a
+   warning and not styled as one -- enforcement is real either way, and that is
+   the sentence's actual content. */
+.note{
+  margin-top:12px;padding:10px 12px;
+  background:var(--surf2);border:1px solid var(--line);border-radius:8px;
+  font-size:.875rem;color:var(--muted);
+}
+
+.prose{font-size:.875rem;color:var(--muted);max-width:66ch}
+.prose strong{color:var(--ink);font-weight:600}
+
+/* ── composer ─────────────────────────────────────────────────────────────── */
+textarea{
+  width:100%;min-height:118px;resize:vertical;padding:12px 14px;
+  background:var(--surf2);border:1px solid var(--ctl);border-radius:8px;
+  line-height:1.5;
+}
+textarea::placeholder{color:var(--muted);opacity:1}
+.composer-foot{
+  display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+  justify-content:space-between;margin-top:12px;
+}
+.send{
+  min-height:44px;padding:10px 20px;border:0;border-radius:8px;
+  background:var(--fox);color:var(--on-status);font-weight:650;cursor:pointer;
+  transition:filter .16s ease;
+}
+.send:hover:not(:disabled){filter:brightness(1.08)}
+.send:disabled{opacity:.55;cursor:progress}
+.ghost{
+  min-height:38px;padding:8px 14px;border:1px solid var(--ctl);border-radius:8px;
+  background:transparent;color:var(--muted);cursor:pointer;
+  transition:color .16s ease,border-color .16s ease;
+}
+.ghost:hover{color:var(--ink);border-color:var(--ink)}
+.keyhint{font-size:.875rem;color:var(--muted)}
+.keyhint kbd{
+  font-family:var(--mono);font-size:.875rem;padding:1px 5px;
+  border:1px solid var(--ctl);border-radius:4px;
+}
+
+/* ── probe starters ───────────────────────────────────────────────────────── */
+.probes{display:grid;gap:8px;margin-top:2px}
+.probe{
+  display:grid;gap:4px;width:100%;text-align:left;cursor:pointer;
+  padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+  background:transparent;
+  transition:border-color .16s ease,background-color .16s ease;
+}
+.probe:hover{border-color:var(--ctl);background:var(--surf2)}
+.probe .pid{font-family:var(--mono);font-size:.875rem;color:var(--muted)}
+.probe .pin{font-size:.875rem;color:var(--ink)}
+
+/* ── the record ───────────────────────────────────────────────────────────── */
+.stream{display:grid;gap:18px;margin-top:22px}
+.record{
+  background:var(--surf);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px;box-shadow:var(--shadow);
+}
+.verdict{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+/* THE MEASURED WORD. Its fill clears 3:1 against the card AND its ink clears
+   4.5:1 against the fill -- both halves, every one of the four status colours,
+   because a chip that passes only on its ink is the failure this project has
+   already shipped once. test_web_contrast.py checks both directions. */
+.mark{
+  display:inline-block;padding:5px 12px;border-radius:6px;
+  background:var(--st-enforced);color:var(--on-status);
+  font-size:1.25rem;font-weight:700;letter-spacing:.01em;
+}
+.record[data-family="allowed"]  .mark{background:var(--st-allowed)}
+.record[data-family="enforced"] .mark{background:var(--st-enforced)}
+.record[data-family="flagged"]  .mark{background:var(--st-flagged)}
+.record[data-family="fault"]    .mark{background:var(--st-fault)}
+/* THE SDK'S OWN STAMP, beside the measured word and visibly a different kind of
+   thing. The label says what the policy evaluation concluded; the word beside it
+   says what was observed. Where they can disagree this page shows both rather
+   than picking a winner -- which is the rule cli.py arrived at over three
+   revisions, and the reason `decision` is rendered at all. */
+/* The sentence is prose and reads in the sans; only the STAMP is monospace,
+   because the stamp is a value the SDK wrote and prose in mono is a costume. */
+.stamp{font-size:.875rem;color:var(--muted)}
+.stamp b{font-family:var(--mono);font-size:.875rem;color:var(--ink);font-weight:600}
+.verdict-note{margin-top:10px;font-size:1rem;color:var(--muted);max-width:70ch}
+.verdict-note strong{color:var(--ink);font-weight:600}
+
+/* ── the delivery rail ────────────────────────────────────────────────────── */
+/* The one drawn element on this page, and it states nothing the field list
+   below does not also state in words -- which is why the whole block is
+   aria-hidden. It is a second encoding of reached_provider / prompt_changed /
+   answered, not a second source of them. */
+.rail-wrap{margin:16px 0 4px}
+.rail-svg{display:block;width:100%;height:auto}
+.seg{stroke:var(--ctl);stroke-width:3;fill:none}
+.seg.on{stroke:var(--st-allowed)}
+.seg.changed{stroke:var(--st-enforced);stroke-dasharray:9 7}
+.seg.off{stroke:var(--ctl);stroke-dasharray:2 8;stroke-linecap:round}
+.node{fill:var(--surf2);stroke:var(--ctl);stroke-width:2}
+.node.on{fill:var(--st-allowed);stroke:var(--st-allowed)}
+.node.changed{fill:var(--st-enforced);stroke:var(--st-enforced)}
+.node.fault{fill:var(--st-fault);stroke:var(--st-fault)}
+/* The break is a SHAPE, not a colour: two crossed strokes where the line
+   stops. Colour alone never carries a state on this page. */
+.brk{stroke:var(--st-enforced);stroke-width:3;stroke-linecap:round}
+.record[data-family="fault"] .brk{stroke:var(--st-fault)}
+.rail-labels{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:4px;
+  font-size:.875rem;color:var(--muted);text-align:center;
+}
+
+/* ── fields ───────────────────────────────────────────────────────────────── */
+.fields{
+  display:grid;grid-template-columns:minmax(96px,auto) minmax(0,1fr);
+  gap:7px 16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);
+  font-size:.875rem;
+}
+.fields dt{color:var(--muted)}
+.fields dd{margin:0;word-break:break-word}
+.fields dd.data{font-family:var(--mono);font-size:.875rem}
+/* The loudest line the record prints -- the SDK stamped this prompt handled and
+   these findings went to the model anyway. It is a tripwire against SDK #216 and
+   must not read like an ordinary field. */
+.fields dt.loud,.fields dd.loud{color:var(--st-fault);font-weight:600}
+
+.reply{
+  margin-top:16px;padding:14px 16px;
+  background:var(--surf2);border:1px solid var(--line);border-radius:8px;
+}
+.reply-src{font-size:.875rem;color:var(--muted);margin-bottom:8px}
+.reply-body{white-space:pre-wrap;max-width:70ch}
+.reply-body p{margin:0}
+.reply-body p + p{margin-top:.85em}
+/* What did NOT happen, stated rather than left blank. A blocked turn is where
+   this surface earns its keep and the absence is the content. */
+.nothing{
+  margin-top:16px;padding:14px 16px;
+  background:var(--surf2);border:1px solid var(--line);border-radius:8px;
+  font-size:1rem;color:var(--muted);max-width:70ch;
+}
+
+.empty{
+  border:1px dashed var(--ctl);border-radius:var(--r);
+  padding:26px 20px;color:var(--muted);max-width:66ch;
+}
+.empty h2{color:var(--ink);font-size:1rem;margin-bottom:8px}
+.problem{
+  border:1px solid var(--st-fault);border-radius:var(--r);
+  padding:14px 16px;color:var(--ink);background:var(--surf);
+}
+.problem b{color:var(--st-fault)}
+.hidden{display:none}
+.vh{
+  position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+  clip-path:inset(50%);white-space:nowrap;border:0;
+}
+
+/* The one authored moment: a record arrives from just below where you typed,
+   settling on an exponential ease-out. Nothing else on this page moves. */
+@keyframes settle{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.record{animation:settle .34s cubic-bezier(.16,1,.3,1) both}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+@media (forced-colors:active){
+  /* Every fill and shadow here is dropped by High Contrast, so the marks that
+     carry state get a border that survives it. */
+  .mark,.sector span,.probe,.record,.panel,.reply,.nothing,.empty{border:1px solid}
+  .send,.ghost,select,textarea{border:1px solid}
+}
+</style>
+</head>
+<body>
+<!--
+  THESIS: a compliance demo whose most persuasive screen is the one where
+  nothing happened. It refuses the category default -- a chat window with a red
+  "blocked" banner -- because the product's claim is not that text turns red, it
+  is that a call was never made. The blocked turn is therefore the fullest state
+  on the page, not the degraded one.
+  OWN-WORLD: the project's warm-orange dark palette (#0e0c0a ground, #1c1815
+  cards, #ff7a2e brand), system sans throughout with monospace reserved for rule
+  ids, ruleset versions and timings. Verdicts are solid status blocks with dark
+  ink; containers are 1px hairlines and one soft shadow. No glass, no gradient.
+  STORY: a visitor picks a sector, sends a prompt it should not be allowed to
+  send, and reads what the guard did to it -- then sends a legitimate one and
+  sees it answered, because an assistant that refuses everything is worthless.
+  FIRST VIEWPORT: masthead carrying the bind address and the local-only line;
+  a 340px rail of sector, mode, provider and the preset's honest limits; the
+  prompt box and its send button top-right of the work column, records stacking
+  newest-first directly beneath it.
+  FORM: rail + work column, the familiar Operate arrangement, chosen directly
+  rather than by tournament: the brief specifies this surface precisely and
+  Operate mode forbids expression that obscures the task.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the
+  finish review, the verdict, and DESIGN.md.
+-->
+<header class="masthead">
+  <div class="masthead-in">
+    <h1 class="wordmark"><b>Foxy Audit</b> &mdash; compliance testbed</h1>
+    <p class="locality">
+      Running on <code id="bind">127.0.0.1</code>. Nothing you type leaves this machine
+      except to your own model provider, under your own key.
+    </p>
+  </div>
+</header>
+
+<main class="shell">
+    <div class="work">
+    <form class="panel" id="composer" novalidate>
+      <label class="vh" for="prompt">Prompt</label>
+      <textarea id="prompt" placeholder="Type a prompt and send it through the guard." autocomplete="off" spellcheck="false"></textarea>
+      <div class="composer-foot">
+        <span class="keyhint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> sends</span>
+        <button class="send" id="send" type="submit">Send prompt</button>
+      </div>
+    </form>
+
+    <div id="problem" class="problem hidden" role="alert"></div>
+
+    <div class="stream" id="stream" aria-live="polite" aria-busy="false"></div>
+
+    <div class="empty" id="empty">
+      <h2>Nothing has been sent yet.</h2>
+      <p>
+        Type a prompt above, or start from one of this sector&rsquo;s labelled
+        probes. Every turn is decided by the same <code>foxy_audit</code>
+        preflight guard an installed SDK runs &mdash; there is no separate demo
+        policy.
+      </p>
+    </div>
+
+    <div class="composer-foot" id="stream-foot">
+      <span class="keyhint" id="turn-count"></span>
+      <button class="ghost" id="clear" type="button">Clear transcript</button>
+    </div>
+  </div>
+
+    <div class="rail">
+    <div class="panel">
+      <fieldset class="sectors" id="sectors">
+        <legend>Sector</legend>
+      </fieldset>
+
+      <div class="row">
+        <label for="mode">Preflight mode</label>
+        <select id="mode"></select>
+        <p class="hint" id="mode-hint"></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Provider</h2>
+      <dl class="kv">
+        <dt>name</dt><dd id="prov-name"></dd>
+        <dt>model</dt><dd id="prov-model"></dd>
+      </dl>
+      <p class="note" id="prov-note"></p>
+    </div>
+
+    <div class="panel">
+      <h2>What this preset enforces, and what it does not</h2>
+      <p class="prose" id="policy-note"></p>
+      <dl class="kv" id="policy-tag-wrap">
+        <dt>policy_tag</dt><dd id="policy-tag"></dd>
+      </dl>
+    </div>
+
+    <div class="panel">
+      <h2>Start from a probe</h2>
+      <p class="prose">
+        This sector&rsquo;s own labelled corpus, the same prompts
+        <code>--probe all</code> scores. Each one says what it is for.
+      </p>
+      <div class="probes" id="probes"></div>
+    </div>
+  </div>
+  </main>
+
+<template id="tpl-record">
+  <article class="record">
+    <div class="verdict">
+      <span class="mark"></span>
+      <span class="stamp">the SDK stamped this turn <b class="stamp-value"></b></span>
+    </div>
+    <p class="verdict-note"></p>
+
+    <div class="rail-wrap" aria-hidden="true">
+      <svg class="rail-svg" viewBox="0 0 480 46" preserveAspectRatio="xMidYMid meet" focusable="false">
+        <line class="seg s1" x1="66" y1="17" x2="174" y2="17"/>
+        <line class="seg s2" x1="186" y1="17" x2="294" y2="17"/>
+        <line class="seg s3" x1="306" y1="17" x2="414" y2="17"/>
+        <circle class="node n1" cx="60" cy="17" r="6"/>
+        <circle class="node n2" cx="180" cy="17" r="6"/>
+        <circle class="node n3" cx="300" cy="17" r="6"/>
+        <circle class="node n4" cx="420" cy="17" r="6"/>
+        <g class="brk b2 hidden"><line x1="234" y1="10" x2="246" y2="24"/><line x1="246" y1="10" x2="234" y2="24"/></g>
+        <g class="brk b3 hidden"><line x1="354" y1="10" x2="366" y2="24"/><line x1="366" y1="10" x2="354" y2="24"/></g>
+      </svg>
+      <div class="rail-labels">
+        <span>your prompt</span><span>the guard</span><span>the provider</span><span>back to you</span>
+      </div>
+    </div>
+
+    <dl class="fields"></dl>
+    <div class="reply hidden">
+      <p class="reply-src"></p>
+      <div class="reply-body"></div>
+    </div>
+    <p class="nothing hidden"></p>
+  </article>
+</template>
+
+<script nonce="__CSP_NONCE__">
+(function () {
+  "use strict";
+
+  // THIS FILE HOLDS NO POLICY LOGIC AND NO VERDICT VOCABULARY.
+  //
+  // Every sentence rendered below is read off a field the server sent. The
+  // verdict word and the paragraph under it are `cli._headline`'s, computed in
+  // Python and shipped on the payload; the four "no reply" sentences are
+  // `web._reply_status`'s. Three front-ends each deciding for themselves what
+  // "blocked" means is how the prevention-vs-evidence conflation got rebuilt
+  // once already, and a fourth copy written in JavaScript would be the worst
+  // placed of them -- it is the one nobody runs a test against.
+  //
+  // The one thing this file DOES decide is which of four visual families a
+  // verdict belongs to, and it decides that from the MEASURED properties the
+  // record carries (`prevented`, `prompt_enforced`, `response_withheld`) rather
+  // than from the `decision` label -- see familyOf.
+
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { config: null, sector: "", mode: "", turns: 0 };
+
+  // ── DOM helpers ───────────────────────────────────────────────────────────
+  // Everything reaches the page through textContent. Nothing is ever assigned
+  // through innerHTML: a reply from a live provider is arbitrary remote text,
+  // and the prompt is the user's own. Together with the response's nonce-based
+  // CSP that is two independent defences against the same mistake.
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) { node.className = cls; }
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    return node;
+  }
+
+  function show(node, on) { node.classList.toggle("hidden", !on); }
+
+  // ── the four visual families ──────────────────────────────────────────────
+  function familyOf(turn) {
+    // MEASURED FIRST, LABEL LAST, and the order is the whole point. `prevented`
+    // and `response_withheld` each pair the SDK's stamp with the observation
+    // that would contradict it, so a turn stamped "blocked" whose call reached
+    // the provider anyway does not get the calm colour -- it falls through to
+    // the fault family, and the headline the server sent says both things
+    // happened. That case should be unreachable; a surface that renders it as a
+    // clean block is how it would stay unreachable-looking while being reached.
+    if (turn.decision === "error") { return "fault"; }
+    if (turn.prevented || turn.response_withheld || turn.prompt_enforced) { return "enforced"; }
+    if (turn.decision === "allowed") { return "allowed"; }
+    if (turn.decision === "flagged") { return "flagged"; }
+    return "fault";
+  }
+
+  // ── the delivery rail ─────────────────────────────────────────────────────
+  function paintRail(root, turn) {
+    var seg2 = "off", seg3 = "off", node3 = "", node4 = "";
+    if (turn.reached_provider) {
+      seg2 = turn.prompt_changed ? "changed" : "on";
+      node3 = turn.prompt_changed ? "changed" : "on";
+    }
+    if (turn.answered) { seg3 = "on"; node4 = "on"; }
+    if (turn.decision === "error") { node3 = "fault"; }
+
+    // setAttribute rather than `.className`, which on an SVG element is a
+    // read-only SVGAnimatedString rather than a string.
+    root.querySelector(".s1").setAttribute("class", "seg s1 on");
+    root.querySelector(".s2").setAttribute("class", "seg s2 " + seg2);
+    root.querySelector(".s3").setAttribute("class", "seg s3 " + seg3);
+    root.querySelector(".n1").setAttribute("class", "node n1 on");
+    root.querySelector(".n2").setAttribute("class", "node n2 on");
+    root.querySelector(".n3").setAttribute("class", "node n3 " + node3);
+    root.querySelector(".n4").setAttribute("class", "node n4 " + node4);
+    show(root.querySelector(".b2"), seg2 === "off");
+    show(root.querySelector(".b3"), seg3 === "off");
+  }
+
+  // ── fields ────────────────────────────────────────────────────────────────
+  function addField(list, label, value, opts) {
+    var options = opts || {};
+    var dt = el("dt", options.loud ? "loud" : "", label);
+    var dd = el("dd", (options.data ? "data " : "") + (options.loud ? "loud" : ""), value);
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
+
+  function fillFields(list, turn) {
+    // The labels are the REPL's, verbatim, including the two-word split on
+    // rules_removed: on a PREVENTED turn those findings did not reach the model
+    // because nothing was sent at all, and calling that "removed" would describe
+    // a rewrite of a prompt that was never delivered.
+    addField(list, "rules", turn.rules.length ? turn.rules.join(", ") : "(none fired)", { data: true });
+    addField(list, "reason", turn.blocked_reason, { data: true });
+    addField(list, "reached", turn.reached_provider
+      ? "yes, the provider was called with this prompt"
+      : "no, the provider was never called");
+    if (turn.rules_removed.length) {
+      addField(list, turn.prevented ? "kept back" : "removed",
+        turn.rules_removed.join(", "), { data: true });
+    }
+    if (turn.rules_surviving.length) {
+      // ⚠ TRIPWIRE ON A `redacted` TURN, AND NOT DEAD MARKUP. Since SDK 1.9.0
+      // the guard re-evaluates the redacted prompt and BLOCKS when any finding
+      // still fires (SDK #216), so a redacted turn reaching this line means that
+      // fix regressed. On a PREVENTED turn the list is empty and nothing prints.
+      addField(list, "STILL SENT", turn.rules_surviving.join(", "), { data: true, loud: true });
+    }
+    if (turn.redaction_ineffective) {
+      addField(list, "note",
+        "SDK >= 1.9.0 is supposed to BLOCK this turn (SDK #216), so this means "
+        + "either an SDK older than 1.9.0 or a regression of that fix.", { loud: true });
+    }
+    addField(list, "ruleset", turn.ruleset_version || "(not reported)", { data: true });
+    addField(list, "took", turn.latency_ms + " ms", { data: true });
+    if (turn.error) {
+      // ProviderError carries a type and a status by construction and never a
+      // response body, so nothing typed here can ride back out through it.
+      addField(list, "error", turn.error, { data: true, loud: true });
+    }
+  }
+
+  // ── one record ────────────────────────────────────────────────────────────
+  function renderTurn(turn) {
+    var node = $("tpl-record").content.cloneNode(true);
+    var article = node.querySelector(".record");
+    article.setAttribute("data-family", familyOf(turn));
+    article.setAttribute("data-decision", turn.decision);
+
+    node.querySelector(".mark").textContent = turn.headline;
+    node.querySelector(".stamp-value").textContent = turn.decision;
+    node.querySelector(".verdict-note").textContent = turn.headline_note;
+
+    paintRail(node.querySelector(".rail-svg"), turn);
+    fillFields(node.querySelector(".fields"), turn);
+
+    if (turn.answered) {
+      var reply = node.querySelector(".reply");
+      show(reply, true);
+      // The provenance rides on every reply, not only on the rail panel. A
+      // session is long, the panel scrolls away, and "is this thing making up
+      // answers?" is the question asked on turn nine, not turn one.
+      reply.querySelector(".reply-src").textContent = "reply ("
+        + (turn.provider_is_live ? "live model output" : "mock fixture, not model output") + ")";
+      var body = reply.querySelector(".reply-body");
+      turn.reply.split("\n\n").forEach(function (para) {
+        if (para.trim()) { body.appendChild(el("p", "", para.trim())); }
+      });
+    } else {
+      var nothing = node.querySelector(".nothing");
+      show(nothing, true);
+      nothing.textContent = turn.reply_status;
+    }
+
+    var stream = $("stream");
+    // NEWEST FIRST, which is not the chat convention and is deliberate: you type
+    // at the top of this column, so the verdict for what you just sent belongs
+    // where you are already looking rather than a scroll away.
+    stream.insertBefore(article, stream.firstChild);
+    state.turns += 1;
+    afterStreamChange();
+  }
+
+  function afterStreamChange() {
+    show($("empty"), state.turns === 0);
+    show($("stream-foot"), state.turns > 0);
+    $("turn-count").textContent = state.turns === 1
+      ? "1 turn in this transcript" : state.turns + " turns in this transcript";
+  }
+
+  // ── the rail ──────────────────────────────────────────────────────────────
+  function sectorByName(name) {
+    return state.config.sectors.filter(function (s) { return s.name === name; })[0];
+  }
+
+  function paintSector() {
+    var sector = sectorByName(state.sector);
+    $("policy-note").textContent = sector.policy_note;
+    $("policy-tag").textContent = sector.policy_tag;
+
+    var host = $("probes");
+    while (host.firstChild) { host.removeChild(host.firstChild); }
+    sector.probes.forEach(function (probe) {
+      var button = el("button", "probe");
+      button.type = "button";
+      button.appendChild(el("span", "pid", probe.id));
+      button.appendChild(el("span", "pin", probe.intent));
+      button.addEventListener("click", function () {
+        $("prompt").value = probe.prompt;
+        $("prompt").focus();
+      });
+      host.appendChild(button);
+    });
+  }
+
+  function buildRail() {
+    var config = state.config;
+    $("bind").textContent = config.bind;
+    $("prov-name").textContent = config.provider.name;
+    $("prov-model").textContent = config.provider.model;
+    // The mock provider's note is the sentence every surface has to render
+    // beside its replies; a live provider's note says where the text goes. Both
+    // come from providers.py, so this page never writes either one.
+    $("prov-note").textContent = config.provider.note;
+    show($("prov-note"), Boolean(config.provider.note));
+
+    var sectors = $("sectors");
+    config.sectors.forEach(function (sector, index) {
+      var wrap = el("label", "sector");
+      var input = document.createElement("input");
+      input.type = "radio";
+      input.name = "sector";
+      input.value = sector.name;
+      input.checked = index === 0;
+      var span = el("span");
+      span.appendChild(el("span", "nm", sector.name));
+      span.appendChild(el("span", "ti", sector.title));
+      input.addEventListener("change", function () {
+        state.sector = sector.name;
+        paintSector();
+      });
+      wrap.appendChild(input);
+      wrap.appendChild(span);
+      sectors.appendChild(wrap);
+    });
+    state.sector = config.sectors[0].name;
+
+    var mode = $("mode");
+    config.modes.forEach(function (name) {
+      var option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      option.selected = name === config.mode;
+      mode.appendChild(option);
+    });
+    state.mode = config.mode;
+    mode.addEventListener("change", function () {
+      state.mode = mode.value;
+      paintMode();
+    });
+    paintMode();
+    paintSector();
+  }
+
+  function paintMode() {
+    // The one place this file states something the payload did not, and it is a
+    // restatement of what the engine already refuses to hide: under observe the
+    // guard records and never prevents. `scoreboard.render` prints the same
+    // caveat above a 0/N enforcement column for the same reason.
+    $("mode-hint").textContent = state.mode === "observe"
+      ? "observe records and never prevents. Prompts are delivered exactly as typed."
+      : "";
+  }
+
+  // ── talking to the server ─────────────────────────────────────────────────
+  function problem(text) {
+    var box = $("problem");
+    box.textContent = "";
+    box.appendChild(el("b", "", "Could not run that turn. "));
+    box.appendChild(document.createTextNode(text));
+    show(box, true);
+  }
+
+  function send(event) {
+    if (event) { event.preventDefault(); }
+    var text = $("prompt").value;
+    if (!text.trim()) { return; }
+
+    var button = $("send");
+    button.disabled = true;
+    button.textContent = "Sending…";
+    $("stream").setAttribute("aria-busy", "true");
+    show($("problem"), false);
+
+    fetch("/turn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sector: state.sector, mode: state.mode, prompt: text })
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok) { throw new Error(payload.detail || payload.error || "the server refused it."); }
+        return payload;
+      });
+    }).then(function (turn) {
+      renderTurn(turn);
+      $("prompt").value = "";
+    }).catch(function (err) {
+      // Errors name the problem and the recovery. A turn that failed here proved
+      // nothing about the guard, and saying so beats a red box.
+      problem(err.message + " Nothing was recorded for it, and it says nothing "
+        + "about what the guard would have done. Your prompt is still in the box.");
+    }).then(function () {
+      button.disabled = false;
+      button.textContent = "Send prompt";
+      $("stream").setAttribute("aria-busy", "false");
+    });
+  }
+
+  // ── start ─────────────────────────────────────────────────────────────────
+  $("composer").addEventListener("submit", send);
+  $("prompt").addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { send(event); }
+  });
+  $("clear").addEventListener("click", function () {
+    var stream = $("stream");
+    while (stream.firstChild) { stream.removeChild(stream.firstChild); }
+    state.turns = 0;
+    afterStreamChange();
+    $("prompt").focus();
+  });
+
+  afterStreamChange();
+  fetch("/session").then(function (response) {
+    return response.json();
+  }).then(function (config) {
+    state.config = config;
+    buildRail();
+  }).catch(function () {
+    problem("the testbed server did not answer. It may have been stopped — "
+      + "restart it with python -m foxy_testbed.web and reload this page.");
+  });
+}());
+</script>
+</body>
+</html>

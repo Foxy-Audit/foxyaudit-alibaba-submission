@@ -143,6 +143,10 @@ class Turn:
     sector: str
     policy_tag: str
     mode: str
+    #: The provider's NAME. An identifier, and NOT a claim about what answered:
+    #: whether a reply came from a model is :attr:`provider_is_live`, which sits
+    #: at the end of this list only because a defaulted field cannot precede an
+    #: undefaulted one. Do not re-derive live-ness from this string.
     provider: str
     model: str
 
@@ -211,6 +215,28 @@ class Turn:
     #: through here. Empty unless ``decision`` is "error"; an empty REPLY is not
     #: a failure and leaves this empty (see :attr:`empty_reply`).
     error: str = ""
+
+    #: Did this reply come from a real model, or is it a written fixture?
+    #:
+    #: ⚠ CARRIED, NEVER RE-DERIVED -- which is the whole reason it exists. The
+    #: record did not hold it until now, so a surface serialising
+    #: :meth:`as_dict` had exactly two options, and both are defects. Matching
+    #: ``provider`` against the string "mock" is the re-derivation
+    #: ``Scoreboard.provider_is_live`` was added to stop -- that field went in
+    #: after a hardcoded "the replies are fixtures" printed underneath a LIVE run
+    #: -- and it could not work regardless, because ``Assistant`` accepts any
+    #: ``Provider`` subclass and a custom one answers to neither name. Taking it
+    #: as a second argument is what ``cli.turn_lines`` does, and a JSON payload
+    #: has nobody to pass it.
+    #:
+    #: THE DEFAULT IS False, THE UNDERSTATING DIRECTION. Only a hand-built Turn
+    #: can reach it -- ``Assistant.ask`` always sets it from the provider it
+    #: actually called -- and of the two ways to be wrong, printing "mock
+    #: fixture" over a real answer loses a provenance claim, while printing "live
+    #: model output" over a written fixture puts words in a model's mouth. In an
+    #: audit product only one of those is survivable, for the same reason
+    #: :attr:`prompt_enforced` takes the strict reading of a redaction.
+    provider_is_live: bool = False
 
     # ── what the guard did, in four words that cannot be confused ─────────────
     # There was a single `blocked` property here and it covered both
@@ -369,6 +395,11 @@ class Turn:
         """
         return {"sector": self.sector, "policy_tag": self.policy_tag,
                 "mode": self.mode, "provider": self.provider, "model": self.model,
+                # PROVENANCE TRAVELS WITH THE REPLY, for the reason spelled out
+                # on the field: the alternative is a JSON consumer matching the
+                # provider NAME against "mock", which is exactly the
+                # re-derivation Scoreboard.provider_is_live exists to prevent.
+                "provider_is_live": self.provider_is_live,
                 "decision": self.decision, "answered": self.answered,
                 "reached_provider": self.reached_provider,
                 "prompt_changed": self.prompt_changed,
@@ -565,6 +596,12 @@ class Assistant:
             mode=self.mode,
             provider=self.provider.name,
             model=self.provider.model,
+            # Read off the provider that was actually called on THIS turn, not
+            # off a flag captured when the session started: `with_mode` hands the
+            # same provider to a rebuilt Assistant, but a caller who supplies
+            # their own `provider=` gets whatever they supplied, and asking the
+            # object is the only reading that cannot go stale.
+            provider_is_live=self.provider.is_live,
             decision=decision,
             answered=answered,
             reached_provider=self._reached,

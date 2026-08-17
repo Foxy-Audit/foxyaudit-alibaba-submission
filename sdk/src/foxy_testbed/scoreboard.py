@@ -339,17 +339,53 @@ def _rule(char: str = "-") -> str:
 
 
 def _wrap(text: str, indent: int, first: str = "") -> list:
-    """Wrap ``text`` into WIDTH columns, hanging-indented by ``indent``."""
+    """Wrap ``text`` into WIDTH columns, hanging-indented by ``indent``.
+
+    ⚠ ``ljust`` IS NOT A SEPARATOR, AND THIS WAS A REAL COLLISION. The head used
+    to be ``first.ljust(indent) + body[0]``, which pads only while the label is
+    SHORTER than the field; at ``len(first) >= indent`` it is a no-op and the
+    value is welded onto the label. ``_field("reached model", "yes")`` rendered
+    as ``reached modelyes`` -- measured, not theorised. The label that trips it
+    is eleven characters, because :func:`_field` prepends two spaces to a
+    fourteen-column field, and the longest one shipping today is ten
+    (``"  provider"``, ``"  STILL SENT"`` at twelve) -- so this was latent, and
+    T2 and T3 both render fields through here.
+
+    A single space is appended when the label cannot fit, rather than the value
+    being pushed onto its own line: it costs no line, and the misalignment stays
+    confined to the one row whose label overflowed.
+
+    ``textwrap`` DOES THE INDENTING NOW, rather than this function wrapping to a
+    reduced width and prefixing the pad afterwards. That is what keeps the
+    overflow case from ALSO running past :data:`WIDTH`: ``initial_indent`` counts
+    inside the wrap width, so an over-long label eats into its own first line
+    instead of pushing it past the rule every other line is aligned to.
+
+    BYTE-IDENTICAL FOR EVERY LABEL THAT FITS, which is asserted rather than
+    assumed (``test_web.py``). When ``len(first) < indent`` the initial indent is
+    exactly ``first.ljust(indent)``, whose length IS ``indent``, so every line --
+    first and subsequent alike -- still breaks at ``WIDTH - indent``.
+    """
     pad = " " * indent
-    body = textwrap.wrap(" ".join(str(text).split()), width=WIDTH - indent) or [""]
-    if first:
-        head = "{0}{1}".format(first.ljust(indent), body[0])
-        return [head] + [pad + line for line in body[1:]]
-    return [pad + line for line in body]
+    text = " ".join(str(text).split())
+    head = (first if len(first) < indent else first + " ").ljust(indent) if first else pad
+    if not text:
+        # ``textwrap.wrap("")`` is ``[]``, and ``or [""]`` on the old body list
+        # is what used to keep an empty value from dropping its label. Returning
+        # the head alone preserves that byte for byte.
+        return [head]
+    return textwrap.wrap(text, width=WIDTH, initial_indent=head, subsequent_indent=pad)
+
+
+#: The column a field's value starts in. Two of those columns are the leading
+#: indent :func:`_field` adds, so a label of eleven characters or more is the one
+#: that overflows -- see :func:`_wrap`. Named so a guard can derive the boundary
+#: instead of restating 14.
+FIELD_INDENT = 14
 
 
 def _field(label: str, value: str) -> list:
-    return _wrap(value, 14, first="  " + label)
+    return _wrap(value, FIELD_INDENT, first="  " + label)
 
 
 def _probe_lines(result) -> list:

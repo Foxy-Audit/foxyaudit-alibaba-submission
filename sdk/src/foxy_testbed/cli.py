@@ -248,18 +248,31 @@ def _reply_lines(text, indent: int = 6) -> list:
     return lines
 
 
-def turn_lines(turn, provider_is_live: bool) -> list:
+def turn_lines(turn, provider_is_live=None) -> list:
     """One turn, rendered. The whole of what a surface has to do.
 
-    ⚠ ``provider_is_live`` IS A SECOND ARGUMENT BECAUSE THE TURN DOES NOT CARRY
-    IT, and it is not derived from ``turn.provider`` here. Matching the provider
-    NAME against ``"mock"`` is precisely the re-derivation that
-    ``Scoreboard.provider_is_live`` exists to stop -- it was added after a
-    hardcoded "the replies are fixtures" printed under a live run -- and a
-    custom ``Provider`` subclass, which the engine accepts, has neither name.
-    The session holds the provider and therefore holds the answer; it passes it.
-    Reported upward as an engine gap: see the T1 findings.
+    ⚠ ``provider_is_live`` WAS A SECOND ARGUMENT BECAUSE THE TURN DID NOT CARRY
+    IT. That was reported upward as an engine gap in the T1 findings, and T2
+    closed it: :attr:`~foxy_testbed.core.Turn.provider_is_live` now rides on the
+    record, so with nothing passed the record is asked.
+
+    What has NOT changed is the thing the gap was about. Matching
+    ``turn.provider`` against the string ``"mock"`` is the re-derivation
+    ``Scoreboard.provider_is_live`` exists to stop -- it went in after a
+    hardcoded "the replies are fixtures" printed under a live run -- and it could
+    not work regardless, because the engine accepts a custom ``Provider``
+    subclass answering to no name this package knows. That is not done here,
+    before or after.
+
+    THE ARGUMENT SURVIVES AS AN OVERRIDE INSTEAD OF BEING DELETED, and ``None``
+    is what keeps the two cases distinguishable. A caller holding the live
+    provider still says so and still wins -- which is every shipped call:
+    :func:`repl` reads it off the session's provider precisely because ``/mode``
+    replaces the assistant. A caller holding only a deserialised record passes
+    nothing and gets the record's own answer rather than a fabricated one.
     """
+    if provider_is_live is None:
+        provider_is_live = turn.provider_is_live
     label, sentence = _headline(turn)
     lines = ["", _rule(), "  [{0}]".format(label)]
     lines += _wrap(sentence, 2)
