@@ -13,9 +13,17 @@
 name: Continuous Deployment
 
 on:
-  push:
-    branches:
-      - main
+  # ⛔ PUSH TRIGGER REMOVED 2026-08-23 — hackathon freeze.
+  #
+  # This workflow deploys to the PRODUCTION VM (34.18.4.58), which is serving
+  # the frozen hackathon submission. In this repo it must NEVER fire on a push.
+  # The devtool stack deploys to app2/admin2/checkout2 by hand; see the vault
+  # note "VM — parallel environment (app2 admin2 checkout2)".
+  #
+  # ⚠ RESTORE THIS TRIGGER ONLY IN THE ORIGINAL REPO, AT MERGE-BACK:
+  #   push:
+  #     branches:
+  #       - main
   workflow_dispatch:
 
 permissions:

@@ -53,3 +53,7 @@ e2e/.artifacts/
 # demo/mock_llm.py --live keeps its own spool so it can never flush into the
 # offline `--scenario all` gate, whose claim is that nothing leaves the machine.
 demo/.demo-spool.sqlite3*
+
+# SDK runtime cache, written next to the spool (sdk/src/foxy_audit/org_policy.py)
+demo/org_policy.json
+org_policy.json

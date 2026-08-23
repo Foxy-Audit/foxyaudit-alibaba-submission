@@ -16,8 +16,15 @@ name: Release
 # published under a v1.1.2 tag, is exactly what that check exists to stop.
 # **Bump both files in the commit you tag.**
 on:
-  push:
-    tags: ["v*"]
+  # ⛔ TAG TRIGGER REMOVED 2026-08-23 — hackathon freeze.
+  #
+  # This publishes the SDK to PyPI and copies desktop installers to the VM.
+  # A tag pushed in the devtool repo would publish a real package under the
+  # real name. Releases happen from the original repo only.
+  #
+  # ⚠ RESTORE THIS TRIGGER ONLY IN THE ORIGINAL REPO, AT MERGE-BACK:
+  #   push:
+  #     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
