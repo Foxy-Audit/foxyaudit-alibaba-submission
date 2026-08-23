@@ -6,6 +6,52 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.12.0 — the SDK hands back the id of the row it wrote
+
+**Additive.** Nothing that exists changes: not the wire, not the detectors, not
+what any call returns.
+
+`log_interaction` minted an event id and returned it to nobody. The decorator
+returns your function's response — that is the contract, and it does not move —
+so there was no way to name the ledger row your own call produced, and
+`explain(prompt, event_id=...)` needs exactly that id.
+
+```python
+def note(receipt):
+    print(receipt["event_id"], receipt["event_type"], receipt["decision"])
+
+foxy = FoxyClient(api_key="foxy_sk_...", on_event=note)
+```
+
+The receipt is a plain dict:
+
+| Key | |
+|---|---|
+| `event_id` | the id of the row that was written — what `explain()` wants |
+| `event_type` | `interaction` · `stream` · `blocked` · `response_blocked` · `exception` |
+| `policy_tag` | the tag the call was recorded under |
+| `decision` · `policy_rules` · `blocked_reason` | what the guard decided, and the rule ids that explain it |
+| `ruleset_version` · `ruleset_hash` | the frozen definition those rule ids came from |
+| `commitment_alg` · `prompt_hash` · `response_hash` | the commitments — never text |
+| `pii_signals` | the labels recorded on the row |
+| `delivered` | `False` when there is no API key and nothing was submitted |
+
+Four things worth knowing before you wire it up:
+
+- **It is built from the payload that was actually sent**, not from the arguments
+  you passed, so it cannot describe an event different from the one recorded —
+  and it is content-blind by construction.
+- **Fields the clean `observe` path never records read `None`.** That is not the
+  same news as `[]`: `None` means no guard ran, `[]` means the guard ran and
+  nothing fired.
+- **It fires on every path** — blocked prompts, blocked responses, host
+  exceptions, and calls made with no API key at all. The turns you most need to
+  name are the ones that were stopped.
+- **Your callback's exceptions are swallowed and logged**, like all other
+  telemetry here. It will not break your model call. But a slow callback runs
+  inline, and from an `async` call site it arrives on a worker thread rather
+  than the event loop — do not touch GUI widgets from it.
+
 ## 1.11.0 — a card number begins with an issuer
 
 **This changes what fires.** Read it before upgrading a deployment that runs
@@ -531,6 +577,7 @@ That is exactly why prevention is opt-in.
 | Required capture | `audit_required` | `FOXY_AUDIT_REQUIRED` | `False` |
 | Prompt guard mode | `mode` | `FOXY_MODE` | `observe` (`block` / `redact` enforce before the call) |
 | Response scan | `response_scan` | `FOXY_RESPONSE_SCAN` | `observe` (`block` prevents, `off` disables) |
+| Event receipt | `on_event` | — | _(none)_ — a callable cannot come from an env var |
 
 ### Salted commitments (optional)
 

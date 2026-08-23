@@ -32,6 +32,48 @@ from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 from .introspect import CheckResult, ExplainResult, check, explain
 
+# 1.12.0 — S11. The SDK hands back the id of the row it wrote.
+#
+# NO WIRE CHANGE, no detector change, no change to what the guard blocks, and no
+# change to what any existing call returns. MINOR because `FoxyClient` gains a
+# public constructor argument.
+#
+#   `log_interaction` minted an event id and returned it to nobody. The
+#   decorator returns the wrapped function's response — a frozen contract — so a
+#   consumer of the SDK could not name the ledger row its own call produced, and
+#   `explain(prompt, event_id=...)` needs exactly that id. It had to be pasted in
+#   by hand from a ledger the caller had to go and find.
+#
+#       foxy = FoxyClient(api_key=..., on_event=lambda receipt: ...)
+#
+#   The receipt is a plain dict — no new type, no new dependency, no new config
+#   field — carrying event_id, event_type, policy_tag, decision, policy_rules,
+#   blocked_reason, ruleset_version, ruleset_hash, commitment_alg, prompt_hash,
+#   response_hash, pii_signals and delivered.
+#
+#   BUILT FROM THE PAYLOAD THAT WAS ACTUALLY SENT, never from the caller's
+#   arguments, so the receipt cannot describe an event different from the one
+#   recorded — and so it is content-blind by construction: `prompt_hash` is a
+#   commitment, never text. Fields the clean observe path never builds read None
+#   there, and None ("no guard ran") is not [] ("the guard ran, nothing fired").
+#
+#   IT FIRES ON EVERY PATH, including `blocked`, `blocked_by_org_policy`,
+#   `redacted`, `exception`, `response_blocked` — the turns a consumer most needs
+#   to name — and including when there is no API key, with `delivered=False`. A
+#   hook wired only to the happy path, or only to keyed clients, would be dead
+#   code on every offline run.
+#
+#   IT NEVER PROPAGATES. A customer's broken callback must not raise out of their
+#   model call, and must not reach `log_interaction`'s blanket handler either:
+#   under `audit_required=True` that handler would convert it into an
+#   `AuditRequiredError` — a report of a delivery failure, about a delivery that
+#   succeeded. Measured: with the callback's own `except` removed, that is
+#   exactly what a raising callback produced.
+#
+#   ⚠ THREAD AFFINITY. `_record_async` runs `log_interaction` under
+#   `asyncio.to_thread`, so from an async call site the callback arrives OFF the
+#   event loop, on a worker thread. A GUI consumer must not touch widgets from it.
+#
 # 1.11.0 — S10. A card number begins with an issuer, and the card detector now
 # knows that.
 #
@@ -344,7 +386,7 @@ from .introspect import CheckResult, ExplainResult, check, explain
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 __all__ = ["CheckResult", "ExplainResult", "FoxyClient", "FoxyConfig",
            "FoxyPolicyBlocked", "FoxyResponseBlocked", "audit", "check",
            "explain", "__version__"]

@@ -223,7 +223,13 @@ class FoxyClient:
         audit_required: bool | None = None,
         mode: str | None = None,
         response_scan: str | None = None,
+        on_event=None,
     ) -> None:
+        # A CONSTRUCTOR ARGUMENT, not a config field. `FoxyConfig.resolve` reads
+        # the environment, and a callable cannot come from an env var — putting
+        # it on the frozen config dataclass would invent a setting nobody can
+        # set. See `_emit_receipt` for the contract.
+        self.on_event = on_event
         self.cfg = FoxyConfig.resolve(
             api_key=api_key,
             endpoint=endpoint,
@@ -897,12 +903,72 @@ class FoxyClient:
                     self.cfg.udp_host,
                     self.cfg.udp_port,
                 )
+            if self.on_event is not None:
+                self._emit_receipt(payload, self.cfg.enabled)
             if self.cfg.enabled:
                 return result
         except Exception as exc:  # telemetry must never break the host app
             log.debug("foxy-audit observe error: %s", exc)
             if self.cfg.audit_required:
                 raise AuditRequiredError("Foxy Audit could not durably deliver the event") from exc
+
+    def _emit_receipt(self, payload: dict, delivered: bool) -> None:
+        """Hand the caller the id of the row it just wrote. CONTENT-BLIND.
+
+        The decorator returns the wrapped function's response — a frozen public
+        contract — so before this hook a consumer of the SDK could not name the
+        ledger row its own call produced, and no other path exposed the id.
+
+        BUILT FROM ``payload``, NOT FROM log_interaction's ARGUMENTS. Every value
+        here is one the wire actually carries, so the receipt cannot describe an
+        event different from the one recorded, and it is content-blind by
+        construction: ``prompt_hash`` is a commitment, never text.
+
+        Three properties worth stating rather than leaving to be discovered:
+
+        * IT FIRES WHEN ``cfg.enabled`` IS FALSE TOO, with ``delivered=False``.
+          The id and the decision are real even when nothing shipped, and a hook
+          that only fired for keyed clients would be dead code on every offline
+          run.
+        * IT DOES NOT FIRE WHEN THE EVENT DID NOT LAND. It sits inside
+          log_interaction's blanket handler, so under ``audit_required`` a
+          delivery failure raises ``AuditRequiredError`` before reaching here —
+          correct, because there is no durable row to name.
+        * IT RUNS WHEREVER log_interaction RUNS. ``_record_async`` calls that
+          under ``asyncio.to_thread``, so in async use the callback arrives OFF
+          the event loop, on a worker thread. A Qt or Tk consumer must not touch
+          widgets from it.
+
+        Its own ``try`` because a customer's broken callback must not raise out
+        of their model call — and must not reach the handler above, which would
+        turn it into an ``AuditRequiredError`` about a delivery that succeeded.
+        Type name only: a callback's message can carry whatever it was handed.
+        """
+        meta = payload.get("event_metadata") or {}
+        try:
+            self.on_event({
+                "event_id": payload["event_id"],
+                "event_type": payload["event_type"],
+                "policy_tag": payload["policy_tag"],
+                # From event_metadata, which the clean observe path does not
+                # build at all — so these read None there, and None ("no guard
+                # ran") is not [] ("the guard ran and nothing fired").
+                "decision": meta.get("decision"),
+                "policy_rules": meta.get("policy_rules"),
+                "blocked_reason": meta.get("blocked_reason"),
+                "ruleset_version": meta.get("ruleset_version"),
+                "ruleset_hash": meta.get("ruleset_hash"),
+                "commitment_alg": payload["commitment_alg"],
+                "prompt_hash": payload["prompt_hash"],
+                "response_hash": payload["response_hash"],
+                "pii_signals": payload["pii_signals"],
+                # The event was handed to the durable spool (and under
+                # `audit_required`, a server receipt came back — otherwise this
+                # hook never fired). False means no key: nothing was submitted.
+                "delivered": delivered,
+            })
+        except Exception as exc:             # noqa: BLE001 — type name only
+            log.debug("foxy-audit: on_event callback failed (%s)", type(exc).__name__)
 
 
 def _block_message(policy: str, plan: dict) -> str:
