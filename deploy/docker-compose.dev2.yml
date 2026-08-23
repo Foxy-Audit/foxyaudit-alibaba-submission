@@ -40,6 +40,12 @@ services:
     environment:
       - FOXY_ENV=prod
       - DATABASE_URL=${DATABASE_URL:?set in deploy/.env}
+      # Confined RLS role. Dev uses its OWN (foxy_app_dev), not prod's foxy_app:
+      # the login role foxy_dev is a member of foxy_app_dev ONLY, so it cannot
+      # connect to the production database and act as foxy_app there. This var is
+      # NOT in the prod allowlist - without it here, setting it in .env would do
+      # nothing at all, silently.
+      - DB_APP_ROLE=${DB_APP_ROLE:-foxy_app}
       - SESSION_SECRET=${SESSION_SECRET:?set in deploy/.env}
       - STAFF_SESSION_SECRET=${STAFF_SESSION_SECRET:?set in deploy/.env}
       - API_KEY_PEPPER=${API_KEY_PEPPER:?set in deploy/.env}
@@ -147,6 +153,12 @@ services:
     environment:
       - FOXY_ENV=prod
       - DATABASE_URL=${DATABASE_URL:?set in deploy/.env}
+      # Confined RLS role. Dev uses its OWN (foxy_app_dev), not prod's foxy_app:
+      # the login role foxy_dev is a member of foxy_app_dev ONLY, so it cannot
+      # connect to the production database and act as foxy_app there. This var is
+      # NOT in the prod allowlist - without it here, setting it in .env would do
+      # nothing at all, silently.
+      - DB_APP_ROLE=${DB_APP_ROLE:-foxy_app}
       - SESSION_SECRET=${SESSION_SECRET:?}
       - STAFF_SESSION_SECRET=${STAFF_SESSION_SECRET:?}
       - API_KEY_PEPPER=${API_KEY_PEPPER:?}
