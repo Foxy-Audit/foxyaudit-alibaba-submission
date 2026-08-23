@@ -666,6 +666,17 @@ def paint_icon(p: QPainter, rect: QRectF, name: str, color: QColor,
             QPointF(rect.left() + w * 0.04, rect.top() + h * 0.04),
             QPointF(rect.center().x(), rect.center().y() + h * 0.07),
             QPointF(rect.right() - w * 0.04, rect.top() + h * 0.04)]))
+    elif name == "prompt":      # a speech bubble — the testbed's one verb, Send
+        # Not another shield. `verify` and `sandbox` already wear one, and a
+        # third would make the whole DESKTOP group read as one page; this
+        # section is the only one in the console where you WRITE something and
+        # a reply comes back, so it gets the glyph for that and nothing else.
+        rect = QRectF(x + w * 0.12, y + h * 0.20, w * 0.76, h * 0.50)
+        p.drawRoundedRect(rect, h * 0.14, h * 0.14)
+        p.drawPolyline(QPolygonF([
+            QPointF(x + w * 0.30, rect.bottom()),
+            QPointF(x + w * 0.27, y + h * 0.88),
+            QPointF(x + w * 0.48, rect.bottom())]))
     p.restore()
 
 def _read_version() -> str:

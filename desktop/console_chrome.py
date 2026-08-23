@@ -55,21 +55,37 @@ PALETTE_LABELS: dict[str, str] = {
     "access":   "API keys & SDK",
     "billing":  "Usage & billing",
     "settings": "Settings",
+    # The only desktop-only section with a palette entry, and it earns one the
+    # way "Home / overview" does: the extra words are search terms. Someone
+    # hunting this page types "try" or "guard" long before they type "testbed",
+    # and the title alone matches neither.
+    "testbed":  "Compliance testbed / try the guard",
 }
 
 # Desktop-only extras, kept at the bottom of the sidebar (plan §7).
+#
+# ⚠ "Testbed" AND "Sandbox" ARE DIFFERENT PRODUCTS AND THE TITLES SAY SO.
+# Sandbox is the VERIFICATION sandbox — paste a prompt and a response, hash them
+# locally, compare to the ledger. Testbed is the ASSISTANT — send a prompt
+# through the real preflight guard and read what it did. They sit one row apart,
+# so neither title may be shortened into the other's territory.
 EXTRA_SECTIONS: list[tuple[str, str, str, str, str]] = [
     ("system",  "System",  "System health",        "System",  "system"),
     ("sandbox", "Sandbox", "Verification sandbox", "Sandbox", "shield"),
+    ("testbed", "Testbed", "Compliance testbed",   "Testbed", "prompt"),
 ]
 
 ALL_SECTIONS = SECTIONS + EXTRA_SECTIONS
 
 # g-then-letter quick nav — the web's NAV map (html:3999) remapped onto the
 # desktop section ids. 'd' is the web's legacy alias for home.
+# 't' is the one letter added beyond the web's map, and it was free: the web
+# uses h d a l v p e k b s and nothing else. `system` and `sandbox` still have
+# no letter — they are not destinations anyone navigates to mid-task.
 QUICK_NAV = {
     "h": "home", "d": "home", "a": "threats", "l": "ledger", "v": "verify",
     "p": "policy", "e": "export", "k": "access", "b": "billing", "s": "settings",
+    "t": "testbed",
 }
 QUICK_NAV_WINDOW_MS = 1200          # the web's gTimer
 
@@ -303,6 +319,7 @@ SHORTCUT_PAIRS: list[tuple[str, str]] = [
     ("g then k", "Access"),
     ("g then b", "Billing"),
     ("g then s", "Settings"),
+    ("g then t", "Testbed"),
     ("Esc", "Close a dialog or menu"),
 ]
 

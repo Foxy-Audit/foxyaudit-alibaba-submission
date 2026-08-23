@@ -29,15 +29,55 @@ def test_the_nine_web_sections_in_the_webs_order():
 
 
 def test_desktop_extras_come_after_the_web_nine():
-    assert [s[0] for s in EXTRA_SECTIONS] == ["system", "sandbox"]
+    assert [s[0] for s in EXTRA_SECTIONS] == ["system", "sandbox", "testbed"]
     assert [s[0] for s in ALL_SECTIONS[:9]] == [s[0] for s in SECTIONS]
 
 
+def test_the_testbed_and_the_sandbox_do_not_read_alike():
+    """One row apart in the sidebar and two different products: the Sandbox
+    VERIFIES a record you already have, the Testbed RUNS the guard against a
+    prompt you type. A title collapsing one into the other is the whole risk of
+    putting them adjacent, so the words are pinned."""
+    titles = {s[0]: s[2] for s in EXTRA_SECTIONS}
+    assert titles["sandbox"] == "Verification sandbox"
+    assert titles["testbed"] == "Compliance testbed"
+    assert "sandbox" not in titles["testbed"].lower()
+    assert "testbed" not in titles["sandbox"].lower()
+
+
 def test_quick_nav_covers_every_web_section():
-    """g-then-letter must reach all nine; the web's 'd' alias points at home."""
+    """g-then-letter must reach all nine; the web's 'd' alias points at home.
+
+    T3 added the one desktop-only destination with a letter of its own. The
+    assertion stays an EQUALITY rather than becoming a subset check: a letter
+    quietly retargeted at a section nobody meant is exactly what a `>=` would
+    stop noticing."""
     targets = set(QUICK_NAV.values())
-    assert targets == {s[0] for s in SECTIONS}
+    assert targets == {s[0] for s in SECTIONS} | {"testbed"}
     assert QUICK_NAV["d"] == "home" == QUICK_NAV["h"]
+    assert QUICK_NAV["t"] == "testbed"
+
+
+def test_every_quick_nav_letter_points_at_a_section_that_exists():
+    """Two distinct failures, and the second is the one nothing else sees.
+
+    A letter re-aimed at a SECOND section cannot survive in the dict literal —
+    the later key wins — and the section that loses its letter then drops out of
+    the equality above, which is what catches that. What survives silently is a
+    letter aimed at an id that does not exist: `g` then that letter does
+    nothing, and no other guard here looks. This one was re-aimed after the
+    first version of it stayed green under exactly that mutation.
+
+    Only 'home' may be reached by more than one letter."""
+    known = {s[0] for s in ALL_SECTIONS}
+    unknown = {k: v for k, v in QUICK_NAV.items() if v not in known}
+    assert unknown == {}, f"these quick-nav letters go nowhere: {unknown}"
+
+    by_target = {}
+    for letter, target in QUICK_NAV.items():
+        by_target.setdefault(target, []).append(letter)
+    doubled = {t: sorted(v) for t, v in by_target.items() if len(v) > 1}
+    assert doubled == {"home": ["d", "h"]}, doubled
 
 
 # ── command palette (web build(), html:1730-1743) ───────────────────────────

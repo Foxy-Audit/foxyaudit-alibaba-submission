@@ -64,6 +64,17 @@ datas += kr_datas
 pyqt_binaries += kr_binaries
 pyqt_hidden += kr_hidden
 
+# The console's Testbed page (dashboard "testbed" section) imports foxy_testbed,
+# which imports foxy_audit. collect_all rather than a hiddenimport because
+# foxy_testbed ships DATA beside its modules — page.html lives inside the
+# package and is read through importlib.resources, which finds nothing in a
+# bundle that carried the .py files alone.
+for _pkg in ("foxy_audit", "foxy_testbed"):
+    _d, _b, _h = collect_all(_pkg)
+    datas += _d
+    pyqt_binaries += _b
+    pyqt_hidden += _h
+
 a = Analysis(
     [os.path.join(HERE, "omni_fox.py")],
     pathex=[HERE],

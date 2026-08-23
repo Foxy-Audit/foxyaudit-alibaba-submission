@@ -50,7 +50,7 @@ def _render(widget) -> QPixmap:
 
 
 # ── sidebar + navigation ────────────────────────────────────────────────────
-def test_all_eleven_sections_have_a_page(console):
+def test_every_section_has_a_page(console):
     assert list(console._page_index) == [s[0] for s in ALL_SECTIONS]
     assert console.stack.count() == len(ALL_SECTIONS)
 
@@ -103,7 +103,9 @@ def test_no_section_is_a_stub_any_more(console):
 
 def test_desktop_extras_are_last(console):
     ids = list(console._page_index)
-    assert ids[-2:] == [s[0] for s in EXTRA_SECTIONS]
+    # Counted off EXTRA_SECTIONS rather than a literal -2: T3 made it three and
+    # a hardcoded slice would have kept passing while checking two of them.
+    assert ids[-len(EXTRA_SECTIONS):] == [s[0] for s in EXTRA_SECTIONS]
 
 
 def test_home_quick_tiles_land_on_the_right_sections(console, app):

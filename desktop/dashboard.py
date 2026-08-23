@@ -95,6 +95,7 @@ import settings_data as sd
 import settings_admin as sa
 import export_data as ed
 import verify_data as vd
+from testbed_page import TestbedSections
 from threats_page import ThreatsSections, alert_table_row
 import ledger_data as ld
 import threats_data as td
@@ -613,6 +614,9 @@ class DashboardWindow(QWidget):
         # closeEvent can wait on everything in flight (see foxy_client.spawn_worker).
         self._workers: set = set()
         self._poll_workers: set = set()
+        # T3's turn workers. Their own set so a long live-provider call cannot
+        # be waited on by anything that thinks it is waiting for an HTTP poll.
+        self._testbed_workers: set = set()
 
         # NOTE: deliberately NOT a Qt.WindowType.Tool window.  A Tool window is a
         # non-activating auxiliary palette: on Windows it refuses to come to the
@@ -703,6 +707,11 @@ class DashboardWindow(QWidget):
         self._policy = PolicySections(self)
         self._billing = BillingSections(self)
         self._settings_page = SettingsSections(self)
+        # T3. `TestbedSections.build` imports the SDK inside a try and renders
+        # an honest not-installed state when it is absent — the desktop has
+        # never imported foxy_audit and CI installs desktop/requirements.txt
+        # alone, so this must never be a module-scope import.
+        self._testbed = TestbedSections(self)
         builders = {
             "home": lambda t: self._home.build(self._page_overview(t)),
             "threats": lambda t: self._threats.build(t),
@@ -715,6 +724,7 @@ class DashboardWindow(QWidget):
             "settings": lambda t: self._settings_page.build(t),
             "system": self._page_system,
             "sandbox": self._page_sandbox,
+            "testbed": lambda t: self._testbed.build(t),
         }
         for section_id, _label, title, _crumb, _icon in ALL_SECTIONS:
             build = builders.get(section_id)
@@ -5234,7 +5244,7 @@ class DashboardWindow(QWidget):
         shutdown_workers(self._workers | self._poll_workers | self._ann_workers
                          | self._home_workers | self._oneoff_workers
                          | self._threat_workers | self._ledger_workers
-                         | self._page_workers)
+                         | self._page_workers | self._testbed_workers)
         # Restore full opacity so the next show_animated fade starts from a
         # clean slate even though this instance is reused.
         self.setWindowOpacity(1.0)
