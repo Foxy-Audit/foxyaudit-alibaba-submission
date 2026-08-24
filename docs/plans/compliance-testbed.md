@@ -251,19 +251,24 @@ it existing.
 **Style.** Reuse `foxy_tokens`; introduce no colour. **Web wins on any style conflict.**
 Measure a fill against its background, not only its ink.
 
-### T4 — evidence *(after S11 merges)*
+### T4 — evidence *(unblocked: S11 merged at `ce491e1`)*
 
 **Files:** `sdk/src/foxy_testbed/core.py` · `cli.py` · `web.py` · `page.html` ·
 `__main__.py` · `sdk/tests_testbed/`
 
-Wire S11's receipt into `Turn.event_id` (deleting the `SDK FINDING` comment at
-`core.py:204-209` and citing S11's SHA where it stood), add a Foxy-key opt-in so a turn
+Wire S11's receipt into `Turn.event_id`. The hook is
+`FoxyClient(on_event=…)`, handing back a dict with `event_id`, `submitted`,
+`decision`, `policy_rules`, `blocked_reason`, `ruleset_version`, `ruleset_hash`,
+`commitment_alg`, `prompt_hash`, `response_hash`, `pii_signals`, `event_type`.
+Delete the `SDK FINDING` comment at `core.py:204-209`, citing `ce491e1` where it
+stood, add a Foxy-key opt-in so a turn
 can reach a ledger at all, and render a verify control.
 
 **Three honest states, and the page must be able to be in each of them:**
 
-1. **No ledger.** The default. "This turn was never shipped to a ledger — nothing to
-   verify," plus the one line that changes it. Not an error, and not a disabled control
+1. **No ledger.** The default, and now readable straight off the receipt:
+   `submitted=False` means there is no row. "This turn was never shipped to a
+   ledger — nothing to verify," plus the one line that changes it. Not an error, and not a disabled control
    with no explanation.
 2. **Shipped, no export.** The row exists; `explain()` needs a
    `/v1/logs/export?format=json` document. Say which file and how to get it.
