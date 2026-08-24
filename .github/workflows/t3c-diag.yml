@@ -1,11 +1,12 @@
 name: T3C diagnostic (throwaway)
 
 # ⚠ TEMPORARY — register #242. Deleted before this branch merges.
-# It exists to MEASURE the desktop abort, which only happens on Linux CI:
-#   * pytest captures fd 2, so Qt's own message before abort() is lost. `-s`
-#     is the whole point of step A.
-#   * steps B/C isolate the crash; step D removes the wheel, the one thing
-#     this repo's dev machine does not have.
+# Round 2. Round 1 established: the wheel is load-bearing (suite green with it
+# uninstalled), the crash is a background ApiWorker QThread, and the reported
+# "crashing test" is only whoever was inside processEvents() at the time.
+# What round 1 could NOT show is the TRACEBACK: stdout is block-buffered into a
+# pipe while stderr is not, so the two interleave and only the last line
+# survived. Every step below redirects BOTH into one file and cats it.
 on:
   push:
     branches: [fix/desktop-ci-abort]
@@ -25,44 +26,43 @@ jobs:
       - name: Install desktop deps
         run: pip install -r desktop/requirements.txt pytest
 
-      - name: 0 - where each package actually lives
-        run: |
-          python -c "import foxy_audit, foxy_testbed, sys; print('foxy_audit ', foxy_audit.__file__); print('foxy_testbed', foxy_testbed.__file__)"
-          pip show foxy-audit | head -4
-
-      - name: 0b - collection order around the crash
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          python -m pytest desktop --collect-only -q > /tmp/co.txt 2>&1 || true
-          echo "--- total ---"; tail -3 /tmp/co.txt
-          echo "--- 560..585 ---"; sed -n '560,585p' /tmp/co.txt
-
-      - name: A - full suite, UNCAPTURED (the Qt message before abort)
+      - name: E - test_d16_testbed.py ALONE (wheel present)
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          set -o pipefail
-          python -m pytest desktop -q -s 2>&1 | tail -n 120
+          python -m pytest desktop/test_d16_testbed.py -q > /tmp/e.txt 2>&1; echo "exit=$?"
+          cat /tmp/e.txt
 
-      - name: B - test_d5_pages.py ALONE
+      - name: F - the PAIR, default capture, one stream
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest desktop/test_d5_pages.py -q -s
+        run: |
+          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/f.txt 2>&1; echo "exit=$?"
+          cat /tmp/f.txt
 
-      - name: C - test_d16_testbed.py then test_d5_pages.py
+      - name: G - the PAIR again (is it deterministic?)
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q -s
+        run: |
+          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/g.txt 2>&1; echo "exit=$?"
+          cat /tmp/g.txt
 
-      - name: D - the SAME full suite with the WHEEL UNINSTALLED
+      - name: H - the FULL suite, exactly as ci.yml runs it
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest desktop -q > /tmp/h.txt 2>&1; echo "exit=$?"
+          tail -n 80 /tmp/h.txt
+
+      - name: I - the PAIR with the WHEEL UNINSTALLED
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           pip uninstall -y foxy-audit
-          set -o pipefail
-          python -m pytest desktop -q 2>&1 | tail -n 40
+          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/i.txt 2>&1; echo "exit=$?"
+          cat /tmp/i.txt
