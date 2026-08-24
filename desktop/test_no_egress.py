@@ -20,7 +20,7 @@ import urllib.error
 
 import pytest
 
-from conftest import BLOCKED_MARKER, LOOPBACK_HOSTS, running_workers
+from conftest import BLOCKED_MARKER, LOOPBACK_HOSTS
 from foxy_client import ApiError, FoxyHttp
 
 
@@ -85,34 +85,42 @@ def test_the_allowlist_is_loopback_and_nothing_else():
     assert set(LOOPBACK_HOSTS) == {"localhost", "127.0.0.1", "::1"}
 
 
-def test_a_closed_console_leaves_no_worker_thread_running(app, tmp_path):
-    """The property the crash violated, stated directly.
+def test_a_worker_cannot_outlive_the_drain_its_window_gives_it(app, dialled, tmp_path):
+    """The property #242 violated, measured at the seam where it broke.
 
-    ⚠ AND IT IS ONLY TRUE BECAUSE THE EGRESS IS BLOCKED.
-    `dashboard.closeEvent` drains through `shutdown_workers(wait_ms=1500)`,
-    which is best-effort: with a real request in flight the wait expires and
-    the thread walks out of the test still holding the closed window's
-    `FoxyClient` and its GUI-thread `QSettings`. That is #242.
+    `dashboard.closeEvent` hands every tracked worker to
+    `shutdown_workers(wait_ms=1500)`, which is best-effort BY DESIGN — it
+    waits, it cannot interrupt. So the only thing that keeps a worker from
+    walking out of the test that owns it is the work being short, and the work
+    is short only because nothing it does reaches the network. A worker that
+    outlives its window goes on calling `QSettings` off the GUI thread, which
+    is what corrupted the heap.
+
+    ⚠ BOTH HALVES ARE MEASURED, because either alone is satisfiable by
+    accident: a warm connection can also come back inside 1.5 s, which is
+    precisely how this stayed invisible on the dev machine for four merges.
+    So the wait is asserted AND the socket that must never open.
     """
     from PyQt6.QtCore import QSettings
-    from dashboard import DashboardWindow
+
     from fox_settings import FoxSettings
-    from foxy_client import MemorySecretStore
+    from foxy_client import (FoxyClient, MemorySecretStore, shutdown_workers,
+                             spawn_worker)
 
     store = QSettings(str(tmp_path / "console.ini"), QSettings.Format.IniFormat)
-    console = DashboardWindow(settings=FoxSettings(store, MemorySecretStore()))
-    try:
-        console.show()
-        console.go("home")
-        app.processEvents()
-    finally:
-        console.close()
+    client = FoxyClient(settings=FoxSettings(store, MemorySecretStore()))
+    workers: set = set()
+    # The console's own announcement call, with the console's own timeout —
+    # `dashboard._refresh_announcement` fires three of these on every window.
+    spawn_worker(client, "GET", "/v1/billing/plan", timeout=10,
+                 track=workers, on_err=lambda _err: None)
+    shutdown_workers(workers, 1500)
     app.processEvents()
-    live = running_workers(console)
-    assert live == [], (
-        f"{len(live)} worker thread(s) outlived the console that owns them; "
-        f"they keep calling QSettings off the GUI thread and the interpreter "
-        f"does not always survive it")
+    assert not [w for w in workers if w.isRunning()], (
+        "a worker survived the 1500 ms its window would have given it; it now "
+        "outlives the test, and goes on reading a GUI-thread QSettings from a "
+        "worker thread")
+    assert dialled == [], f"the worker dialled {dialled} — see the docstring"
 
 
 @pytest.fixture(scope="module")
