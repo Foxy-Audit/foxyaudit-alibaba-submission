@@ -1,12 +1,10 @@
 name: T3C diagnostic (throwaway)
 
 # ⚠ TEMPORARY — register #242. Deleted before this branch merges.
-# Round 2. Round 1 established: the wheel is load-bearing (suite green with it
-# uninstalled), the crash is a background ApiWorker QThread, and the reported
-# "crashing test" is only whoever was inside processEvents() at the time.
-# What round 1 could NOT show is the TRACEBACK: stdout is block-buffered into a
-# pipe while stderr is not, so the two interleave and only the last line
-# survived. Every step below redirects BOTH into one file and cats it.
+# Round 3 measures the FIX against the BASELINE on the same runner, three runs
+# each, because the crash is a race: `main` is 5/5 dead on the desktop-compile
+# job, but a second pytest process on an already-warm runner has come back
+# green. Only same-job repetition can tell a fix from a lucky run.
 on:
   push:
     branches: [fix/desktop-ci-abort]
@@ -26,43 +24,26 @@ jobs:
       - name: Install desktop deps
         run: pip install -r desktop/requirements.txt pytest
 
-      - name: E - test_d16_testbed.py ALONE (wheel present)
+      - name: BASELINE x3 - conftest.py removed, exactly as ci.yml runs it
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python -m pytest desktop/test_d16_testbed.py -q > /tmp/e.txt 2>&1; echo "exit=$?"
-          cat /tmp/e.txt
+          mv desktop/conftest.py /tmp/conftest.py
+          mv desktop/test_no_egress.py /tmp/test_no_egress.py
+          for i in 1 2 3; do
+            python -m pytest desktop -q > /tmp/base$i.txt 2>&1; echo "BASELINE run $i exit=$?"
+            tail -n 4 /tmp/base$i.txt
+          done
+          mv /tmp/conftest.py desktop/conftest.py
+          mv /tmp/test_no_egress.py desktop/test_no_egress.py
 
-      - name: F - the PAIR, default capture, one stream
+      - name: FIX x3 - conftest.py in place
         continue-on-error: true
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/f.txt 2>&1; echo "exit=$?"
-          cat /tmp/f.txt
-
-      - name: G - the PAIR again (is it deterministic?)
-        continue-on-error: true
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/g.txt 2>&1; echo "exit=$?"
-          cat /tmp/g.txt
-
-      - name: H - the FULL suite, exactly as ci.yml runs it
-        continue-on-error: true
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          python -m pytest desktop -q > /tmp/h.txt 2>&1; echo "exit=$?"
-          tail -n 80 /tmp/h.txt
-
-      - name: I - the PAIR with the WHEEL UNINSTALLED
-        continue-on-error: true
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          pip uninstall -y foxy-audit
-          python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q > /tmp/i.txt 2>&1; echo "exit=$?"
-          cat /tmp/i.txt
+          for i in 1 2 3; do
+            python -m pytest desktop -q > /tmp/fix$i.txt 2>&1; echo "FIX run $i exit=$?"
+            tail -n 4 /tmp/fix$i.txt
+          done

@@ -1,0 +1,97 @@
+"""Desktop test harness — the one rule the suite could not enforce per-file.
+
+⚠ WHY THIS FILE EXISTS: THE SUITE WAS CALLING PRODUCTION, AND IT CRASHED CI
+===========================================================================
+Register #242. Since T3 the `desktop-compile` job did not fail — it *died*,
+`Fatal Python error: Aborted` (134) on three runs and `Segmentation fault`
+(139) on two, always around 61%, and always blamed on whichever test happened
+to be inside `QApplication.processEvents()` at the time. That test was innocent
+every time. What the faulthandler dumps actually showed, on both signals, was
+two or three `ApiWorker` threads still alive and deep inside
+`foxy_client.request` → `_credentials` → `fox_settings.clone` → `_respawn`:
+
+    Thread 0x…6c0:  fox_settings.py:59 in _respawn      <- QSettings(name, fmt)
+                    foxy_client.py:500 in _fresh_settings
+                    foxy_client.py:686 in run           <- ApiWorker.run
+    Current thread: <invalid frame>                     <- main stack corrupt
+
+Those threads belonged to consoles the tests had already CLOSED.
+`FoxSettings.backend_url()` defaults to `https://app.foxyaudit.tech`, so every
+`DashboardWindow` a test builds fires real requests at production — three from
+`_refresh_announcement` alone. `dashboard.closeEvent` drains them with
+`shutdown_workers(wait_ms=1500)`, which is best-effort by design, and a cold
+DNS + TLS attempt from a CI runner does not fit in 1.5 s. So the worker
+outlived its test, and went on calling Qt (`QSettings`, `_respawn`) from a
+non-GUI thread while the next test hammered Qt from the main one. `QSettings`
+is reentrant, not thread-safe: that is a real data race, and it corrupted the
+heap somewhere the process could not survive.
+
+⚠ THE FIX IS THE EGRESS, NOT THE THREADS. Blocking the network collapses a
+worker's lifetime from ~10 s (the request timeout) to microseconds, so the
+1.5 s drain that `closeEvent` already performs always completes and nothing
+survives its test. It is also simply correct on its own: a unit suite that
+talks to the live backend is a suite whose results depend on whether the VM is
+up, and it was sending unauthenticated GETs to production on every CI run.
+
+⚠ WHAT THIS DOES **NOT** FIX, and is filed rather than papered over:
+`FoxyClient._fresh_settings` (foxy_client.py:500) reads `fileName()`,
+`format()`, `organizationName()` and `applicationName()` off the GUI thread's
+own `QSettings` from a worker thread — `_respawn`'s docstring admits the
+hazard while performing it. Egress-blocking removes the test suite's exposure;
+it does not remove the product's. See register #242.
+
+⚠ LOOPBACK STAYS OPEN. `test_foxy_client.py` drives a real `ThreadingHTTPServer`
+on 127.0.0.1 and must keep working — that is the one place the suite is
+*supposed* to speak HTTP, and it is the reason this guard filters by host
+rather than replacing the opener wholesale.
+"""
+
+from __future__ import annotations
+
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+import pytest
+
+#: Hosts the suite may reach. Everything the desktop tests legitimately talk to
+#: is a stub server this process started; anything else is somebody's real box.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+#: In the message of the URLError raised instead of the request. Asserted by
+#: `test_no_egress.py`, which is why it is a name and not an inline literal.
+BLOCKED_MARKER = "desktop/conftest.py blocked egress to"
+
+
+def _host_of(fullurl) -> str:
+    """The host `OpenerDirector.open` is about to dial, str or Request."""
+    url = fullurl if isinstance(fullurl, str) else fullurl.full_url
+    return (urlsplit(url).hostname or "").lower()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def no_egress():
+    """No desktop test may open a socket to anything but loopback.
+
+    Patched on `OpenerDirector.open` rather than on `FoxyHttp`: the client
+    builds its own opener with `build_opener`, `_mint_csrf` opens a second
+    request straight off it, and a future caller would get no protection from a
+    seam bolted onto one method. The class is the chokepoint all three share.
+    """
+    real_open = urllib.request.OpenerDirector.open
+
+    def guarded_open(self, fullurl, *args, **kwargs):
+        # ⚠ `*args`/`**kwargs`, NOT a re-declared signature. `open`'s third
+        # parameter defaults to `socket._GLOBAL_DEFAULT_TIMEOUT`, and spelling
+        # it `timeout=None` here would silently turn every stub-server call in
+        # `test_foxy_client.py` into one that can block forever.
+        host = _host_of(fullurl)
+        if host not in LOOPBACK_HOSTS:
+            raise urllib.error.URLError(f"{BLOCKED_MARKER} {host!r}")
+        return real_open(self, fullurl, *args, **kwargs)
+
+    urllib.request.OpenerDirector.open = guarded_open
+    try:
+        yield
+    finally:
+        urllib.request.OpenerDirector.open = real_open
