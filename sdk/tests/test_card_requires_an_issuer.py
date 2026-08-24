@@ -261,8 +261,19 @@ def test_each_published_validator_name_keeps_its_own_meaning():
 
 
 def test_the_new_version_is_registered_and_the_old_ones_are_untouched():
-    """A mint adds; it never edits. The three prior digests are literals."""
-    assert ruleset.CURRENT_VERSION == "2026.08.4"
+    """A mint adds; it never edits. The three prior digests are literals.
+
+    ⚠ THIS FILE IS 1.11.0's, AND ITS SUBJECT IS 2026.08.4 — NOT "whatever is
+    current". It asserted ``CURRENT_VERSION == "2026.08.4"``, and 1.13.0's mint
+    moved that pointer for a reason unrelated to the card gate, so the guard
+    failed on a change it has no opinion about. Rewritten to say what it always
+    meant: 2026.08.4 is REGISTERED and still carries the gate this file is about.
+
+    Tracking the current version is one guard's job, not every guard's —
+    ``test_ruleset.py::test_the_shipped_rows_carry_the_CURRENT_published_digest``
+    does it, and does it against the wire rather than against a literal.
+    """
+    assert "2026.08.4" in ruleset.known_versions()
     assert ruleset.drift() is None
     for version, digest in (
             ("2026.08.1", "2995b7fcc2ac83a09336fdd5047fec893c5ffe3cdd01fbc2c61cb3e7a2ab1ed0"),

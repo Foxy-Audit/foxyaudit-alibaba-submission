@@ -35,20 +35,140 @@ import re
 import warnings
 from dataclasses import dataclass, field
 
-from . import hashing, pii
+from . import hashing, normalise, pii
+
+
+def _one_deletion(word: str) -> str:
+    """``word``, and exactly its single-deletion variants. Nothing else.
+
+    ``Ignore all previus instructions`` reached the model under 2026.08.4
+    (SDK #230): a model reads the typo as the word, a literal alternative does
+    not. Enumerating the misspellings a human might make is whack-a-mole; every
+    string one deletion away is a closed, finite set, and this is it.
+
+    ⚠ AN ENUMERATION, AND IT MUST NOT BE THE CLEVER FORM. The first version of
+    this helper was ``(?=[A-Za-z]{n-1,n}\\b)`` followed by the word with every
+    character optional — shorter, and it looked provable. It matched THE EMPTY
+    STRING at any word boundary the lookahead happened to accept, because
+    nothing forced the optional chain to consume what the lookahead had
+    asserted. ``override the statement of work`` and ``Disregard the duplicated
+    line item`` both fired ``injection.override_instructions`` against a
+    zero-width match, and both are ordinary work in the sectors this SDK is
+    sold into. Caught by the benign corpus on its first run, which is what the
+    benign corpus is for.
+
+    ⚠ SEVEN-LETTER FLOOR, DELIBERATE. A short word's deletions land on real
+    words far too easily. Callers pass short words as literals; this raises
+    rather than silently widening them.
+
+    It does NOT tolerate an INSERTION, a SUBSTITUTION or a TRANSPOSITION —
+    ``instrcutions`` still passes. Stated so the limit travels with the fix.
+    Nor does it tolerate a deletion in a word written as a literal: ``prior``
+    stays exact.
+
+    The trailing ``\\b`` is load-bearing. ``previou`` is a variant of
+    ``previous``, and without a boundary it matches inside ``previously``.
+    """
+    if len(word) < 7:
+        raise ValueError(
+            f"{word!r} is too short for one-deletion tolerance: its variants "
+            f"collide with real words. Write it as a literal.")
+    variants = {word[:index] + word[index + 1:] for index in range(len(word))}
+    variants.discard(word)
+    ordered = [word] + sorted(variants)
+    return r"(?:{0})\b".format("|".join(ordered))
+
+
+# ── the vocabulary the injection rules are built from ────────────────────────
+#
+# Named fragments rather than one long literal per rule, because the SAME noun
+# lists are the difference between catching an override and refusing ordinary
+# work, and they have to be reviewable in one place. What reaches the ruleset
+# hash is the COMPOSED pattern source, so this costs the frozen definition
+# nothing and `ruleset.drift()` still sees every change.
+
+#: Words marking an instruction as belonging to the conversation's past.
+#: ``previous`` carries one-deletion tolerance; ``prior`` is five letters and is
+#: therefore a literal (see :func:`_one_deletion`).
+_PRIOR = ("(?:{0}|prior|preceding|preceeding|earlier|above|foregoing|former|"
+          "initial|original|last)").format(_one_deletion("previous"))
+
+#: Nouns that can only mean "the directives you are operating under". These get
+#: the wider determiner set, because ``ignore the previous instructions`` is an
+#: override in every context a compliance assistant runs in.
+_STRONG_OBJECT = (
+    "(?:{0}|{1}|prompts?|guardrails?|rules?|restrictions?|constraints?|"
+    "limitations?|directives?|guidance|policy|policies|protocols?|"
+    "programming|training|conditioning|persona|configuration)"
+).format(_one_deletion("instructions"), _one_deletion("guidelines"))
+
+#: Nouns usually about ORDINARY CONTENT and only sometimes about the
+#: assistant's directives. ⚠ THEY KEEP 2026.08.4'S TIGHT DETERMINER SET — only
+#: ``all`` and ``any`` — because ``please ignore my earlier message`` is the
+#: commonest correction a human types at an assistant, and a guard that refuses
+#: it has made the product worse in exchange for nothing.
+_WEAK_OBJECT = "(?:messages?|directions?|context|notes?)"
+
+#: Determiners allowed in front of a STRONG object.
+_DETERMINER = (r"(?:all\s+|any\s+|the\s+|these\s+|those\s+|your\s+|its\s+|"
+               r"my\s+|our\s+)?")
+
+#: The assistant's OWN directives, named as such. No prior-word is needed: the
+#: possessive, or the ``system``/``safety`` qualifier, already says whose
+#: instructions are meant.
+_SELF_DIRECTIVE = (
+    r"(?:(?:system|safety|initial|original|developer|hidden|base|core|"
+    r"underlying|built-?in)\s+(?:prompt|message|{0}|{1}|rules?|policy|policies)"
+    r"|guardrails?"
+    r"|(?:your|its)\s+{2})"
+).format(_one_deletion("instructions"), _one_deletion("guidelines"),
+         _STRONG_OBJECT)
+
+#: A phrase marking the object as something the assistant was handed. This is
+#: what reaches ``the guidance you were given earlier`` and ``the constraints
+#: you were configured with`` — the synonym and polite-framing evasions, where
+#: the verb is ordinary and the SELF-REFERENCE is the signal.
+_PREVIOUSLY_GIVEN = (
+    r"(?:you\s+(?:were\s+|have\s+been\s+|had\s+been\s+)?"
+    r"(?:given|told|received|configured|instructed|set\s+up|programmed)"
+    r"|above|earlier|before|previously|at\s+the\s+start"
+    r"|in\s+this\s+(?:conversation|session|chat|thread))")
+
+#: Verbs meaning "stop attending to". ⚠ EVERY ONE IS FOLLOWED BY A MANDATORY
+#: OBJECT TEST. ``Disregard the duplicated line item`` and ``Ignore rounding
+#: differences under one cent`` are the assistant's actual job.
+_STOP_ATTENDING = (
+    r"(?:ignore|ignoring|skip|omit|overlook|neglect|"
+    r"pay\s+no\s+attention\s+to|take\s+no\s+notice\s+of|"
+    r"set\s+aside|put\s+aside|leave\s+aside|"
+    r"stop\s+following|no\s+longer\s+follow|(?:do\s+not|don'?t)\s+follow)")
 
 # ── prompt-injection rules ────────────────────────────────────────────────────
 # Each entry: (rule_id, coarse_signal_label, compiled_regex). Rules are matched
-# against the prompt text; only the label/id ever leaves the host.
+# against the prompt text AND against the derived views in :mod:`normalise` —
+# see :func:`_injection_hits`. Only the label/id ever leaves the host.
 _INJECTION_RULES = (
     ("injection.ignore_previous", "prompt_injection", re.compile(
-        r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|earlier|above|preceding)\s+"
-        r"(?:instructions?|prompts?|messages?|directions?|context)", re.IGNORECASE)),
+        _STOP_ATTENDING + r"\s+(?:"
+        # (a) 2026.08.4's shape for the ambiguous nouns, determiners and all.
+        r"(?:all\s+|any\s+)?" + _PRIOR + r"\s+" + _WEAK_OBJECT
+        # (b) the same shape for the unambiguous ones, with more determiners.
+        + r"|" + _DETERMINER + _PRIOR + r"\s+" + _STRONG_OBJECT
+        # (c) the assistant's own directives, no prior-word required.
+        + r"|" + _SELF_DIRECTIVE
+        # (d) an object marked as previously given, up to four words away.
+        + r"|" + _DETERMINER + _STRONG_OBJECT + r"(?:\s+\w+){0,4}?\s+"
+        + _PREVIOUSLY_GIVEN
+        + r")", re.IGNORECASE)),
     ("injection.override_instructions", "prompt_injection", re.compile(
-        r"(?:disregard|forget|override|bypass|discard)\s+"
-        r"(?:all\s+|your\s+|the\s+|any\s+)?"
-        r"(?:previous\s+|prior\s+|above\s+|safety\s+|system\s+)?"
-        r"(?:instructions?|rules?|guidelines?|guardrails?|filters?|restrictions?|policy|policies)",
+        r"(?:disregard|forget|override|bypass|circumvent|discard|suspend|"
+        r"turn\s+off|switch\s+off)\s+"
+        r"(?:all\s+|your\s+|the\s+|any\s+|these\s+|those\s+)?"
+        r"(?:previous\s+|prior\s+|above\s+|safety\s+|system\s+|content\s+)?"
+        + ("(?:{0}|{1}|rules?|guardrails?|filters?|restrictions?|policy|"
+           "policies|guidance|constraints?|limitations?|directives?|"
+           "protocols?)").format(_one_deletion("instructions"),
+                                 _one_deletion("guidelines")),
         re.IGNORECASE)),
     ("injection.reveal_system_prompt", "prompt_injection", re.compile(
         r"(?:reveal|show|print|repeat|display|expose|leak|disclose|tell)\s+"
@@ -60,6 +180,59 @@ _INJECTION_RULES = (
         re.IGNORECASE)),
     # DAN is matched case-sensitively so the ordinary name "Dan" is not flagged.
     ("injection.dan", "prompt_injection", re.compile(r"\bDAN\b")),
+    # ⚠ A NAMED, BOUNDED LIST OF LANGUAGES — NOT "non-English".
+    #
+    # Every other rule here is English and the model is not: a multilingual
+    # assistant follows `Ignorez toutes les instructions précédentes` exactly as
+    # it follows the English sentence, and 2026.08.4 saw a string with no
+    # keyword in it (SDK #230). The honest fix cannot be "other languages", only
+    # "these ones" — French, Spanish, Portuguese, German, Italian, Dutch,
+    # Russian, Chinese and Japanese. Arabic, Hindi, Korean, Polish, Turkish and
+    # every other language on earth are NOT covered, and that is recorded in
+    # the ruleset's own docstring rather than left to be discovered.
+    #
+    # VERB AND OBJECT, never the object alone. `instructions précédentes` on its
+    # own appears in any French document a legal assistant is asked to
+    # summarise, and flagging that would refuse the job.
+    ("injection.multilingual_override", "prompt_injection", re.compile(
+        # French
+        r"(?:ignore[zr]?|oublie[zr]?|ne\s+tenez?\s+pas\s+compte\s+(?:de|des))"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}instructions?\s+"
+        r"(?:précédentes?|precedentes?|antérieures?|anterieures?)"
+        # Spanish
+        r"|(?:ignora|ignore|olvida|olvide|haz\s+caso\s+omiso\s+(?:a|de))"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}instrucciones\s+"
+        r"(?:anteriores|previas)"
+        # Portuguese
+        r"|(?:ignore|ignora|esqueça|esqueca|desconsidere)"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}instruções\s+"
+        r"(?:anteriores|prévias|previas)"
+        # German
+        r"|(?:ignoriere|ignorieren\s+sie|vergiss|vergessen\s+sie|missachte)"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}"
+        r"(?:vorherigen|vorigen|bisherigen|obigen)\s+"
+        r"(?:anweisungen|anleitungen|vorgaben|instruktionen)"
+        # Italian
+        r"|(?:ignora|ignorate|dimentica|dimenticate)"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}istruzioni\s+precedenti"
+        # Dutch
+        r"|(?:negeer|vergeet)\s+(?:[^\W\d_]+[\s'’-]+){0,3}"
+        r"(?:vorige|eerdere|voorgaande)\s+(?:instructies|aanwijzingen)"
+        # Russian
+        r"|(?:игнорируй(?:те)?|"
+        r"забудь(?:те)?)"
+        r"\s+(?:[^\W\d_]+[\s'’-]+){0,3}"
+        r"предыдущие\s+"
+        r"(?:инструкции|"
+        r"указания)"
+        # Chinese — no word separators, so verb and object are adjacent.
+        r"|忽略(?:所有)?"
+        r"(?:之前的|以前的|先前的|上面的)?"
+        r"(?:指令|指示|提示|要求)"
+        # Japanese
+        r"|(?:これまでの|以前の|先の|"
+        r"上記の)(?:指示|命令)を?無視",
+        re.IGNORECASE)),
 )
 
 # ── secret / key rules ────────────────────────────────────────────────────────
@@ -184,7 +357,12 @@ class PolicyDecision:
 #: A customer re-checking their own redacted prompt was told the finding had
 #: survived its own redaction.
 #:
-#: All nine prompt rules were swept; this is the only one. It is overridden to
+#: All ten prompt rules are swept — nine at 1.9.0, and
+#: ``injection.multilingual_override`` since 2026.08.5 — and this is still the
+#: only one that collides. Not asserted here: the guard named below builds every
+#: marker and re-evaluates it under every tag, so a rule added tomorrow whose
+#: marker matches its own pattern fails there rather than shipping. It is
+#: overridden to
 #: the rule's coarse SIGNAL label rather than renamed to something invented, so
 #: the marker still says which family was removed.
 #:
@@ -334,6 +512,75 @@ def _checks_for(policy_tag: str) -> tuple[str, ...]:
     return _BASELINE_CHECKS + _POLICY_EXTRA.get(resolved, ())
 
 
+def _redact_derived_injection(text: str) -> str:
+    """Replace the spans only a DERIVED view found, right to left.
+
+    Right to left so each substitution leaves the offsets of the ones still to
+    come untouched — the standard reason, stated because doing it left to right
+    fails silently on the second match rather than loudly on the first.
+
+    Overlapping derived spans keep the LEFTMOST and widest. Two rules can match
+    the same span — a base64 blob whose plaintext trips both
+    ``ignore_previous`` and ``reveal_system_prompt`` is in the corpus — and the
+    second write would then slice a string the first one already shortened.
+    ⚠ MEASURED, because the obvious corpus entry hides it: that blob sits at the
+    END of its prompt, so ``text[end:]`` is empty and the second substitution
+    overwrites the first harmlessly. Move the blob into the middle of a sentence
+    and EVERYTHING AFTER IT IS DELETED — the model receives a truncated prompt
+    and nothing reports it. `test_two_derived_matches_in_one_prompt_are_both_
+    removed_intact` pins both shapes.
+
+    ⚠ AND ONE HONEST NOTE ABOUT `raw_spans`. Filtering out derived spans that
+    overlap a raw match is DEFENCE IN DEPTH, not load-bearing: removing it
+    changed no output across 132 inputs, because the transforms only delete
+    characters or replace whole blobs, so a derived span is always either
+    identical to a raw one (the raw loop writes the same marker at the same
+    place) or disjoint from it. It is kept because that reasoning is about
+    TODAY'S transforms, and the next one may not delete-only — but it is not
+    claimed as a guard, and no test asserts it.
+    """
+    raw_spans = [(start, end) for _r, _s, start, end, view
+                 in _injection_hits(text) if view == "raw"]
+    derived = sorted(
+        ((start, end, rule_id) for rule_id, _s, start, end, view
+         in _injection_hits(text)
+         if view != "raw" and end > start
+         and not any(start < raw_end and raw_start < end
+                     for raw_start, raw_end in raw_spans)),
+        key=lambda item: (item[0], -item[1]))
+
+    applied = []
+    for start, end, rule_id in derived:
+        if applied and start < applied[-1][1]:
+            continue
+        applied.append((start, end, rule_id))
+
+    for start, end, rule_id in reversed(applied):
+        text = text[:start] + _marker(rule_id) + text[end:]
+    return text
+
+
+def _injection_hits(text: str) -> list:
+    """Every injection match, as ``(rule_id, signal, start, end, view)``.
+
+    Spans are into ``text`` — the ORIGINAL prompt — even for a match found in a
+    derived view, because :mod:`normalise` carries the index map. That is what
+    lets :func:`redact` remove the spaced-out run or the base64 blob rather than
+    a slice of a transformed copy that never existed on the wire.
+
+    ⚠ THE RAW VIEW IS FIRST AND ITS MATCHES ARE UNCHANGED. Everything a
+    2026.08.4 build found, this finds, at the same span, from the same pattern.
+    The derived views can only ADD.
+    """
+    hits = []
+    for view in normalise.views_for(text, normalise.describe()):
+        for rule_id, signal, regex in _INJECTION_RULES:
+            for found in regex.finditer(view.text):
+                start, end = view.origin(*found.span())
+                hits.append((rule_id, signal, start, end, view.name))
+    return hits
+
+
 def evaluate(prompt_text, policy_tag: str = "default") -> PolicyDecision:
     """Evaluate ``prompt_text`` under ``policy_tag``; return labels only."""
     text = _as_text(prompt_text)
@@ -348,10 +595,9 @@ def evaluate(prompt_text, policy_tag: str = "default") -> PolicyDecision:
             signals.append(label)
 
     if "injection" in checks:
-        for rule_id, signal, regex in _INJECTION_RULES:
-            if regex.search(text):
-                rules.append(rule_id)
-                signals.append(signal)
+        for rule_id, signal, _start, _end, _view in _injection_hits(text):
+            rules.append(rule_id)
+            signals.append(signal)
 
     if "secrets" in checks:
         for rule_id, signal, regex in _SECRET_RULES:
@@ -371,9 +617,26 @@ def redact(prompt_text, policy_tag: str = "default") -> str:
     Applies the same check families as :func:`evaluate`, replacing offending
     spans with content-blind ``[REDACTED:<label>]`` markers so the wrapped
     function receives a scrubbed prompt while raw text never leaves the host.
+
+    ⚠ TWO PASSES OVER THE INJECTION FAMILY, IN THIS ORDER, AND THE ORDER IS THE
+    WHOLE REASON EVERY UNAFFECTED PROMPT STAYS BYTE-IDENTICAL.
+
+    A match found only in a derived view has a span in the ORIGINAL text, so it
+    must be substituted while the offsets are still the original's — before
+    ``pii.redact`` and before the raw pattern loop move anything. Derived spans
+    that OVERLAP a raw match are dropped: the raw loop is about to handle those,
+    and applying both would produce a marker inside a marker.
+
+    The consequence worth stating: when nothing matches in a derived view, this
+    function is byte-for-byte 2026.08.4's. That is asserted, not assumed —
+    ``test_policy_vocabulary`` compares it against a frozen 1.5.0 module across
+    the whole corpus.
     """
     out = _as_text(prompt_text)
     checks = _checks_for(policy_tag)
+
+    if "injection" in checks:
+        out = _redact_derived_injection(out)
 
     if "phi" in checks or "pii" in checks:
         out = pii.redact(out)

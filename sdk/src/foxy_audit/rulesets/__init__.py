@@ -12,13 +12,18 @@ never correct: rows in customers' chains name these strings.
 
 from __future__ import annotations
 
-from . import v2026_08_1, v2026_08_2, v2026_08_3, v2026_08_4
+from . import (v2026_08_1, v2026_08_2, v2026_08_3, v2026_08_4, v2026_08_5)
 
 _REGISTRY = {
     v2026_08_1.VERSION: v2026_08_1.DEFINITION,
     v2026_08_2.VERSION: v2026_08_2.DEFINITION,
     v2026_08_3.VERSION: v2026_08_3.DEFINITION,
     v2026_08_4.VERSION: v2026_08_4.DEFINITION,
+    # 2026.08.5 — SDK #230. The injection rules gain derived VIEWS
+    # (`prompt_views`), four match shapes on `ignore_previous`, and the
+    # `multilingual_override` id. Added here, never in place of the line above
+    # it: .4 keeps its entry because rows in customers' chains name it.
+    v2026_08_5.VERSION: v2026_08_5.DEFINITION,
 }
 
 

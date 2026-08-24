@@ -58,6 +58,16 @@ Everything that determines WHICH RULE IDS CAN APPEAR on a row, and nothing else:
   regex SOURCE TEXT plus its flags. Source text rather than the compiled object
   because a compiled pattern has no stable serialisation; flags because
   ``re.IGNORECASE`` changes what matches as surely as the pattern does.
+* the derived VIEWS the injection rules run against, IN ORDER, each transform's
+  name AND THE DATA IT RAN WITH. From 2026.08.5 a rule is no longer matched
+  only against the literal prompt (:mod:`normalise`), so "which pattern" stops
+  being the whole answer to "what would have matched": the same five patterns
+  over a zero-width-stripped copy find things they do not find over the
+  original. Recording the transform NAMES without their data would be SDK #224
+  one layer up — the issuer table outside the hash, in a new coat — and
+  recording a DIGEST of the data would tell an auditor the data had changed
+  without letting an old row replay under the old data. So the data is recorded
+  IN FULL. It is a handful of literals per transform.
 * the response-side (OWASP LLM05) families, which emit ids into the very same
   ``policy_rules`` field, plus ``CARRY_CHARS`` — the streaming window is a real
   bound on what a scan can detect.
@@ -92,7 +102,7 @@ log = logging.getLogger("foxy_audit")
 #: Bumped by hand when the rules change. Date-based rather than semver: this
 #: numbers a body of RULES, not an API, and "which rules were live in August
 #: 2026" is the question an auditor actually asks.
-CURRENT_VERSION = "2026.08.4"
+CURRENT_VERSION = "2026.08.5"
 
 _SCHEMA = "foxy-ruleset-v1"
 
@@ -127,7 +137,7 @@ def describe_live() -> dict:
     Compared against the frozen entry to detect an unversioned edit. It is NOT
     what goes on the wire — see the module docstring.
     """
-    from . import issuer_ranges, pii, policy, response_policy
+    from . import issuer_ranges, normalise, pii, policy, response_policy
 
     return {
         "schema": _SCHEMA,
@@ -135,6 +145,12 @@ def describe_live() -> dict:
             "injection": _rules(policy._INJECTION_RULES),
             "secret": _rules(policy._SECRET_RULES),
         },
+        # ⚠ WHAT THE PATTERNS ARE MATCHED AGAINST, not only what they are.
+        # Added in 2026.08.5. Its absence in 2026.08.1 through .4 is the honest
+        # record that those versions matched the literal prompt and nothing
+        # else — `introspect.replay` reads the absence exactly that way, so an
+        # old row keeps replaying against the raw text alone.
+        "prompt_views": normalise.describe(),
         "response_rules": {
             "always": _rules(response_policy._ALWAYS),
             "personal_by_policy": dict(sorted(response_policy._POLICY_PERSONAL.items())),

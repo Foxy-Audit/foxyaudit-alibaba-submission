@@ -302,7 +302,14 @@ def test_replay_of_an_older_version_differs_from_the_current_one():
     older = ruleset.explained_ids(ruleset.load("2026.08.1"))
     current = ruleset.explained_ids(ruleset.load(ruleset.CURRENT_VERSION))
     assert older != current
-    assert current - older == {"response_scan.degraded", "response_scan.unreadable"}
+    assert current - older == {
+        "response_scan.degraded", "response_scan.unreadable",
+        # 2026.08.5 (SDK #230). The one rule id the injection family gained.
+        # A row naming 2026.08.1 genuinely cannot explain it, so it belongs in
+        # this difference — named, rather than papered over by relaxing the
+        # equality to a superset test, which would stop noticing the next one.
+        "injection.multilingual_override",
+    }
 
 
 def test_replay_resolves_the_tag_through_the_FROZEN_alias_map(monkeypatch):

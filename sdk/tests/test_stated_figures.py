@@ -101,6 +101,7 @@ def _load(name: str, filename: str):
 
 CORPORA = _load("identifier_corpora", "identifier_corpora.py")
 OLD_PII = _load("pii_1_8_0", "pii_1_8_0.py")
+EVASIONS = _load("injection_evasion_corpus", "injection_evasion_corpus.py")
 
 
 # ── the historical boundaries, as data ───────────────────────────────────────
@@ -257,7 +258,60 @@ def measured() -> dict:
     figures["card recall 1.8.0 -> shipped"] = (len(old_cards), len(new_cards))
     figures["shapes missed, both eras"] = (
         len(pans) - len(old_cards), len(pans) - len(new_cards))
+
+    # ── the injection obligation set (SDK #230, ruleset 2026.08.5) ───────────
+    #
+    # ⚠ MEASURED BOTH WAYS, AND THE "BEFORE" IS A REPLAY, NOT A MEMORY.
+    # v2026_08_5.py's docstring states what the corpus scored under the version
+    # it supersedes. Reading that from a comment would make it exactly the kind
+    # of number this file exists to catch, so it is re-derived by replaying the
+    # FROZEN 2026.08.4 definition — the rules that really ran — against the same
+    # prompts. If a future mint quietly reaches an evasion or loses a benign
+    # prompt, the frozen docstring stops being true and this fails.
+    figures.update(_injection_figures())
     return figures
+
+
+def _injection_figures() -> dict:
+    """The evasion / benign / already-caught counts, live and under 2026.08.4."""
+    from foxy_audit import introspect, policy, ruleset as rules
+
+    previous = rules.load("2026.08.4")
+
+    def live(text, tag="default"):
+        return {r for r in policy.evaluate(text, tag).rules
+                if r.startswith("injection.")}
+
+    def before(text, tag="default"):
+        return {m.rule_id for m in introspect.replay(previous, text, tag)
+                if m.rule_id.startswith("injection.")}
+
+    def fires_anywhere(check, text):
+        """Under EVERY tag the benign claim covers, not just the default one.
+
+        ``hipaa`` adds the personal-data family; only ``injection.*`` ids are
+        counted, so a benign prompt is clean here or it is a false positive.
+        """
+        return bool(check(text, "default") or check(text, "hipaa"))
+
+    evasions = EVASIONS.EVASIONS
+    benign = EVASIONS.BENIGN
+    caught = EVASIONS.ALREADY_CAUGHT
+
+    return {
+        "evasions caught (2026.08.5)": (
+            sum(1 for e in evasions if live(e.prompt)), len(evasions)),
+        "evasions caught (2026.08.4)": (
+            sum(1 for e in evasions if before(e.prompt)), len(evasions)),
+        "benign false positives (2026.08.5)": (
+            sum(1 for b in benign if fires_anywhere(live, b.prompt)), len(benign)),
+        "benign false positives (2026.08.4)": (
+            sum(1 for b in benign if fires_anywhere(before, b.prompt)),
+            len(benign)),
+        "already-caught phrasings still firing": (
+            sum(1 for rule_id, text in caught if rule_id in live(text)),
+            len(caught)),
+    }
 
 
 MEASURED = measured()
@@ -292,7 +346,11 @@ _NOT_A_MEASUREMENT = {
 #: the assertion and its failure message — they were two literals, and the
 #: message still said 22 after the assertion moved to 39, so the guard that
 #: exists to catch a stale number was itself telling readers a stale one.
-_EXPECTED_CLAIMS = 40
+#: 40 -> 45 when ruleset 2026.08.5 was minted. The five new claims are all in
+#: `v2026_08_5.py`'s docstring and all in `_injection_figures()`: 8 of 10
+#: evasions caught, 0 of 10 under the version it supersedes, 0 of 47 benign
+#: prompts firing under each, and 5 of 5 older phrasings still firing.
+_EXPECTED_CLAIMS = 45
 
 #: ``N of M``, ``N/M`` and ``N -> M``: the three shapes a figure claim takes in
 #: these files. Numbers may carry thin-space grouping ("2 849", "20 000").

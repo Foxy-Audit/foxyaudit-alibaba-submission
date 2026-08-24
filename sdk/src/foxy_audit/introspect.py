@@ -104,7 +104,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from . import hashing, policy as policy_engine, ruleset
+from . import hashing, normalise, policy as policy_engine, ruleset
 # ⚠ THE ONE PLACE THIS MODULE SHARES CODE WITH THE LIVE DETECTOR, and it is
 # deliberate. `replay` recompiles PATTERNS from the frozen definition rather than
 # importing `pii`'s — that is what makes it a replay. Validator implementations
@@ -365,15 +365,37 @@ def replay(definition: dict, text: str, policy_tag: str) -> list:
 
     Recompiled from the frozen definition's recorded pattern source and flags —
     which is what makes this a replay of that version rather than of today's
-    code.
+    code. From 2026.08.5 that includes the VIEWS the definition records: which
+    text the patterns ran against is as much a part of "the rules" as the
+    patterns themselves.
     """
     families = _resolve_tag(definition, policy_tag)
     matches: list = []
 
     if "injection" in families:
+        # ⚠ THE VIEWS THE ROW'S OWN RULESET RECORDS, NOT TODAY'S. A definition
+        # published before 2026.08.5 has no ``prompt_views`` key at all, and
+        # ``views_for(text, None)`` returns the raw view alone — which is
+        # exactly what those versions did. Reading the live
+        # ``normalise.describe()`` here instead would replay a 2026.08.4 row
+        # against a normalised copy of its prompt and report matches the SDK
+        # that wrote the row never made.
+        views = normalise.views_for(text, definition.get("prompt_views"))
+        seen = set()
         for rule_id, entry in sorted(definition["prompt_rules"]["injection"].items()):
-            for found in _compile(entry).finditer(text):
-                matches.append(Match(rule_id, found.start(), found.end(), found.group()))
+            regex = _compile(entry)
+            for view in views:
+                for found in regex.finditer(view.text):
+                    start, end = view.origin(*found.span())
+                    # The span — and therefore the text an auditor is shown — is
+                    # in the PROMPT: the spaced-out run or the base64 blob that
+                    # really was there, never the transformed copy. Two views
+                    # finding the same override at the same span is one finding,
+                    # not two, so identical spans collapse.
+                    if (rule_id, start, end) in seen:
+                        continue
+                    seen.add((rule_id, start, end))
+                    matches.append(Match(rule_id, start, end, text[start:end]))
     if "secrets" in families:
         for rule_id, entry in sorted(definition["prompt_rules"]["secret"].items()):
             for found in _compile(entry).finditer(text):
@@ -560,6 +582,26 @@ def explain(prompt, event_id: str, export, commitment_key: str,
 
     try:
         matches = replay(definition, str(prompt), policy_tag)
+    except normalise.UnknownTransform as unknown:
+        # ⚠ THE SAME ANSWER AS AN UNKNOWN VALIDATOR, FOR THE SAME REASON, and
+        # it is a SEPARATE branch because the two failures have different
+        # remedies to state. A definition can name a text transform this build
+        # does not implement — a row written by a newer SDK whose views this one
+        # has never heard of. Replaying it against the raw text alone would
+        # report a CLEAN prompt where the ledger recorded a finding, which is
+        # the row looking like a lie about itself. Skipping a transform is not
+        # a smaller version of replaying it; it is a different replay.
+        return ExplainResult(
+            "unknown_ruleset",
+            f"Row {event_id} names ruleset {version!r}, whose definition "
+            f"matches the injection rules against a view built by "
+            f"{str(unknown)!r} — this SDK does not implement it (it has: "
+            f"{', '.join(sorted(normalise.TRANSFORMS))}). Upgrade foxy-audit to "
+            f"replay this row. Replaying it against the raw prompt alone would "
+            f"report no match where the SDK which wrote the row found one.",
+            event_id=event_id, policy_tag=policy_tag,
+            ruleset_version=str(version), commitment_verified=True,
+            ruleset_verified=ruleset_verified)
     except UnknownValidator as unknown:
         # ⚠ THE PUBLIC PATH ANSWERS; IT DOES NOT RAISE. A row can name a ruleset
         # this build CARRIES while that definition names a VALIDATOR it does not

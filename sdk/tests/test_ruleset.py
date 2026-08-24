@@ -78,6 +78,10 @@ PUBLISHED = {
     # Added here, never in place of the line above it: .3 keeps its digest
     # because rows in customers' chains name it.
     "2026.08.4": "998de7e3ae678f0a5c47ade7ffeaee1c996b8b132827dbc9b0585d5cf5249cc6",
+    # 2026.08.5 — the injection family gains derived VIEWS (`prompt_views`),
+    # four match shapes on `ignore_previous`, and `injection.multilingual_
+    # override` (SDK #230). Added, never in place of .4.
+    "2026.08.5": "dce670708dbb12cb088352e4771e2779942ae4aa7e81d9a6b7b6354ac4373bf6",
 }
 
 #: The ISSUER TABLE's own digest, pinned for the same reason the ruleset digests
@@ -435,7 +439,15 @@ def test_2026_08_1_is_still_the_version_that_could_not_explain_them():
     """
     old = ruleset.explained_ids(ruleset.load("2026.08.1"))
     missing = ruleset.live_rule_ids() - old
-    assert missing == {"response_scan.degraded", "response_scan.unreadable"}, missing
+    assert missing == {
+        "response_scan.degraded", "response_scan.unreadable",
+        # 2026.08.5 (SDK #230). A row stamped 2026.08.1 cannot explain
+        # `injection.multilingual_override` because that version had no such
+        # rule — which is the correct answer, and the reason this stays an
+        # EQUALITY. Loosening it to "at least these two" would let the next
+        # unresolvable id in without anyone deciding it was resolvable.
+        "injection.multilingual_override",
+    }, missing
 
 
 def test_live_rule_ids_actually_walks_the_tables():
