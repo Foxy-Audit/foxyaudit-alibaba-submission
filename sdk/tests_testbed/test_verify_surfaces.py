@@ -296,3 +296,178 @@ def test_the_verify_control_is_absent_when_there_is_nothing_to_look_up():
     body = PAGE_SOURCE.split("function wireVerify")[1]
     assert "if (!turn.event_id)" in body
     assert "removeChild(button)" in body
+
+
+# ══ T4b · the gate's five findings ══════════════════════════════════════════
+def test_going_back_to_a_mode_you_already_used_does_not_lose_the_turn():
+    """THE ONE THAT BLOCKED THE GATE, DRIVEN AS THE SEQUENCE THAT FOUND IT.
+
+    One client is shared by every Assistant `with_mode` produces and it holds ONE
+    `on_event`. Bound at construction, the last Assistant built won -- so
+    `Testbed`, which CACHES an assistant per (sector, mode), handed turns to
+    instances whose hook had been taken away. Measured on the branch before the
+    fix: block, observe, block, redact, observe gave ids for 1, 2 and 4 and
+    NOTHING for 3 and 5, and the page reported "cannot be traced from here" for
+    turns that had written real ledger rows.
+
+    ⚠ THE SEQUENCE, NOT THE BINDING. A unit test on where the hook is assigned
+    would have passed on the broken build -- the assignment was there and it was
+    correct; what was wrong was WHEN. Revisiting a mode is the ordinary way a
+    person drives a mode selector, so that is what is driven.
+    """
+    testbed = web.Testbed()
+    sequence = [("healthcare", "block"), ("healthcare", "observe"),
+                ("healthcare", "block"), ("healthcare", "redact"),
+                ("healthcare", "observe")]
+    seen = []
+    for index, (sector, mode) in enumerate(sequence):
+        payload = testbed.ask(sector, mode, "question number {0}".format(index))
+        assert payload["event_id"], (
+            "turn {0} ({1} {2}) came back with no event_id -- the cached "
+            "assistant lost the receipt hook, and the page will deny evidence "
+            "that exists".format(index + 1, sector, mode))
+        seen.append(payload["event_id"])
+
+    assert len(set(seen)) == len(sequence), "two turns reported the same row"
+    # and every one is verifiable THROUGH THE SERVER, which is the claim the
+    # page actually makes when it offers the control
+    for index, event_id in enumerate(seen):
+        assert testbed.verify(event_id,
+                              "question number {0}".format(index)) is not None
+
+
+def test_a_mode_round_trip_in_the_repl_keeps_naming_rows():
+    """The same defect reachable from the other surface: `/mode` rebuilds through
+    `with_mode` too, so a user who switches away and back is doing by hand what
+    the web cache does by itself."""
+    assistant = Assistant(get_sector("healthcare"), mode="block")
+    session = cli.Session(assistant)
+    ids = []
+    for command in ("first question", "/mode observe", "second question",
+                    "/mode block", "third question"):
+        if command.startswith("/"):
+            cli._handle_command(session, command, io.StringIO())
+            continue
+        turn = session.assistant.ask(command)
+        assert turn.event_id, "a turn after a /mode round trip lost its row"
+        ids.append(turn.event_id)
+    assert len(set(ids)) == 3
+
+
+@pytest.mark.parametrize("flag,value", [("--foxy-key", "a-key"),
+                                        ("--export", "export.json"),
+                                        ("--sidecar", "salt.json")])
+def test_a_flag_the_scoreboard_cannot_use_is_refused_not_ignored(flag, value,
+                                                                 capsys):
+    """They were validated and then consumed only by the REPL branch, so
+    `--probe all --foxy-key K` ran KEYLESS while the comment above the check said
+    the flags are refused loudly rather than degraded. A flag accepted and
+    ignored is worse than one refused: the user believes the run was keyed."""
+    from foxy_testbed.__main__ import main
+
+    assert main(["--sector", "healthcare", "--probe", "all", flag, value]) == 2
+    err = capsys.readouterr().err
+    assert flag in err and "no effect with --probe" in err
+
+
+def test_a_plain_probe_run_is_untouched(capsys):
+    """The refusal must not catch a run that passed none of them -- this is the
+    CI gate, and it is what all three sectors are scored by."""
+    from foxy_testbed.__main__ import main
+
+    assert main(["--sector", "healthcare", "--probe", "all"]) == 0
+    assert "PASS" in capsys.readouterr().out
+
+
+def test_an_export_that_is_valid_json_but_not_a_ledger_does_not_kill_the_repl(
+        tmp_path):
+    """`introspect._row_for` calls `.get` on whatever `logs` turns out to be, so
+    a bare array raises AttributeError -- neither OSError nor ValueError, which
+    was all `verify` caught. It escaped into `_handle_command`, which catches
+    only KeyboardInterrupt, and took the whole session down with a traceback.
+
+    ⚠ DRIVEN THROUGH `repl`, because the blast radius IS the loop. Calling
+    `verify` directly would prove the exception is caught and say nothing about
+    whether the session survives it.
+    """
+    bare = tmp_path / "bare.json"
+    bare.write_text('{"logs": [1, 2, 3]}', encoding="utf-8")
+
+    assistant = _keyed(tmp_path)
+    out = io.StringIO()
+    lines = iter([PHI_PROMPT, "/verify {0}".format(bare), "/quit"])
+    assert cli.repl(assistant, read_line=lambda: next(lines), out=out,
+                    banner=False) == 0, "the REPL died on a malformed export"
+    text = out.getvalue()
+    assert "THE EXPORT COULD NOT BE READ" in text
+    assert "AttributeError" in text, "the type is what the message may carry"
+    assert "bye." in text, "the session never reached /quit"
+
+
+def test_a_ruleset_verified_value_this_build_does_not_know_degrades():
+    """It was a bare `{...}[value]` lookup, which raises KeyError on anything
+    outside the three -- the same REPL-killing blast radius. `page.html` keys
+    through `String(...)` so an unknown value degrades to a printed oddity; the
+    REPL it is supposed to agree with now does the same."""
+    from foxy_testbed.core import EVIDENCE_EXPLAINED, Evidence
+
+    odd = Evidence(state=EVIDENCE_EXPLAINED, headline="EXPLAINED", message="m",
+                   event_id="e", status="explained",
+                   ruleset_verified="not-a-tristate")
+    rendered = " ".join(cli.evidence_lines(odd))
+    assert "not reported" in rendered
+    assert "not-a-tristate" in rendered
+
+    # and the three real states are still three DISTINCT sentences
+    said = set()
+    for value in (True, False, None):
+        one = Evidence(state=EVIDENCE_EXPLAINED, headline="EXPLAINED",
+                       message="m", event_id="e", status="explained",
+                       ruleset_verified=value)
+        said.add(" ".join(cli.evidence_lines(one)))
+    assert len(said) == 3
+
+
+def test_a_verify_path_with_spaces_reaches_explain_whole(tmp_path):
+    """`split()` handed `/verify` only the text up to the first space, so a
+    Windows path under a folder like "Al Smith" arrived truncated and the failure
+    named a path the user had never typed.
+
+    ⚠ ASSERTED ON WHAT `verify` WAS GIVEN, not on the absence of an error. A
+    truncated path and a correct one both fail against an empty ledger; only the
+    argument tells them apart.
+    """
+    spaced = tmp_path / "Al Smith" / "export.json"
+    spaced.parent.mkdir(parents=True, exist_ok=True)
+    spaced.write_text(json.dumps({"logs": []}), encoding="utf-8")
+
+    assistant = _keyed(tmp_path)
+    turn = assistant.ask(PHI_PROMPT)
+    session = cli.Session(assistant)
+    session.record(turn, PHI_PROMPT)
+
+    seen = {}
+    original = type(assistant).verify
+
+    def spy(self, turn_, prompt_, export=None, **kwargs):
+        seen["export"] = export
+        return original(self, turn_, prompt_, export=export, **kwargs)
+
+    type(assistant).verify = spy
+    try:
+        cli._handle_command(session, "/verify {0}".format(spaced), io.StringIO())
+    finally:
+        type(assistant).verify = original
+
+    assert seen["export"] == str(spaced), "the path was truncated at a space"
+    assert "Al Smith" in seen["export"]
+
+
+def test_other_commands_still_take_a_single_token():
+    """The argument became the rest of the line; `/mode` must not start accepting
+    one. Trailing whitespace has to keep meaning nothing."""
+    session = cli.Session(Assistant(get_sector("healthcare"), mode="block"))
+    out = io.StringIO()
+    cli._handle_command(session, "/mode  observe  ", out)
+    assert session.assistant.mode == "observe"
+    assert "unknown mode" not in out.getvalue()

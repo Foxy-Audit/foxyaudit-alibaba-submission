@@ -362,6 +362,16 @@ def turn_lines(turn, provider_is_live=None) -> list:
 #: drives it through one. ASCII only -- `foxy explain` already died once with
 #: UnicodeEncodeError on a cp1252 console, which is the tool failing to say
 #: anything at all, and that lesson is one function away from here.
+#: What `ruleset_verified`'s three states say. Keyed by ``str`` so ``False``
+#: and ``None`` cannot collapse into one another the way they would in any
+#: truthiness test -- the exact mistake the SDK made the field three-state to
+#: prevent, and the same keying `page.html` uses.
+_RULESET_WORDS = {
+    "True": "definition verified against the digest the row recorded",
+    "False": "DIGEST DISAGREED -- same version name, different rules",
+    "None": "not checked (the check did not run for this outcome)",
+}
+
 _FAMILY_MARK = {
     FAMILY_ANSWERED: "[ANSWERED]",
     FAMILY_CANNOT: "[CANNOT ANSWER]",
@@ -400,11 +410,16 @@ def evidence_lines(evidence) -> list:
     # check did not run at all, and saying "not verified" for both would tell a
     # reader their ruleset registry may have been altered when in fact `explain`
     # answered before it got that far.
-    lines += _field("ruleset", {
-        True: "definition verified against the digest the row recorded",
-        False: "DIGEST DISAGREED -- same version name, different rules",
-        None: "not checked (the check did not run for this outcome)",
-    }[evidence.ruleset_verified])
+    # ⚠ KEYED THROUGH `str`, WITH A FALLBACK, FOR THE SAME REASON page.html IS.
+    # This was a bare `{...}[value]` lookup, which raises KeyError on anything
+    # outside the three -- and `_handle_command` catches only KeyboardInterrupt,
+    # so an unexpected value would have taken the whole session down rather than
+    # printing one odd line. The page degrades; the REPL it is supposed to agree
+    # with now degrades identically. The three real states still read as three.
+    lines += _field("ruleset", _RULESET_WORDS.get(
+        str(evidence.ruleset_verified),
+        "not reported ({0!r} is not a value this build knows)".format(
+            evidence.ruleset_verified)))
     if evidence.ruleset_version:
         lines += _field("version", evidence.ruleset_version)
     if evidence.policy_tag:
@@ -546,9 +561,16 @@ class Session:
 
 def _handle_command(session, text: str, out):
     """One ``/command``. Returns :data:`_QUIT` to end the session, else None."""
-    parts = text[len(COMMAND_PREFIX):].split()
+    body = text[len(COMMAND_PREFIX):]
+    parts = body.split(None, 1)
     name = parts[0].lower() if parts else ""
-    argument = parts[1] if len(parts) > 1 else ""
+    # ⚠ THE REST OF THE LINE, NOT THE SECOND WORD. `split()` handed `/verify`
+    # only the text up to the first space, so `C:\Users\Al Smith\export.json`
+    # arrived as `C:\Users\Al` and the failure named a path the user had never
+    # typed -- on Windows, where a space in a path is the normal case. The other
+    # commands take a single token and are unaffected: `/mode` strips, and a
+    # mode with a space in it is refused loudly by the engine either way.
+    argument = parts[1].strip() if len(parts) > 1 else ""
 
     if name in ("quit", "exit", "q"):
         return _QUIT

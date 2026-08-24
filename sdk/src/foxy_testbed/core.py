@@ -651,20 +651,11 @@ class Assistant:
             api_key=foxy_api_key or "", desktop_ping=desktop_ping)
 
         #: Receipts the SDK emitted during the turn in flight. See `_receipt`.
+        #:
+        #: ⚠ THE HOOK IS **NOT** BOUND HERE. It is bound in :meth:`ask`, per
+        #: call, and that is the fix for a defect this constructor caused. See
+        #: the note there before moving it back.
         self._receipts: list = []
-        # ⚠ SET ON THE CLIENT, AND RE-SET ON EVERY REBUILD. `with_mode` hands
-        # the SAME client to a new Assistant, so without this line the hook
-        # would still point at the DISCARDED instance and every turn after a
-        # `/mode` switch would append to a list nobody reads — `event_id` empty,
-        # and the surface would report "cannot be traced" for a turn that was
-        # traced perfectly well. Assigned rather than passed to the constructor
-        # because the caller-supplied `client` path has no constructor to reach.
-        #
-        # THE TESTBED OWNS THIS HOOK. A caller passing their own client with
-        # their own `on_event` has it replaced, not chained: chaining across
-        # `with_mode` would grow one link per mode switch, and each link is a
-        # dead Assistant kept alive by the client that outlives it.
-        self._client.on_event = self._receipt
 
         self._reached = False
         self._delivered = None
@@ -794,7 +785,18 @@ class Assistant:
         try:
             result = explain(prompt, turn.event_id, export, key,
                              salt_sidecar_path=sidecar)
-        except (OSError, ValueError) as exc:
+        except Exception as exc:                      # noqa: BLE001
+            # ⚠ EVERY EXCEPTION, NOT OSError AND ValueError. A hand-edited or
+            # foreign export is arbitrary JSON, and `introspect._row_for`
+            # calls `.get` on whatever `logs` turns out to be -- a bare array
+            # gives AttributeError, which is neither of those. It escaped
+            # `verify`, and `cli._handle_command` catches only
+            # KeyboardInterrupt, so it took the whole REPL down with a
+            # traceback instead of rendering the state below. A verify control
+            # that can kill the session it runs in is worse than one that
+            # cannot answer. `BaseException` is deliberately NOT caught:
+            # Ctrl-C during a slow read must still abandon the turn.
+            #
             # ⚠ THE TYPE ONLY. `explain` opens a path the user named and parses
             # it; a decoder error can carry a fragment of the document, and this
             # message is rendered on a page and printed to a terminal.
@@ -842,6 +844,31 @@ class Assistant:
         # CLEARED PER TURN, not appended to for the life of the session: the
         # id this turn is asking about is the one this turn produced.
         self._receipts = []
+        # ⚠ BOUND HERE, PER CALL, AND THE CONSTRUCTOR IS THE WRONG PLACE FOR IT.
+        #
+        # One client is shared by every Assistant `with_mode` produces, and it
+        # holds ONE `on_event`. Binding at construction means the last Assistant
+        # built wins — so a surface that CACHES assistants and revisits an
+        # earlier one hands turns to an instance whose hook was quietly taken
+        # away. Measured against `web.Testbed`, which caches per (sector, mode):
+        # block, observe, block, redact, observe produced ids for turns 1, 2 and
+        # 4 and NOTHING for 3 and 5. Going back to a mode you already used is
+        # the ordinary way a person drives a mode selector, and the page then
+        # reported "cannot be traced from here" for a turn that had written a
+        # real ledger row — a false negative about evidence, in the phase built
+        # to prevent exactly that.
+        #
+        # PER CALL IS CORRECT BY CONSTRUCTION, and it is not a new assumption:
+        # `_reached`, `_delivered` and `_receipts` above are already per-call
+        # state on a class whose docstring says single-threaded and whose web
+        # surface uses `HTTPServer` rather than `ThreadingHTTPServer` for that
+        # very reason. The hook is the fourth member of that set and was the
+        # only one left behind in `__init__`.
+        #
+        # THE TESTBED OWNS THIS HOOK. A caller passing their own client with
+        # their own `on_event` has it replaced, not chained: chaining would grow
+        # one link per rebuild, each holding a dead Assistant alive.
+        self._client.on_event = self._receipt
         started = time.perf_counter()
         reply, error = "", ""
         empty_reply = False

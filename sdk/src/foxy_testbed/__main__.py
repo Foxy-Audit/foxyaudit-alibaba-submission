@@ -171,6 +171,33 @@ def main(argv=None) -> int:
         return repl(assistant, export=args.export or "",
                     salt_sidecar_path=args.sidecar or "")
 
+    # ⚠ REFUSED, NOT DROPPED, AND THE COMMENT ABOVE IS WHY. All three flags are
+    # validated before this branch and then consumed only by the REPL, so
+    # `--probe all --foxy-key K` ran keyless while the user believed otherwise --
+    # a flag accepted and ignored is worse than one refused.
+    #
+    # REFUSED RATHER THAN WIRED THROUGH, deliberately, and each for its own
+    # reason. `--export` and `--sidecar` are inputs to a verify control that the
+    # scoreboard does not have, so there is nothing here for them to act on.
+    # `--foxy-key` COULD be wired to `run_probes`, and that is exactly why it is
+    # not: a probe run is a CI gate that sends nine to eleven synthetic PHI
+    # prompts through the guard, and quietly writing that corpus into whichever
+    # ledger the key names is a surprise no scoreboard should be able to spring.
+    # A run that wants ledger rows is a REPL session. If probe-mode capture is
+    # ever wanted it should be asked for by its own flag, not inherited.
+    unusable = [name for name, value in (("--foxy-key", foxy_key),
+                                         ("--export", args.export),
+                                         ("--sidecar", args.sidecar))
+                if value]
+    if unusable:
+        print("Could not start: {0} {1} no effect with --probe. The scoreboard "
+              "does not ship events and has no verify control; drop the flag, or "
+              "run the interactive session instead."
+              .format(", ".join(unusable),
+                      "has" if len(unusable) == 1 else "have"),
+              file=sys.stderr)
+        return 2
+
     try:
         board = run_probes(args.sector, mode=args.mode, provider=args.provider,
                            api_key=api_key, model=args.model)
