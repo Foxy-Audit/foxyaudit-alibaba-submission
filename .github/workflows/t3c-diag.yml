@@ -1,0 +1,68 @@
+name: T3C diagnostic (throwaway)
+
+# ⚠ TEMPORARY — register #242. Deleted before this branch merges.
+# It exists to MEASURE the desktop abort, which only happens on Linux CI:
+#   * pytest captures fd 2, so Qt's own message before abort() is lost. `-s`
+#     is the whole point of step A.
+#   * steps B/C isolate the crash; step D removes the wheel, the one thing
+#     this repo's dev machine does not have.
+on:
+  push:
+    branches: [fix/desktop-ci-abort]
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - name: Install desktop deps
+        run: pip install -r desktop/requirements.txt pytest
+
+      - name: 0 - where each package actually lives
+        run: |
+          python -c "import foxy_audit, foxy_testbed, sys; print('foxy_audit ', foxy_audit.__file__); print('foxy_testbed', foxy_testbed.__file__)"
+          pip show foxy-audit | head -4
+
+      - name: 0b - collection order around the crash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest desktop --collect-only -q > /tmp/co.txt 2>&1 || true
+          echo "--- total ---"; tail -3 /tmp/co.txt
+          echo "--- 560..585 ---"; sed -n '560,585p' /tmp/co.txt
+
+      - name: A - full suite, UNCAPTURED (the Qt message before abort)
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -o pipefail
+          python -m pytest desktop -q -s 2>&1 | tail -n 120
+
+      - name: B - test_d5_pages.py ALONE
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest desktop/test_d5_pages.py -q -s
+
+      - name: C - test_d16_testbed.py then test_d5_pages.py
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest desktop/test_d16_testbed.py desktop/test_d5_pages.py -q -s
+
+      - name: D - the SAME full suite with the WHEEL UNINSTALLED
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          pip uninstall -y foxy-audit
+          set -o pipefail
+          python -m pytest desktop -q 2>&1 | tail -n 40
