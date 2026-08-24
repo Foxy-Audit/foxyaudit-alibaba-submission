@@ -332,7 +332,7 @@ def test_every_explain_message_survives_a_cp1252_console(tmp_path, monkeypatch):
         # printed by the CLI — S14's two are the newest messages in the module
         # and the ones no console had ever rendered.
         (PHI, {"decision": "blocked",
-               "policy_rules": ["phi.ssn_pattern"]}),         # predates_provenance
+               "policy_rules": ["phi.ssn_pattern"]}),         # ruleset_unrecorded
         (PHI, {"decision": "allowed", "policy_rules": []}),   # no_rules_fired
         (PHI, {"policy_rules": []}),                          # provenance_ambiguous
         (PHI, {"ruleset_version": "2099.01.1", "ruleset_hash": "f" * 64}),
@@ -404,7 +404,7 @@ def _salted_export(tmp_path, metadata):
     # DID NOT RUN: no version at all. THREE ROWS REACH THAT BRANCH AND S14 GAVE
     # THEM THREE ANSWERS — rule ids without a version is the only one of the
     # three that a pre-1.7.0 SDK is the only possible author of.
-    ("predates_provenance", None,
+    ("ruleset_unrecorded", None,
      lambda t: (PHI, _export(t, {"decision": "blocked",
                                  "policy_rules": ["phi.ssn_pattern"]}))),
     ("no_rules_fired", None,

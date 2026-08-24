@@ -529,14 +529,19 @@ EXPLAIN_FAMILIES = {
     # `hash_mismatch`, whose news is "this is not the prompt the row covers".
     # Reviewed and kept, for three reasons:
     #
-    # 1. THE SDK'S OWN TAXONOMY EXCLUDES IT. `introspect.STATUSES` says "Four
-    #    of them are 'I cannot'", and this is not one of the four. It is the
-    #    ONE status carrying `ruleset_verified=False` -- "the digest check ran
-    #    and DISAGREED" -- while `hash_mismatch` carries None, "did not run".
-    #    The three-state field the gate cites as the reason not to collapse
-    #    them is itself what files this one as a finding rather than an
-    #    absence. Filing it under CANNOT would put this map at odds with the
-    #    structure every other decision in this phase defers to.
+    # 1. ⚠ REASON 1 USED TO READ "THE SDK'S OWN TAXONOMY EXCLUDES IT" AND THAT
+    #    WAS BACKWARDS. `introspect`'s docstring names `ruleset_mismatch` as one
+    #    of the answers that are "I cannot" -- it always did -- so the appeal to
+    #    the SDK's list argued for the opposite of the conclusion it was cited
+    #    for. It was quoted as "the argument" at a gate. Corrected at S14, and
+    #    the count it also misquoted ("Four of them") is now five.
+    #
+    #    WHAT SURVIVES, and it is a structural fact rather than a quotation:
+    #    this is the ONE status carrying `ruleset_verified=False` -- "the digest
+    #    check ran and DISAGREED" -- while `hash_mismatch` carries None, "did
+    #    not run". A finding, not an absence. The map is therefore deliberately
+    #    NOT a copy of the SDK's narrative grouping, and the header above lists
+    #    all three places they part.
     # 2. AMBER WOULD UNDERSTATE IT. "cannot" means the check could not run.
     #    A published ruleset is immutable, so a digest that disagrees means
     #    something was ALTERED -- the most serious thing `explain` can report,
@@ -555,7 +560,7 @@ EXPLAIN_FAMILIES = {
     "row_not_found": FAMILY_CANNOT,
     "salt_unavailable": FAMILY_CANNOT,
     "unknown_ruleset": FAMILY_CANNOT,
-    "predates_provenance": FAMILY_CANNOT,
+    "ruleset_unrecorded": FAMILY_CANNOT,
     # S14 (#239) split the old single no-version answer into three. Both new
     # outcomes land here because neither ran a replay:
     #

@@ -1114,14 +1114,31 @@ def _block_message(policy: str, plan: dict) -> str:
 #: Reserved-key collisions already reported, so a hot loop reports once.
 _warned_reserved: set = set()
 
+#: What the GUARD recorded, and therefore what only the guard may write.
+#:
+#: ⚠ ADDED AT S14, AND THE REASON IS THAT `explain` NOW READS THEM. Until then
+#: these three were merely overwritten a few lines later on the guarded path, so
+#: a caller's copy was harmless noise. From 1.13.0 `explain` keys its answer on
+#: `decision` and `policy_rules` — "None (no guard ran) is not [] (the guard ran
+#: and nothing fired)" — and neither is in `ruleset.PROVENANCE_KEYS`, so a
+#: caller passing `metadata={"decision": "allowed"}` on the OBSERVE path, where
+#: nothing overwrites it, made `explain` state that the guard ran on a prompt no
+#: guard ever saw. That is the same fabrication this line of work exists to
+#: remove, arriving through the one door left open.
+_ENFORCEMENT_KEYS = ("decision", "policy_rules", "blocked_reason")
+
 
 def _reserve_provenance(metadata) -> dict:
-    """A copy of ``metadata`` with the ruleset-provenance keys removed.
+    """A copy of ``metadata`` with the keys only the SDK may set removed.
 
     ``ruleset_version`` / ``ruleset_hash`` must mean "the SDK computed this" on
     EVERY path, or they mean nothing. Left alone, a caller's value passed
     straight through on the plain-metadata path, and on the guarded path a ``{}``
-    from a degraded registry left a caller's value standing.
+    from a degraded registry left a caller's value standing. ``decision`` /
+    ``policy_rules`` / ``blocked_reason`` are the same promise about the GUARD
+    rather than about the ruleset, and they became load-bearing in 1.13.0 when
+    `introspect.explain` started reading them to decide what a row can be said
+    to prove.
 
     The threat model is not forgery — the SDK runs in the customer's own process
     and a determined customer can always misdescribe their own trail. It is
@@ -1141,16 +1158,16 @@ def _reserve_provenance(metadata) -> dict:
     ``-W error`` — turning a metadata collision into an application crash.
     """
     clean = dict(metadata)
-    for key in ruleset.PROVENANCE_KEYS:
+    for key in tuple(ruleset.PROVENANCE_KEYS) + _ENFORCEMENT_KEYS:
         if key in clean:
             del clean[key]
             if key not in _warned_reserved:
                 _warned_reserved.add(key)
                 log.warning(
-                    "foxy-audit: event_metadata[%r] is RESERVED for ruleset "
-                    "provenance and was dropped; the SDK sets it itself. Rename "
-                    "your field to keep its value. Reported once per process.",
-                    key)
+                    "foxy-audit: event_metadata[%r] is RESERVED — it records "
+                    "what the guard and its ruleset did, and the SDK sets it "
+                    "itself. Your value was dropped; rename your field to keep "
+                    "it. Reported once per process.", key)
     return clean
 
 

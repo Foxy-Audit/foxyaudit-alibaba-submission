@@ -156,10 +156,20 @@ def test_a_row_from_a_newer_ruleset_says_upgrade(make_org, client, tmp_path,
     assert not result.matches, "nothing may be replayed against unknown rules"
 
 
-def test_a_row_predating_provenance_refuses_to_guess(make_org, client, tmp_path,
-                                                     monkeypatch):
-    """A pre-1.7.0 row names no ruleset. Replaying today's rules and presenting
-    the result as what fired is the fabrication this work exists to remove."""
+def test_a_row_whose_ruleset_went_unrecorded_refuses_to_guess(make_org, client,
+                                                              tmp_path, monkeypatch):
+    """A row naming no ruleset cannot be replayed. Running today's rules against
+    it and presenting the result as what fired is the fabrication this work
+    exists to remove.
+
+    ⚠ THIS TEST WAS CALLED `..._predating_provenance` AND WAS NEVER ABOUT AN OLD
+    ROW. It pops exactly ``ruleset_version`` and ``ruleset_hash`` from a CURRENT
+    payload — which is precisely what ``dispatch._strip_provenance`` does when a
+    backend rejects those keys. It has always been building the degraded-
+    delivery row and calling it pre-1.7.0, which is the same misreading S14
+    fixed in the SDK: rule ids with no version say the definition went
+    unrecorded, never when the row was written.
+    """
     payload, _ = _emit(tmp_path, monkeypatch, salted=False)
     for key in ("ruleset_version", "ruleset_hash"):
         payload["event_metadata"].pop(key, None)
@@ -168,10 +178,12 @@ def test_a_row_predating_provenance_refuses_to_guess(make_org, client, tmp_path,
     result = introspect.explain(PHI_PROMPT, event_id=payload["event_id"],
                                 export=export, commitment_key=KEY)
 
-    assert result.status == "predates_provenance"
+    assert result.status == "ruleset_unrecorded"
     assert result.commitment_verified is True, "the commitment DID verify"
-    assert "before SDK 1.7.0" in result.message
     assert "will not guess" in result.message
+    assert "three live causes" in result.message
+    assert "was written before SDK 1.7.0" not in result.message, (
+        "this row was written by the CURRENT SDK and stripped in transit")
     assert not result.matches, "no rules may be replayed against an unnamed ruleset"
 
 

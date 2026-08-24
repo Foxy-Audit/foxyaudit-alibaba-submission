@@ -65,10 +65,28 @@ fallback:
   ``unknown_ruleset`` (we do not have it) and from ``hash_mismatch`` (which is
   about the PROMPT): here the registry itself is not what it claims to be, and
   the replay would be confidently wrong rather than absent.
-* ``predates_provenance`` — a row that RECORDS RULE IDS and names no ruleset.
-  Only a pre-1.7.0 SDK produces that pair: from 1.7.0 the provenance keys are
-  written by the same branch that writes a non-empty ``policy_rules``, so ids
-  without a version means the definitions behind them were never recorded.
+* ``ruleset_unrecorded`` — a row that RECORDS RULE IDS and names no ruleset:
+  the rules that fired were written down and the definition behind them was
+  not. ⚠ THE ROW DOES NOT SAY WHY, and this status is named for what is missing
+  rather than for a cause, because the tool cannot read one. Three live paths
+  produce it and a CURRENT SDK walks two of them:
+
+  1. ``dispatch._strip_provenance`` removes only ``ruleset.PROVENANCE_KEYS``
+     and leaves ``policy_rules`` standing, so any backend that 422s the
+     provenance keys — a lagging deploy, a self-hosted install, the frozen
+     production one — takes a resend in exactly this shape.
+  2. ``ruleset.provenance()`` returns ``{}`` when the registry cannot answer,
+     deliberately: "provenance is an ENRICHMENT of the record. It must never be
+     able to cost the record."
+  3. an SDK older than 1.7.0, which recorded no provenance at all.
+
+  ⚠ IT WAS CALLED ``predates_provenance`` UNTIL 1.13.0, and that name asserted
+  a date none of the three can be read off a row — the same defect as the old
+  message, one layer up, in the token every surface prints and every consumer
+  switches on. Cause (1) also gets MORE common: S13 sends ``policy_tag_raw`` to
+  a production backend that will never allowlist it. What separates the three is
+  the reader's delivery logs and SDK version, so the message points there
+  instead of choosing.
 * ``provenance_ambiguous`` — a row that records NO DECISION. Two very different
   rows look exactly like this and nothing in the row tells them apart: a clean
   ``observe`` row, where no preflight ran and the clean path builds no
@@ -235,7 +253,7 @@ class Match:
 #: which family the new outcome belongs to. That failure is the handshake.
 STATUSES = ("explained", "no_matches", "hash_mismatch", "row_not_found",
             "salt_unavailable", "unknown_ruleset", "ruleset_mismatch",
-            "predates_provenance", "no_rules_fired", "provenance_ambiguous")
+            "ruleset_unrecorded", "no_rules_fired", "provenance_ambiguous")
 
 
 @dataclass(frozen=True)
@@ -263,7 +281,7 @@ class ExplainResult:
     #:   ``ruleset_hash`` (no shipped SDK emits one without the other, so that is
     #:   a hand-edited export), or ``explain`` answered before reaching it —
     #:   ``row_not_found``, ``hash_mismatch``, ``salt_unavailable``,
-    #:   ``predates_provenance``, ``no_rules_fired``, ``provenance_ambiguous``,
+    #:   ``ruleset_unrecorded``, ``no_rules_fired``, ``provenance_ambiguous``,
     #:   an unknown version. The last three all sit on the no-version branch,
     #:   which returns before a definition is ever loaded, so there is nothing
     #:   to have hashed.
@@ -477,6 +495,28 @@ def _load_salt(sidecar_path: str, event_id: str) -> str | None:
     return sidecar.read_salt(sidecar_path, event_id)
 
 
+def _rule_ids(metadata: dict) -> list:
+    """The rule ids a row records, as strings, from ARBITRARY JSON.
+
+    ⚠ AN EXPORT IS A FILE THE READER HANDS US, and a hand-edited or foreign one
+    can put anything under ``policy_rules``. The first cut of the no-version
+    branch did ``list(metadata.get("policy_rules") or [])`` and then
+    ``", ".join(...)`` on the result, which raises ``TypeError`` on an int and
+    on a list of ints — turning the branch that promises never to produce a
+    traceback into one. ``list()`` on a dict also silently yields its KEYS,
+    which would report a rule id nobody recorded.
+
+    A non-empty value of the wrong shape is still evidence that rules WERE
+    recorded, so it is rendered rather than discarded: reading it as "no rules"
+    would send the row down the wrong arm and have this tool assert that nothing
+    fired.
+    """
+    raw = metadata.get("policy_rules")
+    if isinstance(raw, (list, tuple)):
+        return [str(rule) for rule in raw]
+    return [str(raw)] if raw else []
+
+
 def explain(prompt, event_id: str, export, commitment_key: str,
             salt_sidecar_path: str = "") -> ExplainResult:
     """Replay one exported row against the ruleset IT names.
@@ -501,7 +541,12 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             event_id=event_id)
 
     policy_tag = str(row.get("policy_tag") or "default")
-    metadata = row.get("event_metadata") or {}
+    # ⚠ A DICT OR NOTHING. `or {}` alone let a truthy non-dict through — an
+    # export with `"event_metadata": [1, 2]` reached `.get` and raised
+    # AttributeError out of the public path, which is the same class of defect
+    # as `_rule_ids` and two lines earlier than any of the arms that read it.
+    metadata = row.get("event_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
     version = metadata.get("ruleset_version")
 
     # ── the commitment ───────────────────────────────────────────────────────
@@ -547,10 +592,10 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # path does not build at all reads None, and "None (no guard ran) is not []
     # (the guard ran and nothing fired)". So:
     #
-    #   rule ids recorded, no version  -> only a pre-1.7.0 SDK writes that pair,
-    #                                     because from 1.7.0 the SAME branch
-    #                                     that writes a non-empty policy_rules
-    #                                     writes the provenance beside it.
+    #   rule ids recorded, no version  -> the rules were recorded and the
+    #                                     definition behind them was not, AND
+    #                                     THE ROW DOES NOT SAY WHY. Three live
+    #                                     causes; see below.
     #   a decision, no rule ids        -> nothing fired. Provenance rides only
     #                                     with the ids it explains, so its
     #                                     absence is the design.
@@ -558,24 +603,48 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     #                                     row, and NOTHING IN THE ROW SAYS
     #                                     WHICH. Say that; do not guess.
     #
+    # ⚠ THE FIRST ARM WAS `ruleset_unrecorded` AND THAT NAME WAS ALSO A DATE
+    # THIS TOOL CANNOT READ — the same defect as the message, one layer up, and
+    # a name is what every surface prints and every consumer switches on. Three
+    # CURRENT paths write rule ids with no version:
+    #
+    #   1. `dispatch._strip_provenance` pops ONLY `ruleset.PROVENANCE_KEYS` and
+    #      leaves `policy_rules` standing. A current SDK talking to a backend
+    #      that 422s the provenance keys — a lagging deploy, a self-hosted
+    #      install, the frozen production backend — stores exactly this shape.
+    #   2. `ruleset.provenance()` returns `{}` on a degraded registry, on
+    #      purpose: "provenance is an ENRICHMENT of the record. It must never be
+    #      able to cost the record."
+    #   3. an SDK older than 1.7.0.
+    #
+    # None of the three leaves a marker IN THE ROW — the degrade is recorded on
+    # the receipt and in a process-local map, neither of which survives into an
+    # export. So the honest answer names what is missing, not when it was
+    # written. ⚠ And (1) gets MORE common, not less: S13 sends `policy_tag_raw`
+    # to a production backend that will never allowlist it.
+    #
     # ⚠ THE BEHAVIOUR DOES NOT CHANGE AND MUST NOT. The fix is that the sentence
     # stops asserting an age the row does not record. Stamping a ruleset on a
     # clean row to make this go away would claim rules explained something when
     # none fired — S4 decided that, and it is still right.
     if not version:
-        recorded_rules = list(metadata.get("policy_rules") or [])
+        recorded_rules = _rule_ids(metadata)
         decision = metadata.get("decision")
         if recorded_rules:
             return ExplainResult(
-                "predates_provenance",
+                "ruleset_unrecorded",
                 f"Row {event_id} records the rule ids "
-                f"{', '.join(recorded_rules)} but no ruleset_version: it was "
-                f"written before SDK 1.7.0, when rows began naming the rules "
-                f"that produced them. The commitment MATCHES, so this is the "
-                f"right prompt — but the definitions those ids referred to that "
-                f"day were not recorded, and replaying today's rules would tell "
-                f"you what would fire NOW, not what fired then. That distinction "
-                f"is the whole point of the version, so this tool will not guess.",
+                f"{', '.join(recorded_rules)} but no ruleset_version, so the "
+                f"rules that fired were written down and the definition behind "
+                f"them was not. The commitment MATCHES, so this is the right "
+                f"prompt — but replaying today's rules would tell you what would "
+                f"fire NOW, not what fired then, and this tool will not guess. "
+                f"THE ROW DOES NOT RECORD WHY the version is missing, and there "
+                f"are three live causes: the backend rejected the provenance "
+                f"keys and the SDK resent without them, this SDK's ruleset "
+                f"registry could not answer when the row was written, or the row "
+                f"predates SDK 1.7.0. Your delivery logs and SDK version can "
+                f"tell those apart; the row alone cannot.",
                 event_id=event_id, policy_tag=policy_tag,
                 commitment_verified=True)
         if decision is not None:

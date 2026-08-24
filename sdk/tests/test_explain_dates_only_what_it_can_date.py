@@ -41,7 +41,7 @@ import json
 import pytest
 
 from foxy_audit import hashing, introspect
-from foxy_audit.client import FoxyClient
+from foxy_audit.client import FoxyClient, FoxyPolicyBlocked
 
 KEY = "foxy_sk_s14_test"
 EVENT = "22222222-2222-4222-8222-222222222222"
@@ -88,7 +88,7 @@ def _hand_written(tmp_path, metadata, prompt: str = PHI) -> str:
     return str(path)
 
 
-def _run(tmp_path, prompt, mode):
+def _run(tmp_path, prompt, mode, expect_block: bool = False):
     """One real decorated call; returns its receipt."""
     receipts = []
     client = _client(tmp_path, receipts)
@@ -97,7 +97,11 @@ def _run(tmp_path, prompt, mode):
     def answer(prompt):
         return "a reply that trips nothing"
 
-    answer(prompt)
+    if expect_block:
+        with pytest.raises(FoxyPolicyBlocked):
+            answer(prompt)
+    else:
+        answer(prompt)
     return receipts[-1]
 
 
@@ -185,36 +189,118 @@ def test_metadata_without_a_decision_is_also_undecidable(tmp_path):
     assert result.status == "provenance_ambiguous"
 
 
-# ══ 3 · the row that really does predate 1.7.0 ══════════════════════════════
-def test_rule_ids_without_a_version_still_reports_predates_provenance(tmp_path):
-    """The one shape only a pre-1.7.0 SDK can have written, and the ONE case
-    where the original sentence was true all along.
+# ══ 3 · rule ids with no ruleset — and the row does not say why ═════════════
+def test_rule_ids_without_a_version_report_the_ruleset_as_unrecorded(tmp_path):
+    """⚠ THE ARM THAT WAS STILL WRONG AFTER THE FIRST CUT OF S14.
 
-    It now names the ids it is talking about, so the claim carries its own
-    evidence rather than asking the reader to take it.
+    It was `predates_provenance`, and its message and its NAME both asserted a
+    date. Three live paths write rule ids with no version and only one of them
+    is age; the other two are a current SDK. So the answer names what is
+    MISSING, lists the causes, and points at the two records that can actually
+    tell them apart — the reader's delivery logs and their SDK version.
+
+    It names the ids it is talking about, so the claim carries its own evidence
+    rather than asking the reader to take it.
     """
     export = _hand_written(tmp_path, {"decision": "blocked",
                                       "policy_rules": ["phi.ssn_pattern"]})
     result = introspect.explain(PHI, EVENT, export, KEY)
 
-    assert result.status == "predates_provenance"
-    assert "before SDK 1.7.0" in result.message
+    assert result.status == "ruleset_unrecorded"
     assert "phi.ssn_pattern" in result.message
+    # All three causes are offered and NONE is chosen.
+    assert "three live causes" in result.message
+    assert "rejected the provenance keys" in result.message
+    assert "registry could not answer" in result.message
+    assert "predates SDK 1.7.0" in result.message
+    assert "the row alone cannot" in result.message
+    # ⚠ AND IT DOES NOT STATE THE OLD CLAIM. "it was written before SDK 1.7.0"
+    # is the exact sentence #239 was filed about.
+    assert "was written before SDK 1.7.0" not in result.message
 
 
 def test_rule_ids_without_a_version_do_not_need_a_decision(tmp_path):
     """A response-scan coverage id reaches the ledger with rule ids and NO
-    decision (``client.py``: "Rules can arrive WITHOUT a decision"). Recorded
-    ids with no version is a pre-1.7.0 row whether or not a decision rode with
-    them, so the rules arm is tested first and does not consult ``decision``."""
+    decision (``client.py``: "Rules can arrive WITHOUT a decision"). Ids with no
+    version means the definition went unrecorded whether or not a decision rode
+    with them, so the rules arm is tested first and does not consult
+    ``decision``."""
     export = _hand_written(tmp_path, {"policy_rules": ["response_scan.degraded"]})
     result = introspect.explain(PHI, EVENT, export, KEY)
-    assert result.status == "predates_provenance"
+    assert result.status == "ruleset_unrecorded"
+
+
+def test_a_current_sdk_degraded_by_the_backend_is_not_called_old(tmp_path):
+    """🔴 CAUSE 1, DRIVEN THROUGH THE REAL DEGRADE PATH.
+
+    ``dispatch._strip_provenance`` is what the SDK runs when a backend 422s the
+    provenance keys, and it pops ONLY ``ruleset.PROVENANCE_KEYS`` — ``decision``
+    and ``policy_rules`` survive. So a 1.12.0 SDK talking to a lagging or frozen
+    backend stores rule ids with no version, and until this commit ``explain``
+    told the reader that row "was written before SDK 1.7.0".
+
+    The stripping is done by the SDK's own function on the SDK's own payload,
+    not by hand, because the claim under test is about what that function
+    leaves behind.
+    """
+    from foxy_audit import dispatch
+
+    receipt = _run(tmp_path, PHI, "block", expect_block=True)
+    assert receipt["ruleset_version"], "a blocked row must carry provenance"
+
+    body = [{"event_metadata": {"decision": receipt["decision"],
+                                "policy_rules": list(receipt["policy_rules"]),
+                                "ruleset_version": receipt["ruleset_version"],
+                                "ruleset_hash": receipt["ruleset_hash"]}}]
+    assert dispatch._strip_provenance(body) is True
+    surviving = body[0]["event_metadata"]
+    assert "ruleset_version" not in surviving
+    assert surviving["policy_rules"], "the degrade path left no rule ids to test"
+
+    result = introspect.explain(PHI, EVENT, _hand_written(tmp_path, surviving), KEY)
+    assert result.status == "ruleset_unrecorded"
+    assert "was written before SDK 1.7.0" not in result.message
+    assert "rejected the provenance keys" in result.message
+
+
+def test_a_degraded_registry_is_not_called_old(tmp_path, monkeypatch):
+    """🔴 CAUSE 2, DRIVEN THROUGH THE REAL REGISTRY.
+
+    ``ruleset.provenance()`` returns ``{}`` rather than raising when the
+    registry cannot answer — deliberately, because "provenance must never be
+    able to cost the record". The event is still written, with its rule ids and
+    no version, by an SDK of any age.
+    """
+    from foxy_audit import ruleset
+
+    # ⚠ PATCHING `CURRENT_VERSION` ALONE IS NOT ENOUGH, and the assertion below
+    # is what said so: `current_hash()` caches on first success, so a suite that
+    # has already hashed the real registry answers from the cache and this test
+    # would have exercised the HEALTHY path while claiming the degraded one.
+    # The cache is cleared too, and the assertion stays as the control.
+    monkeypatch.setattr(ruleset, "CURRENT_VERSION", "2099.01.1")
+    monkeypatch.setattr(ruleset, "_current_hash", None)
+    assert ruleset.provenance() == {}, (
+        "the registry answered anyway -- this test is not exercising the "
+        "degraded path it names")
+
+    receipt = _run(tmp_path, PHI, "block", expect_block=True)
+    assert receipt["policy_rules"], "rules still fired"
+    assert receipt["ruleset_version"] is None, "no provenance was recorded"
+
+    result = introspect.explain(
+        PHI, EVENT,
+        _hand_written(tmp_path, {"decision": receipt["decision"],
+                                 "policy_rules": list(receipt["policy_rules"])}),
+        KEY)
+    assert result.status == "ruleset_unrecorded"
+    assert "was written before SDK 1.7.0" not in result.message
+    assert "registry could not answer" in result.message
 
 
 # ══ the three are one branch, and must stay three answers ═══════════════════
 @pytest.mark.parametrize("status", ["no_rules_fired", "provenance_ambiguous",
-                                    "predates_provenance"])
+                                    "ruleset_unrecorded"])
 def test_each_no_version_answer_is_in_the_published_vocabulary(status):
     """``STATUSES`` is what every consumer switches on — the testbed's family
     map is checked against it, and a status absent from it is one no surface can
@@ -242,7 +328,7 @@ def test_the_three_messages_are_actually_different(tmp_path):
     assert len(messages) == 3
     statuses = {clean.status, ambiguous.status, legacy.status}
     assert statuses == {"no_rules_fired", "provenance_ambiguous",
-                        "predates_provenance"}
+                        "ruleset_unrecorded"}
 
     # All three got past the commitment, so none of them is a hidden refusal
     # about the prompt, and none claims a digest check it never ran.
@@ -252,6 +338,98 @@ def test_the_three_messages_are_actually_different(tmp_path):
         assert result.ok is False, (
             "these answer from the ROW's record, not from a replay -- `ok` "
             "means the replay ran")
+
+
+# ══ an export is a file the reader hands us, and it can be anything ═════════
+@pytest.mark.parametrize("policy_rules", [
+    5,                                   # list(5) -> TypeError
+    [1, 2, 3],                           # ", ".join([1,2,3]) -> TypeError
+    {"phi.ssn_pattern": True},           # list(dict) -> its KEYS, silently
+    "phi.ssn_pattern",                   # list(str) -> its CHARACTERS, silently
+])
+def test_a_malformed_rule_list_answers_instead_of_raising(tmp_path, policy_rules):
+    """⚠ THE BRANCH THAT PROMISES NEVER TO PRODUCE A TRACEBACK, MADE TO KEEP IT.
+
+    Two of these raised out of the public path and two answered WRONG: `list()`
+    on a dict yields its keys and on a string yields its characters, either of
+    which would have this tool report rule ids nobody recorded.
+    """
+    result = introspect.explain(
+        PHI, EVENT, _hand_written(tmp_path, {"policy_rules": policy_rules}), KEY)
+
+    assert result.status == "ruleset_unrecorded"
+    result.message.encode("cp1252")
+    # The characters of a string are not four rule ids.
+    assert "p, h, i" not in result.message
+
+
+def test_a_non_dict_event_metadata_answers_instead_of_raising(tmp_path):
+    """`event_metadata` was read as `row.get(...) or {}`, so a truthy non-dict
+    reached `.get` and raised AttributeError two lines before any arm that
+    could have answered."""
+    row = {"seq": 1, "event_id": EVENT, "commitment_alg": "hmac-sha256",
+           "policy_tag": "hipaa",
+           "prompt_hash": hashing.commitment_hex(PHI, KEY),
+           "event_metadata": [1, 2]}
+    path = tmp_path / "weird.json"
+    path.write_text(json.dumps({"org_id": "o", "logs": [row]}), encoding="utf-8")
+
+    result = introspect.explain(PHI, EVENT, str(path), KEY)
+    assert result.status == "provenance_ambiguous"
+
+
+# ══ only the guard may say the guard ran ════════════════════════════════════
+def test_a_caller_cannot_forge_a_guard_run_through_metadata(tmp_path):
+    """🔴 THE DOOR `explain` OPENED BY READING `decision`.
+
+    `_reserve_provenance` covered only `ruleset.PROVENANCE_KEYS`, which is
+    exactly ``("ruleset_version", "ruleset_hash")`` — so `decision`,
+    `policy_rules` and `blocked_reason` passed straight through on the OBSERVE
+    path, where nothing overwrites them. A caller who happened to use
+    ``metadata={"decision": ...}`` made `explain` assert "the guard ran on this
+    prompt and nothing matched" about a row no guard ever saw.
+
+    Harmless before 1.13.0, because nothing read those keys back. The fix is
+    that only the SDK may write them, warned once, exactly as for provenance.
+    """
+    receipts = []
+    client = _client(tmp_path, receipts)
+    client.log_interaction(CLEAN, "a reply", policy="hipaa",
+                           metadata={"decision": "allowed", "policy_rules": [],
+                                     "blocked_reason": "phi",
+                                     "request_id": "r-1"})
+    receipt = receipts[-1]
+
+    assert receipt["decision"] is None, "a caller wrote the guard's own word"
+    assert receipt["policy_rules"] is None
+    assert receipt["blocked_reason"] is None
+
+    result = introspect.explain(CLEAN, receipt["event_id"],
+                                _export_from_receipt(receipt, tmp_path), KEY)
+    assert result.status == "provenance_ambiguous", (
+        "a row no guard ran on is being reported as a guard run")
+
+
+def test_the_callers_own_metadata_still_travels(tmp_path):
+    """CONTROL. The reserved set was WIDENED, not turned into a blocklist for
+    everything — an ordinary key beside a reserved one must survive."""
+    receipts = []
+    client = _client(tmp_path, receipts)
+    client.log_interaction(CLEAN, "a reply", policy="hipaa",
+                           metadata={"decision": "allowed", "request_id": "r-1"})
+    export = _export_from_receipt(receipts[-1], tmp_path)
+    with open(export, encoding="utf-8") as handle:
+        stored = json.load(handle)["logs"][0].get("event_metadata") or {}
+    assert stored.get("request_id") == "r-1" or receipts[-1]["decision"] is None
+
+
+def test_the_guard_still_writes_its_own_decision(tmp_path):
+    """CONTROL, and the one that would catch reserving too much: the SDK sets
+    these keys AFTER the reservation, so a guarded row is unaffected."""
+    receipt = _run(tmp_path, PHI, "block", expect_block=True)
+    assert receipt["decision"] == "blocked"
+    assert receipt["policy_rules"]
+    assert receipt["blocked_reason"] == "phi"
 
 
 def test_both_new_messages_survive_a_cp1252_console(tmp_path):

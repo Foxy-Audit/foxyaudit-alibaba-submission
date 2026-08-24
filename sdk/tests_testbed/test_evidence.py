@@ -263,7 +263,7 @@ def test_a_clean_row_records_no_ruleset_and_explain_says_so(tmp_path):
     it explains. That BEHAVIOUR is correct and has not changed.
 
     What changed is the sentence. Until 1.13.0 `explain` answered
-    ``predates_provenance`` here, whose message says the row "was written before
+    ``ruleset_unrecorded`` here, whose message says the row "was written before
     SDK 1.7.0" -- about a row written today. It now answers ``no_rules_fired``
     and says the guard ran and nothing matched.
 
@@ -390,7 +390,7 @@ def test_each_family_holds_exactly_the_statuses_it_is_meant_to():
     assert disagreed == {"hash_mismatch", "ruleset_mismatch"}
     cannot = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_CANNOT}
     assert cannot == {"row_not_found", "salt_unavailable", "unknown_ruleset",
-                      "predates_provenance", "no_rules_fired",
+                      "ruleset_unrecorded", "no_rules_fired",
                       "provenance_ambiguous"}
 
 
