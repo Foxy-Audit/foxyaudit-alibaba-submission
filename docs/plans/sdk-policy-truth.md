@@ -62,7 +62,10 @@ The original table was read at `24d3699`. Every row of it has since resolved.
 
 **Baselines measured** (`--collect-only`, `676a908`): `sdk/tests` **752** ·
 `sdk/tests_testbed` **413** · `verifier` **31** · `desktop` **936** (2
-pre-existing reds, #235/#236). SDK version **1.12.0, unpublished**.
+pre-existing reds, #235/#236) · `backend/tests/integration` **1251 passed, 3
+skipped** — measured at S12, correcting the 1101 this plan and
+`Backend/CLAUDE.md` both carried, which was 150 tests stale. SDK version
+**1.12.0, unpublished**.
 
 ---
 
@@ -178,8 +181,28 @@ S16 is last and documents whatever actually shipped.
 
 **Files:** `backend/app/schemas.py` · `backend/tests/integration/`
 
-Add `policy_tag_raw` to the `event_metadata` allowlist beside `ruleset_version`
-and `ruleset_hash`. That is the whole change.
+Two changes, and the second was missing from the first cut of this plan —
+found by the S12 executor, who measured the failure rather than reasoning about
+it:
+
+1. Add `policy_tag_raw` to the `event_metadata` allowlist beside
+   `ruleset_version` and `ruleset_hash`.
+2. **Pop it from the duplicate-content comparison** in
+   `backend/app/routers/logs.py:118`, on both sides, beside the two provenance
+   keys. The comment already sitting above that tuple describes this exact
+   failure: a client-supplied key the SDK's degrade path strips on retry can
+   never match the stored row, so the resend **409s forever and takes the other
+   nine events in its batch down with it on every retry**. Measured on the
+   branch: first POST 202, stripped resend 409, permanently.
+
+   ⚠ **MAIN's decision, recorded because the executor was right to escalate it:**
+   the tuple's stated principle is "describes the RULES, not the interaction",
+   and `policy_tag_raw` describes neither — it is what the caller typed. Pop it
+   anyway. The degrade-path reason applies identically, and **the comparison
+   keeps its teeth through `policy_tag`**, which is still compared: two events
+   whose canonical tags differ still 409. Only two spellings of the *same*
+   canonical tag compare equal, and those are the same event. A resend never
+   overwrites the stored row, so no recorded evidence can change.
 
 **Traps:**
 - **Do not add a top-level payload field.** Riding inside `event_metadata` gets
@@ -211,6 +234,17 @@ what was passed**.
   backend that rejects the key — production is exactly that backend.
 - **Prove the unaffected path is byte-identical.** A `policy="hipaa"` event must
   produce the same payload it produces today, key for key.
+- ⚠ **Reserve the key.** `_reserve_provenance` / `ruleset.PROVENANCE_KEYS`
+  (`client.py:1116`) must cover `policy_tag_raw`, or a customer's own
+  `event_metadata["policy_tag_raw"]` silently overwrites the SDK's and nothing
+  downstream can tell which it is reading. Same collision argument as
+  `ruleset_version`, same warned-once drop. *(Found by the S12 executor.)*
+- ⚠ **Cap or omit it — its length is caller-controlled and unbounded.**
+  `policy=` takes any string and only the *normalised* form is charset-checked,
+  so `policy="x"*300` produces a 300-char raw value and **422s the whole batch**
+  on the ≤256 cap. This is the one allowlisted key a caller can overflow. The
+  plan's "the per-key caps already cover a 32-char tag" is true of the canonical
+  tag and false of this one. *(Found by the S12 executor.)*
 - ⚠ **The regression guard is the whole reason this shipped:** a decorator test
   over `{hipaa, HIPAA, Hipaa, " hipaa", "HIPAA "}` × `mode="block"` asserting the
   PHI prompt is blocked in **every** case. Today's suite exercises only the
