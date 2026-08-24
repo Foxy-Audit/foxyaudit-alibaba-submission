@@ -48,6 +48,7 @@ rather than replacing the opener wholesale.
 
 from __future__ import annotations
 
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -95,3 +96,47 @@ def no_egress():
         yield
     finally:
         urllib.request.OpenerDirector.open = real_open
+
+
+#: Every worker set `DashboardWindow` tracks. Named here rather than spelled out
+#: at each call site so a new one cannot be added to `closeEvent` and forgotten
+#: by the tests that wait on it.
+WORKER_SETS = ("_workers", "_poll_workers", "_ann_workers", "_home_workers",
+               "_oneoff_workers", "_threat_workers", "_ledger_workers",
+               "_page_workers", "_testbed_workers")
+
+
+def running_workers(window) -> list:
+    """The worker threads `window` is tracking that have not finished."""
+    live = []
+    for name in WORKER_SETS:
+        for worker in tuple(getattr(window, name, ()) or ()):
+            try:
+                if worker.isRunning():
+                    live.append(worker)
+            except RuntimeError:
+                pass                 # C++ object already deleted; not running
+    return live
+
+
+def settle(window, app, timeout_ms: int = 5000):
+    """Pump the event loop until every worker `window` tracks has landed.
+
+    ⚠ A TEST THAT INJECTS PAGE DATA AND THEN NAVIGATES IS RACING ITS OWN PAGE.
+    `go(<page>)` fires that page's real fetch, and several handlers react to a
+    failed one by hiding the panel they cannot vouch for —
+    `dashboard._on_policy_failed` hides `pol_form` outright, which moves focus
+    off whatever was inside it. Before egress was blocked that failure landed
+    long after the test had finished; now it lands promptly, which is the
+    ordering an offline machine always had. Draining it first makes the test
+    about its assertion instead of about how fast the network is.
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if not running_workers(window):
+            app.processEvents()      # let the queued finished/deleteLater land
+            return
+    raise AssertionError(
+        f"{len(running_workers(window))} worker(s) still running after "
+        f"{timeout_ms} ms \u2014 the suite is reaching something real")

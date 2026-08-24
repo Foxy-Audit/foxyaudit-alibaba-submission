@@ -18,6 +18,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 import policy_data as pd
+from conftest import settle
 
 _HERE = Path(__file__).resolve().parent
 
@@ -536,9 +537,16 @@ def test_a_marked_field_is_red_while_focused(console, app):
     from foxy_tokens import BAD_RED, WEB
 
     _as_admin(console)
-    console._on_policy({})
     console.show()
     console.go("policy")
+    # ⚠ SETTLE THE PAGE'S OWN FETCH FIRST, THEN STATE THE CASE.
+    # `go("policy")` fires a real GET /v1/policies, and `_on_policy_failed`
+    # HIDES `pol_form` — which moves focus off whatever is inside it. This
+    # test used to survive that only because the request was slow enough to
+    # land after the assertion; `desktop/conftest.py` blocks egress (#242), so
+    # it now lands here, exactly as it always did on an offline machine.
+    settle(console, app)
+    console._on_policy({})
     app.processEvents()
 
     console.pol_email.setText("not-an-email")

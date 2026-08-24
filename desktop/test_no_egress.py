@@ -20,7 +20,7 @@ import urllib.error
 
 import pytest
 
-from conftest import BLOCKED_MARKER, LOOPBACK_HOSTS
+from conftest import BLOCKED_MARKER, LOOPBACK_HOSTS, running_workers
 from foxy_client import ApiError, FoxyHttp
 
 
@@ -108,11 +108,7 @@ def test_a_closed_console_leaves_no_worker_thread_running(app, tmp_path):
     finally:
         console.close()
     app.processEvents()
-    live = [w for w in (console._workers | console._poll_workers
-                        | console._ann_workers | console._home_workers
-                        | console._oneoff_workers | console._threat_workers
-                        | console._ledger_workers | console._page_workers
-                        | console._testbed_workers) if w.isRunning()]
+    live = running_workers(console)
     assert live == [], (
         f"{len(live)} worker thread(s) outlived the console that owns them; "
         f"they keep calling QSettings off the GUI thread and the interpreter "
