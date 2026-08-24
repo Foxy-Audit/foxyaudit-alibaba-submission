@@ -1,7 +1,8 @@
 # Compliance Testbed — a real assistant you can try, in three sectors, on three surfaces
 
-**Plan of record** · written 2026-08-12 · **re-cut 2026-08-24 against `2ad2b7c`**
-MAIN chat is the committer; executors build per this file.
+**COMPLETE — 2026-08-24 at `61ce009`.** Written 2026-08-12, re-cut 2026-08-24.
+All five phases shipped: T0 `7a4f672` · T1 `768a2ed` · T2 `50e704c` · T3 `fc59cc2`
+· T4 `61ce009`, plus the prerequisite S11 `ce491e1`.
 
 > **T0, T1 and T2 have MERGED.** This file was written before any of them existed and
 > described all five phases as pending. It has been re-cut against what is actually on
@@ -434,3 +435,31 @@ S11b specified; T3b added; the two pre-existing desktop reds recorded so no
 future phase re-derives them; the blob-EOL rule corrected — **every committed
 blob in this repo is CRLF**, measured on six blobs across both branches, so
 `START HERE` §6's stated direction is inverted here.
+
+---
+
+## 12 · Closed — 2026-08-24
+
+Every phase merged. Open findings the plan produced and did not fix, each with a
+measurement in `Worth Noting — Issues`:
+
+| | |
+|---|---|
+| 🔴 #239 | an allowed row records no ruleset, so `explain()` tells an auditor a row written today "predates SDK 1.7.0". Behaviour is correct per S4; the message is not. Wants its own SDK phase. |
+| 🔴 #241 | the testbed suite POSTs 61 real events to the default endpoint and leaks 24 dispatcher paths. Test-only, developer-machine. |
+| 🟡 #238 | four residual findings on the desktop page, three in its own guards. |
+| 🟡 #240 | the cross-origin web guard is flaky. |
+| 🔴 #235 · 🟡 #236 | `pytest desktop` has two pre-existing reds unrelated to this plan. |
+
+**T4b remains unbuilt and unscoped**: the desktop console has no evidence pane.
+It was deferred so T3 and T4 never edited `desktop/` at once, and nothing depends
+on it.
+
+**What this plan actually cost, and what it bought.** Nine merges across five
+phases and eleven gate rounds. Every executor round found premises in its brief
+that did not hold — including two vocabularies MAIN invented rather than read
+(`ok` as an explain status, a ≥8-character leak rule) and one measurement MAIN
+contaminated with its own leftover processes. The register grew from #232 to
+#241. What shipped is an assistant a prospect can drive on three surfaces, behind
+the real guard, that reports over-blocking as loudly as blocking and can trace a
+turn to its ledger row without ever claiming more than it knows.
