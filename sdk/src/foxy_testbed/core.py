@@ -480,14 +480,29 @@ EVIDENCE_STATES = (EVIDENCE_NO_RECEIPT, EVIDENCE_NO_LEDGER, EVIDENCE_NO_EXPORT,
                    EVIDENCE_EXPLAINED)
 
 # ── which family an explain status belongs to ─────────────────────────────────
-# ⚠ THREE FAMILIES FOR EIGHT STATUSES, AND THE SPLIT IS THE SDK'S OWN. Its
-# `introspect.STATUSES` docstring says "Four of them are 'I cannot'", and those
-# four are exactly the ones below: a tool that cannot answer has not failed the
-# row. `salt_unavailable`'s own message spells the rule out — "this is not a
-# mismatch and not a pass".
+# ⚠ THREE FAMILIES FOR TEN STATUSES, AND THE SPLIT IS THE SDK'S OWN: a tool that
+# cannot answer has not failed the row. `salt_unavailable`'s own message spells
+# the rule out — "this is not a mismatch and not a pass".
+#
+# ⚠ THE SDK'S NARRATIVE GROUPING AND THIS MAP ARE NOT THE SAME PARTITION, and
+# pretending otherwise is how this comment was wrong before S14. `introspect`'s
+# docstring names FIVE answers that are "I cannot" and one — `no_rules_fired` —
+# that needs no replay; six statuses sit under `cannot` here. The two lists
+# differ in three places, each on purpose:
+#
+#   `ruleset_mismatch`   the SDK narrates it as "I cannot", this map files it
+#                        under DISAGREED. Kept after review — see the block
+#                        below, which is the argument in full.
+#   `row_not_found`      the SDK's narrative never lists it; there is no row to
+#                        say anything about, so `cannot` is the only honest mark.
+#   `no_rules_fired`     the SDK calls it an ANSWER, and it is one: the row
+#                        records that nothing fired. It still wears `cannot`,
+#                        because no replay ran — what is reported is the row's
+#                        own record, not a re-derivation of it. Understating
+#                        good news is the safe direction; overstating it is not.
 #
 # ⚠ THE FAMILY IS A COLOUR, NEVER THE ANSWER. Every surface prints
-# `Evidence.status` verbatim beside the mark, because eight outcomes rendered as
+# `Evidence.status` verbatim beside the mark, because ten outcomes rendered as
 # three colours would be exactly the tick-and-cross collapse this phase exists to
 # refuse. The family only decides which of the page's four existing status tokens
 # the mark wears.
@@ -536,11 +551,29 @@ EXPLAIN_FAMILIES = {
     #    become indistinguishable in the data.
     "hash_mismatch": FAMILY_DISAGREED,
     "ruleset_mismatch": FAMILY_DISAGREED,
-    # the four the SDK calls "I cannot"
+    # the replay could not run
     "row_not_found": FAMILY_CANNOT,
     "salt_unavailable": FAMILY_CANNOT,
     "unknown_ruleset": FAMILY_CANNOT,
     "predates_provenance": FAMILY_CANNOT,
+    # S14 (#239) split the old single no-version answer into three. Both new
+    # outcomes land here because neither ran a replay:
+    #
+    #   `no_rules_fired`       the row records a decision and no rule ids —
+    #                          nothing fired, so no ruleset was recorded, and
+    #                          that absence is the design. Good news, reported
+    #                          from the row's own record rather than proved by
+    #                          a replay, so it takes the understating mark.
+    #   `provenance_ambiguous` the row records no decision at all: a clean
+    #                          `observe` row and a pre-1.7.0 row are
+    #                          indistinguishable, and the SDK says so instead
+    #                          of choosing one.
+    #
+    # ⚠ NEITHER MAY BECOME `answered`. That family means the replay ran against
+    # the definition the row named. Moving either here would put a calm mark on
+    # a claim nothing re-derived.
+    "no_rules_fired": FAMILY_CANNOT,
+    "provenance_ambiguous": FAMILY_CANNOT,
 }
 
 
@@ -554,8 +587,8 @@ class Evidence:
     """What tracing one turn to its ledger row found. The record all three
     surfaces render, exactly as :class:`Turn` is for the turn itself.
 
-    ⚠ ``status`` IS THE SDK's WORD AND IS NEVER TRANSLATED. `explain` has eight
-    outcomes and four of them mean "I cannot answer"; a surface that mapped them
+    ⚠ ``status`` IS THE SDK's WORD AND IS NEVER TRANSLATED. `explain` has ten
+    outcomes and six of them wear the ``cannot`` mark; a surface that mapped them
     onto a tick and a cross would report a salt it could not find in the same
     shape as a commitment that did not match. The mark is a colour; the word is
     the answer.

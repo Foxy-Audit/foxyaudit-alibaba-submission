@@ -59,17 +59,34 @@ def _export_from_receipt(assistant, tmp_path):
     Built from the RECEIPT the SDK actually emitted rather than hand-written, so
     the row and the event it describes cannot drift apart — which is the whole
     reason the receipt is built from the payload and not from the arguments.
+
+    ⚠ ``decision`` IS CARRIED, AND DROPPING IT MADE THIS A COPY OF A ROW THE
+    BACKEND NEVER STORES. `client.log_interaction` writes `decision` into
+    `event_metadata` alongside `policy_rules`, and from S14 that key is what
+    tells `explain` a guarded-but-clean row ("the guard ran and nothing fired")
+    from an observe row ("no guard ran"). A document without it pinned
+    `provenance_ambiguous` on a turn whose real ledger row answers
+    `no_rules_fired` — guard-lie #5, a test of a copy rather than of the thing.
+
+    Keys are included only when the receipt has a value, exactly as
+    `log_interaction` does: a real clean block-mode row carries
+    ``{"decision": "allowed", "policy_rules": []}`` and no provenance, and a
+    real observe row carries no ``event_metadata`` at all.
     """
     receipt = assistant._receipts[-1]
-    document = {"logs": [{
+    metadata = {key: receipt[key]
+                for key in ("decision", "policy_rules", "blocked_reason",
+                            "ruleset_version", "ruleset_hash")
+                if receipt[key] is not None}
+    row = {
         "event_id": receipt["event_id"],
         "policy_tag": receipt["policy_tag"],
         "commitment_alg": receipt["commitment_alg"],
         "prompt_hash": receipt["prompt_hash"],
-        "event_metadata": {"ruleset_version": receipt["ruleset_version"],
-                           "ruleset_hash": receipt["ruleset_hash"],
-                           "policy_rules": receipt["policy_rules"]},
-    }]}
+    }
+    if metadata:
+        row["event_metadata"] = metadata
+    document = {"logs": [row]}
     path = tmp_path / "export.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     return path, document
@@ -239,32 +256,48 @@ def test_an_unreadable_export_is_not_reported_as_a_verdict(tmp_path):
 
 
 def test_a_clean_row_records_no_ruleset_and_explain_says_so(tmp_path):
-    """⚠ AN SDK FINDING, PINNED RATHER THAN PAPERED OVER.
+    """⚠ AN SDK FINDING, PINNED RATHER THAN PAPERED OVER — AND S14 FIXED HALF.
 
     A BLOCKED turn's row carries ``ruleset_version`` and ``ruleset_hash``; an
-    ALLOWED one carries neither, because the clean path builds no
-    ``event_metadata`` at all. So `explain` on a clean row returns
-    ``predates_provenance``, whose message says the row "was written before SDK
-    1.7.0" -- and the row was written today, by 1.12.0.
+    ALLOWED one carries neither, because provenance rides only with the rule ids
+    it explains. That BEHAVIOUR is correct and has not changed.
 
-    The testbed does NOT correct this. `Turn.ruleset_version` is populated (from
-    `check`), so it would have been easy to substitute it into the export and get
-    a green `explained` -- and that would be inventing evidence about which rules
-    a ledger row recorded, which is the one thing this phase must never do. The
-    surfaces render what the tool actually returned.
+    What changed is the sentence. Until 1.13.0 `explain` answered
+    ``predates_provenance`` here, whose message says the row "was written before
+    SDK 1.7.0" -- about a row written today. It now answers ``no_rules_fired``
+    and says the guard ran and nothing matched.
 
-    Pinned in both directions: the day the SDK starts recording provenance on the
-    clean path, this fails and the message the surfaces show changes with it.
+    ⚠ THIS TEST DID NOT CATCH THAT, AND THAT IS THE OTHER FINDING. Its docstring
+    claimed to pin the message and its body never called `explain` at all, so it
+    stayed green straight through both the defect and the fix. It drives the
+    tool now, in both directions.
+
+    The testbed still does NOT correct the SDK. `Turn.ruleset_version` is
+    populated (from `check`), so it would have been easy to substitute it into
+    the export and get a green `explained` -- and that would be inventing
+    evidence about which rules a ledger row recorded, which is the one thing
+    this phase must never do. The surfaces render what the tool returned.
     """
     assistant = _keyed(tmp_path)
 
-    allowed = assistant.ask("What does minimum necessary require for a vendor?")
+    clean_prompt = "What does minimum necessary require for a vendor?"
+    allowed = assistant.ask(clean_prompt)
     assert allowed.decision == "allowed"
     clean_receipt = assistant._receipts[-1]
     assert clean_receipt["ruleset_version"] is None
     assert clean_receipt["ruleset_hash"] is None
     # the ENGINE knows the version; the ROW does not record it
     assert allowed.ruleset_version
+
+    # THE MESSAGE, driven — not described in a docstring and left unchecked.
+    export, _ = _export_from_receipt(assistant, tmp_path)
+    evidence = assistant.verify(allowed, clean_prompt, export=str(export))
+    assert evidence.status == "no_rules_fired", evidence.message
+    assert "before SDK 1.7.0" not in evidence.message, (
+        "explain is dating a row it has no date for -- #239 is back")
+    assert "nothing matched" in evidence.message
+    assert evidence.family == FAMILY_CANNOT, (
+        "a row nothing re-derived must not wear the answered mark")
 
     blocked = assistant.ask(PHI_PROMPT)
     assert blocked.decision == "blocked"
@@ -332,17 +365,33 @@ def test_every_status_the_sdk_can_return_has_a_family():
         "which family the new outcome belongs to; do not let it default.")
 
 
-def test_the_four_the_sdk_calls_i_cannot_are_the_four_marked_cannot():
-    """The split is the SDK's, not ours. Its own docstring says "Four of them
-    are 'I cannot'", and `salt_unavailable`'s message spells out the rule: "this
-    is not a mismatch and not a pass"."""
-    cannot = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_CANNOT}
-    assert cannot == {"row_not_found", "salt_unavailable", "unknown_ruleset",
-                      "predates_provenance"}
+def test_each_family_holds_exactly_the_statuses_it_is_meant_to():
+    """⚠ RENAMED AT S14, BECAUSE THE OLD NAME WAS NOT TRUE OF THE ASSERTION.
+
+    It read `test_the_four_the_sdk_calls_i_cannot_are_the_four_marked_cannot`,
+    and the SDK's narrative "I cannot" list and this map's `cannot` family have
+    never been the same set — they differed by two before this phase and by
+    three after it. A guard whose name describes a different property from the
+    one it checks is one nobody can read the failure of, which is guard-lie #3
+    in a new coat.
+
+    What is actually pinned is the map itself, member by member, so that a new
+    outcome cannot be quietly filed under the calm mark. The reasons for each
+    of the three divergences live on `EXPLAIN_FAMILIES` in `core.py`.
+
+    ⚠ ANSWERED IS THE ONE THAT MATTERS. It means a replay RAN, against the
+    definition the row named. Everything else understates, which is the safe
+    direction; `no_rules_fired` is deliberately here rather than there even
+    though its news is good, because nothing re-derived it.
+    """
     answered = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_ANSWERED}
     assert answered == {"explained", "no_matches"}
     disagreed = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_DISAGREED}
     assert disagreed == {"hash_mismatch", "ruleset_mismatch"}
+    cannot = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_CANNOT}
+    assert cannot == {"row_not_found", "salt_unavailable", "unknown_ruleset",
+                      "predates_provenance", "no_rules_fired",
+                      "provenance_ambiguous"}
 
 
 def test_an_unmapped_status_falls_to_cannot_and_never_to_answered():

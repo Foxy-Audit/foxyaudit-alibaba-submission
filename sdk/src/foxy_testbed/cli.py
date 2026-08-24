@@ -383,7 +383,7 @@ def evidence_lines(evidence) -> list:
     """One :class:`~foxy_testbed.core.Evidence`, rendered.
 
     ⚠ THE STATUS IS PRINTED VERBATIM AND IS NEVER TRANSLATED. `explain` has
-    eight outcomes and four of them mean "I cannot answer"; collapsing them into
+    ten outcomes and six wear the "cannot" mark; collapsing them into
     a pass and a fail would report a salt this machine could not find in the same
     shape as a commitment that did not match. The family above is a heading, the
     `status` line below is the answer, and the SDK's own sentence is what

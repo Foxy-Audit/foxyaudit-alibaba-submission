@@ -68,16 +68,24 @@ def _keyed(tmp_path):
 
 
 def _export(assistant, tmp_path):
+    """⚠ THE SECOND COPY OF `test_evidence._export_from_receipt`, and it has to
+    stay faithful for the same reason. Keys land only when the receipt has a
+    value, exactly as `client.log_interaction` writes them — `decision`
+    included, because from S14 it is what separates a guarded-but-clean row from
+    an observe row and a document without it is a row the backend never stores.
+    """
     receipt = assistant._receipts[-1]
+    metadata = {key: receipt[key]
+                for key in ("decision", "policy_rules", "blocked_reason",
+                            "ruleset_version", "ruleset_hash")
+                if receipt[key] is not None}
+    row = {"event_id": receipt["event_id"], "policy_tag": receipt["policy_tag"],
+           "commitment_alg": receipt["commitment_alg"],
+           "prompt_hash": receipt["prompt_hash"]}
+    if metadata:
+        row["event_metadata"] = metadata
     path = tmp_path / "export.json"
-    path.write_text(json.dumps({"logs": [{
-        "event_id": receipt["event_id"], "policy_tag": receipt["policy_tag"],
-        "commitment_alg": receipt["commitment_alg"],
-        "prompt_hash": receipt["prompt_hash"],
-        "event_metadata": {"ruleset_version": receipt["ruleset_version"],
-                           "ruleset_hash": receipt["ruleset_hash"],
-                           "policy_rules": receipt["policy_rules"]}}]}),
-        encoding="utf-8")
+    path.write_text(json.dumps({"logs": [row]}), encoding="utf-8")
     return str(path)
 
 

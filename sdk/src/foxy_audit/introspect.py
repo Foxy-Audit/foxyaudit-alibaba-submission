@@ -48,7 +48,7 @@ So the loaded definition is re-hashed and compared. The frozen registry's
 this is the check that makes it observable at the point it matters. See
 ``ruleset.py``'s "THE REGISTRY IS FROZEN, NOT CURRENT".
 
-THE FOUR ANSWERS THAT ARE "I CANNOT"
+THE FIVE ANSWERS THAT ARE "I CANNOT"
 ====================================
 Each is a real answer, reported plainly, never a traceback and never a silent
 fallback:
@@ -65,9 +65,35 @@ fallback:
   ``unknown_ruleset`` (we do not have it) and from ``hash_mismatch`` (which is
   about the PROMPT): here the registry itself is not what it claims to be, and
   the replay would be confidently wrong rather than absent.
-* ``predates_provenance`` — a row written before 1.7.0, which names no ruleset.
+* ``predates_provenance`` — a row that RECORDS RULE IDS and names no ruleset.
+  Only a pre-1.7.0 SDK produces that pair: from 1.7.0 the provenance keys are
+  written by the same branch that writes a non-empty ``policy_rules``, so ids
+  without a version means the definitions behind them were never recorded.
+* ``provenance_ambiguous`` — a row that records NO DECISION. Two very different
+  rows look exactly like this and nothing in the row tells them apart: a clean
+  ``observe`` row, where no preflight ran and the clean path builds no
+  ``event_metadata`` at all (that absence is what keeps an observe payload
+  byte-identical), and a pre-1.7.0 row, where rules may have run and gone
+  unrecorded. Guessing between "nothing was checked" and "something may have
+  fired and was not written down" is the one thing this tool must not do.
 
-``ruleset_verified`` is a FIELD rather than a fifth status, and it is
+THE ANSWER THAT NEEDS NO REPLAY
+===============================
+``no_rules_fired`` — the row records a ``decision`` and NO rule ids. Nothing
+fired on it, so no ruleset was recorded, and that absence is the design rather
+than a gap: provenance rides only with the rule ids it explains (see
+``client.py``'s "Ruleset provenance rides ONLY with the rule ids it explains").
+There is nothing to replay, and saying "this row predates 1.7.0" about it — as
+this tool did until 1.13.0 — is a false statement of fact in the one place built
+to establish facts.
+
+⚠ IT IS STILL NOT ``no_matches``. ``no_matches`` means a replay RAN, against the
+definition the row named, and matched nothing. Here no replay ran at all: what
+is reported is the ROW'S OWN RECORD that nothing fired. The news is good and the
+evidence for it is weaker, so it wears the understating mark — see
+``foxy_testbed.core.EXPLAIN_FAMILIES``.
+
+``ruleset_verified`` is a FIELD rather than a status, and it is
 THREE-STATE: ``True`` checked and agreed, ``False`` checked and disagreed (which
 is the ``ruleset_mismatch`` refusal above), ``None`` NOT CHECKED. A row that
 names a version but records no hash is not a failure — the version is known and
@@ -199,17 +225,24 @@ class Match:
         return out
 
 
-#: Every status :func:`explain` can return. Four of them are "I cannot".
+#: Every status :func:`explain` can return. FIVE of them are "I cannot", and
+#: ``no_rules_fired`` is the one answer that needs no replay — see the module
+#: docstring for both groups.
+#:
+#: ⚠ THIS TUPLE IS THE VOCABULARY AND THE AUTHORITY. `foxy_testbed.core`'s
+#: `EXPLAIN_FAMILIES` is checked against it rather than against a copy, so
+#: adding a member here turns that completeness guard red until someone decides
+#: which family the new outcome belongs to. That failure is the handshake.
 STATUSES = ("explained", "no_matches", "hash_mismatch", "row_not_found",
             "salt_unavailable", "unknown_ruleset", "ruleset_mismatch",
-            "predates_provenance")
+            "predates_provenance", "no_rules_fired", "provenance_ambiguous")
 
 
 @dataclass(frozen=True)
 class ExplainResult:
     """The outcome of replaying one exported row against its own ruleset.
 
-    ``message`` is the product here as much as the data is: in the three cases
+    ``message`` is the product here as much as the data is: in the cases
     the tool cannot answer, the sentence is what stops a reader drawing the
     wrong conclusion.
     """
@@ -230,7 +263,10 @@ class ExplainResult:
     #:   ``ruleset_hash`` (no shipped SDK emits one without the other, so that is
     #:   a hand-edited export), or ``explain`` answered before reaching it —
     #:   ``row_not_found``, ``hash_mismatch``, ``salt_unavailable``,
-    #:   ``predates_provenance``, an unknown version.
+    #:   ``predates_provenance``, ``no_rules_fired``, ``provenance_ambiguous``,
+    #:   an unknown version. The last three all sit on the no-version branch,
+    #:   which returns before a definition is ever loaded, so there is nothing
+    #:   to have hashed.
     #:
     #: ⚠ NOT A BOOL, and the third state is the point. Collapsing "altered" and
     #: "never checked" into one ``False`` tells a reader their registry may have
@@ -499,16 +535,73 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             ruleset_version=str(version or ""))
 
     # ── the ruleset ──────────────────────────────────────────────────────────
+    #
+    # ⚠ #239. THREE ROWS ARRIVE HERE AND THEY ARE NOT THE SAME ROW. Until
+    # 1.13.0 all three were told "it was written before SDK 1.7.0" — a false
+    # statement of fact about a row written today, produced by the tool built to
+    # establish facts, and the most common of the three is the ordinary clean
+    # row every guarded workload produces all day.
+    #
+    # What tells them apart is already settled doctrine in this SDK, in
+    # `client.py`'s own words at the `on_event` hook: metadata the clean observe
+    # path does not build at all reads None, and "None (no guard ran) is not []
+    # (the guard ran and nothing fired)". So:
+    #
+    #   rule ids recorded, no version  -> only a pre-1.7.0 SDK writes that pair,
+    #                                     because from 1.7.0 the SAME branch
+    #                                     that writes a non-empty policy_rules
+    #                                     writes the provenance beside it.
+    #   a decision, no rule ids        -> nothing fired. Provenance rides only
+    #                                     with the ids it explains, so its
+    #                                     absence is the design.
+    #   no decision at all             -> a clean observe row or a pre-1.7.0
+    #                                     row, and NOTHING IN THE ROW SAYS
+    #                                     WHICH. Say that; do not guess.
+    #
+    # ⚠ THE BEHAVIOUR DOES NOT CHANGE AND MUST NOT. The fix is that the sentence
+    # stops asserting an age the row does not record. Stamping a ruleset on a
+    # clean row to make this go away would claim rules explained something when
+    # none fired — S4 decided that, and it is still right.
     if not version:
+        recorded_rules = list(metadata.get("policy_rules") or [])
+        decision = metadata.get("decision")
+        if recorded_rules:
+            return ExplainResult(
+                "predates_provenance",
+                f"Row {event_id} records the rule ids "
+                f"{', '.join(recorded_rules)} but no ruleset_version: it was "
+                f"written before SDK 1.7.0, when rows began naming the rules "
+                f"that produced them. The commitment MATCHES, so this is the "
+                f"right prompt — but the definitions those ids referred to that "
+                f"day were not recorded, and replaying today's rules would tell "
+                f"you what would fire NOW, not what fired then. That distinction "
+                f"is the whole point of the version, so this tool will not guess.",
+                event_id=event_id, policy_tag=policy_tag,
+                commitment_verified=True)
+        if decision is not None:
+            return ExplainResult(
+                "no_rules_fired",
+                f"Row {event_id} records decision={str(decision)!r} and no rule "
+                f"ids: the guard ran on this prompt and nothing matched. A row "
+                f"that fired nothing carries no ruleset_version by design — "
+                f"provenance rides only with the rule ids it explains — so its "
+                f"absence here is expected and says nothing about which SDK "
+                f"wrote the row. There is nothing to replay, and the commitment "
+                f"MATCHES, so this is the right prompt. To ask what TODAY's "
+                f"rules make of this text, use `foxy check`.",
+                event_id=event_id, policy_tag=policy_tag,
+                commitment_verified=True)
         return ExplainResult(
-            "predates_provenance",
-            f"Row {event_id} carries no ruleset_version: it was written before "
-            f"SDK 1.7.0, when rows began naming the rules that produced them. "
-            f"The commitment MATCHES, so this is the right prompt — but the "
-            f"rules in force that day were not recorded, and replaying today's "
-            f"rules would tell you what would fire NOW, not what fired then. "
-            f"That distinction is the whole point of the version, so this tool "
-            f"will not guess.",
+            "provenance_ambiguous",
+            f"Row {event_id} records no decision, so nothing in it says whether "
+            f"a guard ran at all — and two very different rows look exactly like "
+            f"this. Under `observe` no preflight runs and the clean path builds "
+            f"no event_metadata by design, which is what keeps an observe "
+            f"payload byte-identical, and there would be nothing to replay; a "
+            f"row written before SDK 1.7.0 also names no ruleset, and there "
+            f"rules may have run and gone unrecorded. The commitment MATCHES, so "
+            f"this is the right prompt — but this tool cannot tell those two "
+            f"apart, and will not guess which one you are holding.",
             event_id=event_id, policy_tag=policy_tag, commitment_verified=True)
 
     try:
