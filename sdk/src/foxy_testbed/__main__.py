@@ -130,6 +130,27 @@ def main(argv=None) -> int:
     if api_key is None and args.provider in _KEY_ENV:
         api_key = os.getenv(_KEY_ENV[args.provider]) or None
 
+    # ⚠ REFUSED ON PRESENCE, AND BEFORE THE VALUE IS RESOLVED. These three are
+    # unusable under --probe (see the block after the branch for why each), and
+    # resolving first meant a bare `--probe all --foxy-key` with the variable
+    # unset answered "FOXY_API_KEY is not set" -- sending the user to set a
+    # variable that would then have been refused anyway. What is wrong with the
+    # command line is that the flag was typed at all, so that is what is said,
+    # and `is not None` asks exactly that rather than asking what it holds.
+    if args.probe is not None:
+        unusable = [name for name, given in (("--foxy-key", args.foxy_key),
+                                             ("--export", args.export),
+                                             ("--sidecar", args.sidecar))
+                    if given is not None]
+        if unusable:
+            print("Could not start: {0} {1} no effect with --probe. The "
+                  "scoreboard does not ship events and has no verify control; "
+                  "drop the flag, or run the interactive session instead."
+                  .format(", ".join(unusable),
+                          "has" if len(unusable) == 1 else "have"),
+                  file=sys.stderr)
+            return 2
+
     # ⚠ RESOLVED BEFORE EITHER BRANCH, and refused loudly rather than degraded.
     # A user who typed --foxy-key and got a keyless session anyway would watch
     # every turn report "never shipped to a ledger" and have no way to tell that
@@ -171,12 +192,7 @@ def main(argv=None) -> int:
         return repl(assistant, export=args.export or "",
                     salt_sidecar_path=args.sidecar or "")
 
-    # ⚠ REFUSED, NOT DROPPED, AND THE COMMENT ABOVE IS WHY. All three flags are
-    # validated before this branch and then consumed only by the REPL, so
-    # `--probe all --foxy-key K` ran keyless while the user believed otherwise --
-    # a flag accepted and ignored is worse than one refused.
-    #
-    # REFUSED RATHER THAN WIRED THROUGH, deliberately, and each for its own
+    # WHY THOSE THREE ARE REFUSED RATHER THAN WIRED THROUGH, each for its own
     # reason. `--export` and `--sidecar` are inputs to a verify control that the
     # scoreboard does not have, so there is nothing here for them to act on.
     # `--foxy-key` COULD be wired to `run_probes`, and that is exactly why it is
@@ -185,18 +201,8 @@ def main(argv=None) -> int:
     # ledger the key names is a surprise no scoreboard should be able to spring.
     # A run that wants ledger rows is a REPL session. If probe-mode capture is
     # ever wanted it should be asked for by its own flag, not inherited.
-    unusable = [name for name, value in (("--foxy-key", foxy_key),
-                                         ("--export", args.export),
-                                         ("--sidecar", args.sidecar))
-                if value]
-    if unusable:
-        print("Could not start: {0} {1} no effect with --probe. The scoreboard "
-              "does not ship events and has no verify control; drop the flag, or "
-              "run the interactive session instead."
-              .format(", ".join(unusable),
-                      "has" if len(unusable) == 1 else "have"),
-              file=sys.stderr)
-        return 2
+    # The refusal itself is at the top of this function, before the value of
+    # --foxy-key is resolved -- see the comment there.
 
     try:
         board = run_probes(args.sector, mode=args.mode, provider=args.provider,

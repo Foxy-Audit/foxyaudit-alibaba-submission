@@ -410,7 +410,12 @@ def evidence_lines(evidence) -> list:
     # check did not run at all, and saying "not verified" for both would tell a
     # reader their ruleset registry may have been altered when in fact `explain`
     # answered before it got that far.
-    # ⚠ KEYED THROUGH `str`, WITH A FALLBACK, FOR THE SAME REASON page.html IS.
+    # ⚠ KEYED THROUGH `str`, WITH A FALLBACK, AND page.html NOW DOES THE SAME.
+    # T4b wrote "for the same reason page.html is" here, and that was false when
+    # it was written: the page keyed through `String(...)` but had NO fallback,
+    # so an unrecognised value rendered as an empty row there while this printed
+    # a sentence. The parity ran the other way, and the page was given the
+    # fallback rather than this comment being softened.
     # This was a bare `{...}[value]` lookup, which raises KeyError on anything
     # outside the three -- and `_handle_command` catches only KeyboardInterrupt,
     # so an unexpected value would have taken the whole session down rather than

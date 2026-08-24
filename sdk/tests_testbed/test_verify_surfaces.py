@@ -22,6 +22,7 @@ import sys
 
 import pytest
 
+from foxy_audit import FoxyClient
 from foxy_testbed import cli, web
 from foxy_testbed.core import (Assistant, EVIDENCE_NO_LEDGER, FAMILY_ANSWERED,
                                FAMILY_CANNOT, FAMILY_DISAGREED)
@@ -36,11 +37,15 @@ PHI_PROMPT = "Draft a note for the patient at alice@example.org about their MRI.
 
 
 def _keyed(tmp_path):
-    assistant = Assistant("healthcare", foxy_api_key="test-key-not-a-real-one")
-    cfg = assistant._client.cfg
-    assistant._client.cfg = type(cfg)(
-        **{**cfg.__dict__, "spool_path": str(tmp_path / "spool.db")})
-    return assistant
+    """See ``test_evidence._keyed``: built with the spool, never swapped after.
+
+    Duplicated rather than shared because these two files are already separate
+    guards -- but the isolation itself is asserted ONCE, in
+    ``test_evidence.py``, against whatever paths the constructor actually opens.
+    """
+    client = FoxyClient(api_key="test-key-not-a-real-one",
+                        spool_path=str(tmp_path / "spool.db"))
+    return Assistant("healthcare", client=client)
 
 
 def _export(assistant, tmp_path):
@@ -271,8 +276,19 @@ def test_the_page_never_renders_a_mark_for_a_state_nothing_replayed():
 
 def test_the_page_reads_the_three_state_flag_through_a_string_key():
     """`false` and `null` must not collapse. A `? :` on this field is the exact
-    mistake the SDK made it three-state to prevent."""
-    assert 'RULESET_WORDS[String(evidence.ruleset_verified)]' in PAGE_SOURCE
+    mistake the SDK made it three-state to prevent.
+
+    ⚠ THE CALL SITE, NOT JUST THE TABLE. This asserted only that
+    `String(...)` appeared SOMEWHERE in the file -- which stayed true when
+    the call site was replaced by a ternary, because the helper still
+    contained it. Found by re-breaking. Where the value is read is the
+    thing that decides whether the three states survive.
+    """
+    assert "String(value)" in PAGE_SOURCE, "the table is not string-keyed"
+    assert "rulesetWords(evidence.ruleset_verified)" in PAGE_SOURCE, (
+        "the ruleset field is no longer read through the three-state helper")
+    assert "evidence.ruleset_verified ?" not in PAGE_SOURCE, (
+        "a ternary on ruleset_verified collapses false and null")
     assert '"null": "not checked' in PAGE_SOURCE
     assert '"false": "DIGEST DISAGREED' in PAGE_SOURCE
 
@@ -471,3 +487,76 @@ def test_other_commands_still_take_a_single_token():
     cli._handle_command(session, "/mode  observe  ", out)
     assert session.assistant.mode == "observe"
     assert "unknown mode" not in out.getvalue()
+
+
+# ══ T4c · the gate's four findings ══════════════════════════════════════════
+def test_a_bare_foxy_key_under_probe_is_refused_for_the_right_reason(capsys,
+                                                                     monkeypatch):
+    """The flag was refused on its VALUE, and the value was resolved first -- so
+    `--probe all --foxy-key` with the variable unset answered "FOXY_API_KEY is
+    not set", sending the user to set a variable that would then have been
+    refused anyway. What is wrong with that command line is that the flag was
+    typed at all.
+
+    ⚠ BOTH ENVIRONMENTS, because the old code got one of them right. With the
+    variable SET it already produced the correct refusal, so a test that only
+    exported a value passes on the broken build.
+    """
+    from foxy_testbed.__main__ import main
+
+    monkeypatch.delenv("FOXY_API_KEY", raising=False)
+    assert main(["--sector", "healthcare", "--probe", "all", "--foxy-key"]) == 2
+    err = capsys.readouterr().err
+    assert "no effect with --probe" in err
+    assert "is not set" not in err, (
+        "the refusal still talks about the environment variable")
+
+    monkeypatch.setenv("FOXY_API_KEY", "a-real-looking-key")
+    assert main(["--sector", "healthcare", "--probe", "all", "--foxy-key"]) == 2
+    assert "no effect with --probe" in capsys.readouterr().err
+
+    # ⚠ AND AN EMPTY VALUE IS STILL PRESENCE. `--export ""` is a flag the
+    # user typed; testing it for truthiness rather than for `is not None`
+    # lets exactly that case through to be silently dropped, which is the
+    # original shape of this finding. Found by re-breaking: the mutation
+    # from `is not None` to a bare truthiness test survived without it.
+    assert main(["--sector", "healthcare", "--probe", "all",
+                 "--export", ""]) == 2
+    assert "--export" in capsys.readouterr().err
+
+
+def test_a_bare_foxy_key_outside_probe_still_reports_the_missing_variable(
+        capsys, monkeypatch):
+    """The other half: where the flag CAN be used, an unset variable is still the
+    thing to say. Refusing on presence must not swallow that."""
+    from foxy_testbed.__main__ import main
+
+    monkeypatch.delenv("FOXY_API_KEY", raising=False)
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    assert main(["--sector", "healthcare", "--foxy-key"]) == 2
+    assert "FOXY_API_KEY is not set" in capsys.readouterr().err
+
+
+def test_the_page_and_the_repl_both_degrade_on_an_unknown_ruleset_value():
+    """⚠ THE PARITY THIS PAIR CLAIMS, ASSERTED IN BOTH DIRECTIONS.
+
+    T4b gave `cli.py` a fallback with a comment saying it matched `page.html`.
+    It did not: the page keyed through `String(...)` but had NO fallback, so a
+    value outside the three rendered as an EMPTY ROW there while the REPL printed
+    a sentence. The claim was false in the code and in the commit message.
+
+    Keyed through a string is only half of it -- that is what stops `false` and
+    `null` collapsing. The fallback is what stops an unrecognised value rendering
+    as nothing at all, on the one panel whose job is refusing to leave a reader
+    guessing.
+    """
+    assert "String(value)" in PAGE_SOURCE or \
+        "String(evidence.ruleset_verified)" in PAGE_SOURCE
+    assert '"null": "not checked' in PAGE_SOURCE
+    assert '"false": "DIGEST DISAGREED' in PAGE_SOURCE
+    # the fallback, on both surfaces, in the same words
+    assert "not reported (" in PAGE_SOURCE, "page.html has no fallback"
+    assert "is not a value this build knows" in PAGE_SOURCE
+    assert "is not a value this build knows" in CLI_SOURCE
+    # and the page must not go back to a bare subscript
+    assert "RULESET_WORDS[String(evidence.ruleset_verified)]" not in PAGE_SOURCE

@@ -780,7 +780,27 @@ class Assistant:
                     "prompt, so the replay happens here, on your machine, "
                     "against text you supply.".format(turn.event_id)))
 
-        key = commitment_key or self._client.cfg.commitment_key
+        # ⚠ THE SAME RESOLUTION ORDER THE SDK COMMITS WITH, INCLUDING THE
+        # `api_key` FALLBACK. `log_interaction` writes the commitment with
+        # `cfg.commitment_key or cfg.api_key`, and `foxy explain` replays it
+        # with `arg or cfg.commitment_key or cfg.api_key`. Stopping one term
+        # short here meant replaying with a DIFFERENT key from the one the row
+        # was written with.
+        #
+        # WHAT THAT COSTS IS THE WHOLE PHASE. A key mismatch does not surface
+        # as "could not check"; it surfaces as `hash_mismatch`, which is in the
+        # DISAGREED family and whose message reads "The row is intact; this is
+        # simply not the prompt it covers." A false accusation against an
+        # intact row, from the one surface built so that cannot happen.
+        #
+        # ⚠ THE TRIGGER IS AN EMPTY VALUE, NOT AN ABSENT ONE, which is why a
+        # test that sets a real FOXY_COMMITMENT_KEY passes on the broken code.
+        # `FoxyConfig.resolve` reads the variable with a "" default, so
+        # `FOXY_COMMITMENT_KEY=` (set, empty) resolves `commitment_key` to ""
+        # while `api_key` is the real key. Measured: cfg.commitment_key "",
+        # committed with "realkey123", verified with "" -> hash_mismatch.
+        key = (commitment_key or self._client.cfg.commitment_key
+               or self._client.cfg.api_key)
         sidecar = salt_sidecar_path or self._client.cfg.salt_sidecar_path
         try:
             result = explain(prompt, turn.event_id, export, key,

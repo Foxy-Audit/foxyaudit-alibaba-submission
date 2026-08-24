@@ -734,6 +734,18 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
   // the matched spans -- they are the user's own prompt, and the SDK's rule is
   // that they reach stdout and nowhere else. The count is what this page can say
   // honestly; `foxy_testbed.cli` is where the spans themselves are shown.
+  // The three states, and what to say about anything that is not one of them.
+  // The sentence names the value rather than hiding it: a field this build does
+  // not recognise is worth reporting, and it is the same wording `cli.py`
+  // prints for the same case.
+  function rulesetWords(value) {
+    var known = RULESET_WORDS[String(value)];
+    return known === undefined
+      ? "not reported (" + JSON.stringify(value)
+        + " is not a value this build knows)"
+      : known;
+  }
+
   var RULESET_WORDS = {
     "true": "definition verified against the digest the row recorded",
     "false": "DIGEST DISAGREED, same version name and different rules",
@@ -767,7 +779,14 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
     // THREE-STATE, KEYED THROUGH A STRING so that `false` and `null` cannot
     // collapse into one another the way they would in any truthiness test --
     // the exact mistake the SDK made this field three-state to prevent.
-    addField(list, "ruleset", RULESET_WORDS[String(evidence.ruleset_verified)],
+    //
+    // ⚠ AND A FALLBACK, WHICH THIS DID NOT HAVE. A bare lookup returns
+    // `undefined` for a value outside the three, and `addField` renders that
+    // as an EMPTY ROW -- a label with nothing beside it, on the one panel
+    // whose whole job is refusing to leave a reader guessing. `cli.py` gained
+    // its fallback in T4b with a comment saying it was matching this file;
+    // the parity ran the other way, so the claim was false until now.
+    addField(list, "ruleset", rulesetWords(evidence.ruleset_verified),
       { loud: evidence.ruleset_verified === false });
     if (evidence.ruleset_version) {
       addField(list, "version", evidence.ruleset_version, { data: true });

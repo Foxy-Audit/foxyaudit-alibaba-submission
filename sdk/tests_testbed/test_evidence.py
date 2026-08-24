@@ -15,9 +15,11 @@ renderer can draw a shape; only a real turn proves the shape is ever produced.
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 
+from foxy_audit import FoxyClient
 from foxy_audit.introspect import STATUSES
 from foxy_testbed.core import (Assistant, EVIDENCE_EXPLAINED,
                                EVIDENCE_NO_EXPORT, EVIDENCE_NO_LEDGER,
@@ -35,17 +37,20 @@ PHI_PROMPT = "Draft a note for the patient at alice@example.org about their MRI.
 def _keyed(tmp_path, sector="healthcare"):
     """An assistant whose client has a key, so the SDK reports ``submitted``.
 
-    ⚠ THE SPOOL IS REDIRECTED INTO tmp_path. A keyed `FoxyClient` writes a
-    durable SQLite spool, and the default path is `~/.foxy-audit` — shared by
-    every test run and by the developer's own machine. `test_engine.py` already
-    guards that the KEYLESS default cannot pick up a stray `$FOXY_API_KEY`; this
-    is the same care from the other side.
+    ⚠ THE SPOOL IS CHOSEN AT CONSTRUCTION, NOT SWAPPED AFTERWARDS. A keyed
+    ``FoxyClient`` opens its spool, persists a client_id, and runs
+    ``dispatch.resume`` / ``org_policy.register`` INSIDE ``__init__`` -- so
+    replacing ``cfg`` on the built client, which is what this helper used to do,
+    redirects everything except the part that already happened. It looked safe
+    only because a sibling ``conftest`` fixture sets ``FOXY_SPOOL_PATH``; strip
+    that away and the helper writes to the developer's home directory, and a
+    test their home directory can influence is a test whose result it can
+    decide. Passing the client in is the seam ``Assistant`` documents for
+    exactly this ("a caller who genuinely wants a keyed client passes one in").
     """
-    assistant = Assistant(sector, foxy_api_key="test-key-not-a-real-one")
-    cfg = assistant._client.cfg
-    assistant._client.cfg = type(cfg)(
-        **{**cfg.__dict__, "spool_path": str(tmp_path / "spool.db")})
-    return assistant
+    client = FoxyClient(api_key="test-key-not-a-real-one",
+                        spool_path=str(tmp_path / "spool.db"))
+    return Assistant(sector, client=client)
 
 
 def _export_from_receipt(assistant, tmp_path):
@@ -68,6 +73,56 @@ def _export_from_receipt(assistant, tmp_path):
     path = tmp_path / "export.json"
     path.write_text(json.dumps(document), encoding="utf-8")
     return path, document
+
+
+# ══ the suite stays out of the developer's home ═════════════════════════════
+def test_a_keyed_helper_never_opens_the_real_spool(tmp_path, monkeypatch):
+    """⚠ OBSERVED ON WHAT THE CONSTRUCTOR OPENED, not on where `cfg` ends up.
+
+    A keyed `FoxyClient` opens its spool, persists a client_id and runs
+    `dispatch.resume` / `org_policy.register` INSIDE `__init__`. The helper used
+    to build the client and THEN replace `cfg`, which redirects everything except
+    the part that already happened -- and `cfg.spool_path` reads correct
+    afterwards either way, so asserting on it proves nothing. Every `EventSpool`
+    built during the call is recorded instead.
+
+    ⚠ AND `FOXY_SPOOL_PATH` IS UNSET FOR THE DURATION. The sibling conftest
+    fixture sets it, which is what made the old helper LOOK safe; with it gone
+    the post-hoc swap falls back to `Path.home()/".foxy-audit"` and this fires.
+    Removing that env var is the whole reason this test can see the defect.
+
+    ⚠ IT ASSERTS ON PATHS, NOT ON FILE MTIMES. A guard that stats the real spool
+    is a guard any other process holding a keyed client can fail -- which is
+    exactly what happened while this finding was being investigated, and is the
+    same non-determinism as the hardcoded-port trap (#236).
+    """
+    from foxy_audit import spool as spool_module
+
+    monkeypatch.delenv("FOXY_SPOOL_PATH", raising=False)
+    opened = []
+    original = spool_module.EventSpool.__init__
+
+    def record(self, path=None):
+        original(self, path)
+        opened.append(str(self.path))
+
+    monkeypatch.setattr(spool_module.EventSpool, "__init__", record)
+
+    assistant = _keyed(tmp_path)
+    assistant.ask(PHI_PROMPT)
+
+    assert opened, "no spool was opened at all; this guard would prove nothing"
+    # ⚠ `~/.foxy-audit`, NOT `~`. On Windows `tmp_path` lives UNDER the home
+    # directory, so a guard written against `Path.home()` fails a correct
+    # implementation -- caught by running it. The SDK's own default
+    # location is the thing that must never be opened.
+    real = pathlib.Path.home() / ".foxy-audit"
+    for path in opened:
+        assert str(tmp_path) in path, (
+            "a spool was opened at {0!r}, outside the test's tmp_path -- the "
+            "client was built before the path was chosen".format(path))
+        assert str(real) not in path, (
+            "the suite opened the real spool: {0!r}".format(path))
 
 
 # ══ the receipt ═════════════════════════════════════════════════════════════
@@ -216,6 +271,51 @@ def test_a_clean_row_records_no_ruleset_and_explain_says_so(tmp_path):
     assert assistant._receipts[-1]["ruleset_version"], (
         "a blocked row stopped recording provenance -- that is a regression, "
         "not the gap this test documents")
+
+
+def test_verify_replays_with_the_key_the_row_was_committed_with(tmp_path,
+                                                                monkeypatch):
+    """🔴 A CONFIDENT WRONG VERDICT, AND THE WORST ONE THIS SURFACE CAN GIVE.
+
+    `log_interaction` commits with `cfg.commitment_key or cfg.api_key`, and
+    `foxy explain` replays with `arg or cfg.commitment_key or cfg.api_key`.
+    `verify` stopped one term short, so it replayed with a DIFFERENT key from the
+    one the row was written with -- and a key mismatch does not surface as "could
+    not check". It surfaces as `hash_mismatch`, which is in the DISAGREED family
+    and whose message reads "The row is intact; this is simply not the prompt it
+    covers." A false accusation against an intact row, from the phase built so
+    that cannot happen.
+
+    ⚠ THE TRIGGER IS AN EMPTY VALUE, NOT AN ABSENT ONE. `FoxyConfig.resolve`
+    reads `FOXY_COMMITMENT_KEY` with a "" default, so setting it EMPTY gives
+    `commitment_key == ""` while `api_key` holds the real key. A test that
+    exports a real commitment key passes on the broken code, because then the
+    two resolutions agree -- which is why this one sets it empty and asserts the
+    resolution order rather than only the outcome.
+    """
+    monkeypatch.setenv("FOXY_COMMITMENT_KEY", "")
+    monkeypatch.delenv("FOXY_SALT_SIDECAR", raising=False)
+
+    assistant = _keyed(tmp_path)
+    cfg = assistant._client.cfg
+    assert cfg.commitment_key == "", "the empty-variable case was not reached"
+    assert cfg.api_key, "there is no api_key to fall back to; nothing is proved"
+
+    turn = assistant.ask(PHI_PROMPT)
+    export, _ = _export_from_receipt(assistant, tmp_path)
+    evidence = assistant.verify(turn, PHI_PROMPT, export=str(export))
+
+    assert evidence.status != "hash_mismatch", (
+        "verify replayed with a different key from the one the row was "
+        "committed with, and accused an intact row")
+    assert evidence.status == "explained"
+    assert evidence.commitment_verified is True
+
+    # and an explicit argument still wins over both, as it does in `foxy explain`
+    wrong = assistant.verify(turn, PHI_PROMPT, export=str(export),
+                             commitment_key="a-different-key-entirely")
+    assert wrong.status == "hash_mismatch", (
+        "an explicit commitment_key stopped being honoured")
 
 
 # ══ the vocabulary ══════════════════════════════════════════════════════════
