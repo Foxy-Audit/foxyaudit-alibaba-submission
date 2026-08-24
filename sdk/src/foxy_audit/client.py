@@ -960,14 +960,14 @@ class FoxyClient:
           no receipt was ever emitted for it — an ``event_id`` that reaches the
           ledger and that this hook can never point ``explain()`` at.
 
-          Two classes of event have no receipt, both because this call sits after
-          the submit and inside the blanket handler:
+          ONE class of event has no receipt, because this call sits after the
+          submit and inside the blanket handler: ``audit_required=True`` and the
+          server receipt did not arrive before the deadline — spooled, delivered
+          later, NOT reported here.
 
-            - ``audit_required=True`` and the server receipt did not arrive
-              before the deadline — spooled, delivered later, NOT reported here;
-            - anything raising between the submit returning and this call (the
-              ``hash_ok`` desktop ping is the only such call today) — likewise
-              spooled and delivered later.
+          Nothing else between the submit and this call can raise. The only such
+          call today is the ``hash_ok`` desktop ping, and ``udp.send_ping``
+          wraps its whole body in ``except Exception: return False``.
 
           A consumer that must account for every row cannot read "no receipt" as
           "no event". Reconcile against an export, not against this hook.
@@ -1045,8 +1045,19 @@ def _validate_on_event(value):
     # awaited, on a line the user did not write. `__call__` is checked too:
     # `iscoroutinefunction` says False for an INSTANCE whose `__call__` is
     # `async def`, and that shape fails identically.
-    if (inspect.iscoroutinefunction(value)
-            or inspect.iscoroutinefunction(getattr(value, "__call__", None))):
+    #
+    # ⚠ AND `isasyncgenfunction`, WHICH IS THE QUIETER HALF. An `async def`
+    # containing a `yield` is an async GENERATOR function: `iscoroutinefunction`
+    # is False for it, so it slipped through this check — and calling one emits
+    # NO RuntimeWarning at all, not even the "coroutine was never awaited"
+    # breadcrumb the coroutine case leaves. Measured: zero warnings. A silently
+    # dropped receipt with no trace anywhere is strictly worse than the failure
+    # this guard was added to prevent.
+    def _is_async(fn):
+        return (inspect.iscoroutinefunction(fn)
+                or inspect.isasyncgenfunction(fn))
+
+    if _is_async(value) or _is_async(getattr(value, "__call__", None)):
         raise TypeError(
             "on_event must be a synchronous callable; an `async def` callback "
             "would never be awaited and its body would never run. Hand the "

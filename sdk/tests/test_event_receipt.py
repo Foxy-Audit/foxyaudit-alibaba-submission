@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import json
 import pathlib
 
@@ -392,6 +393,40 @@ def test_an_async_callback_is_refused_at_construction():
 
     with pytest.raises(TypeError, match="synchronous"):
         _client(on_event=note)
+
+
+def test_an_async_generator_callback_is_refused_too():
+    """⚠ THE QUIETER HALF, AND THE ONE A THRESHOLD MISSES.
+
+    An ``async def`` containing a ``yield`` is an async GENERATOR function.
+    ``inspect.iscoroutinefunction`` is False for it, so the coroutine check alone
+    let it through — and calling one emits **no RuntimeWarning at all**, not even
+    the "coroutine was never awaited" breadcrumb the plain coroutine leaves.
+    Measured at the S11 gate: zero warnings, zero receipts, no trace anywhere.
+
+    That makes it strictly worse than the failure the guard was added for, which
+    is why it is refused by the same rule rather than by a second one."""
+    async def stream(receipt):
+        raise AssertionError("this body can never run either")
+        yield receipt                      # noqa: B901 — the yield IS the point
+
+    assert inspect.isasyncgenfunction(stream)
+    assert not inspect.iscoroutinefunction(stream)
+    with pytest.raises(TypeError, match="synchronous"):
+        _client(on_event=stream)
+
+
+def test_an_object_with_an_async_generator_call_is_refused_too():
+    """The same shape reached through ``__call__``, for the same reason the
+    coroutine version of this test exists: a consumer holding state writes the
+    class, not the bare function."""
+    class Streamer:
+        async def __call__(self, receipt):
+            raise AssertionError("nor this one")
+            yield receipt                  # noqa: B901
+
+    with pytest.raises(TypeError, match="synchronous"):
+        _client(on_event=Streamer())
 
 
 def test_an_object_with_an_async_call_is_refused_too():
