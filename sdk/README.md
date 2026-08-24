@@ -28,15 +28,15 @@ The receipt is a plain dict:
 | Key | |
 |---|---|
 | `event_id` | the id of the row that was written — what `explain()` wants |
-| `event_type` | `interaction` · `stream` · `blocked` · `response_blocked` · `exception` |
+| `event_type` | `interaction` · `stream` · `redacted` · `blocked` · `response_blocked` · `exception` |
 | `policy_tag` | the tag the call was recorded under |
 | `decision` · `policy_rules` · `blocked_reason` | what the guard decided, and the rule ids that explain it |
 | `ruleset_version` · `ruleset_hash` | the frozen definition those rule ids came from |
 | `commitment_alg` · `prompt_hash` · `response_hash` | the commitments — never text |
 | `pii_signals` | the labels recorded on the row |
-| `delivered` | `False` when there is no API key and nothing was submitted |
+| `submitted` | the event was durably enqueued and handed to the dispatcher. `False` when there is no API key |
 
-Four things worth knowing before you wire it up:
+Five things worth knowing before you wire it up:
 
 - **It is built from the payload that was actually sent**, not from the arguments
   you passed, so it cannot describe an event different from the one recorded —
@@ -47,10 +47,23 @@ Four things worth knowing before you wire it up:
 - **It fires on every path** — blocked prompts, blocked responses, host
   exceptions, and calls made with no API key at all. The turns you most need to
   name are the ones that were stopped.
+- **`submitted` is not `delivered`, and the field is named for what it can
+  prove.** Under the default `audit_required=False`, `submit()` writes the local
+  spool and returns; it says nothing about the backend. With a revoked key every
+  upload 401s and retries while the event waits in the spool — and a field called
+  `delivered` would have read `True` throughout. Set `audit_required=True` and a
+  server receipt really did come back, because the call raises otherwise and the
+  hook never fires.
 - **Your callback's exceptions are swallowed and logged**, like all other
   telemetry here. It will not break your model call. But a slow callback runs
   inline, and from an `async` call site it arrives on a worker thread rather
   than the event loop — do not touch GUI widgets from it.
+
+Two mistakes are refused at construction rather than per event, because a
+mis-wired hook that only whispers once per event is indistinguishable from no
+hook: a non-callable `on_event` raises `TypeError`, and so does an `async def`
+one — it would never be awaited, so its body would never run and nothing would
+be recorded. Hand the receipt to your loop yourself if you need one.
 
 ## 1.11.0 — a card number begins with an issuer
 

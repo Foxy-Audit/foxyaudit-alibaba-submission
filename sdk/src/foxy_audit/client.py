@@ -229,6 +229,37 @@ class FoxyClient:
         # the environment, and a callable cannot come from an env var — putting
         # it on the frozen config dataclass would invent a setting nobody can
         # set. See `_emit_receipt` for the contract.
+        #
+        # ⚠ VALIDATED HERE, LOUDLY, AND THAT IS NOT A BREACH OF THE STANDING
+        # RULE. "Telemetry must never break the host app" governs the per-event
+        # path, where the alternative to swallowing is losing the customer's
+        # call. This is CONFIGURATION, at construction, once — and a mis-wired
+        # hook that only whispers at `log.debug` per event is indistinguishable
+        # from no hook at all, which is the failure mode a receipt exists to
+        # remove. The mistake is here; the report belongs here too.
+        if on_event is not None:
+            if not callable(on_event):
+                raise TypeError(
+                    f"on_event must be callable, got {type(on_event).__name__}. "
+                    "It is invoked with one argument: the receipt dict.")
+            # An `async def` callback is the mistake this SDK invites: its own
+            # decorators are async-aware, so reaching for one here is natural and
+            # WRONG. `_emit_receipt` calls it synchronously, so a coroutine
+            # function would return a coroutine nobody awaits — the body never
+            # runs, nothing is recorded, and the only trace is a RuntimeWarning
+            # about a coroutine never awaited, on a line the user did not write.
+            # `__call__` is checked too: `iscoroutinefunction` says False for an
+            # instance whose `__call__` is `async def`, and that shape fails
+            # identically.
+            if (inspect.iscoroutinefunction(on_event)
+                    or inspect.iscoroutinefunction(getattr(on_event, "__call__", None))):
+                raise TypeError(
+                    "on_event must be a synchronous callable; an `async def` "
+                    "callback would never be awaited and its body would never "
+                    "run. Hand the receipt to your loop yourself — e.g. "
+                    "`on_event=lambda r: loop.call_soon_threadsafe(q.put_nowait, r)` "
+                    "— and note that from an async call site it arrives on a "
+                    "worker thread, not the event loop.")
         self.on_event = on_event
         self.cfg = FoxyConfig.resolve(
             api_key=api_key,
@@ -912,7 +943,7 @@ class FoxyClient:
             if self.cfg.audit_required:
                 raise AuditRequiredError("Foxy Audit could not durably deliver the event") from exc
 
-    def _emit_receipt(self, payload: dict, delivered: bool) -> None:
+    def _emit_receipt(self, payload: dict, submitted: bool) -> None:
         """Hand the caller the id of the row it just wrote. CONTENT-BLIND.
 
         The decorator returns the wrapped function's response — a frozen public
@@ -926,7 +957,7 @@ class FoxyClient:
 
         Three properties worth stating rather than leaving to be discovered:
 
-        * IT FIRES WHEN ``cfg.enabled`` IS FALSE TOO, with ``delivered=False``.
+        * IT FIRES WHEN ``cfg.enabled`` IS FALSE TOO, with ``submitted=False``.
           The id and the decision are real even when nothing shipped, and a hook
           that only fired for keyed clients would be dead code on every offline
           run.
@@ -962,10 +993,23 @@ class FoxyClient:
                 "prompt_hash": payload["prompt_hash"],
                 "response_hash": payload["response_hash"],
                 "pii_signals": payload["pii_signals"],
-                # The event was handed to the durable spool (and under
-                # `audit_required`, a server receipt came back — otherwise this
-                # hook never fired). False means no key: nothing was submitted.
-                "delivered": delivered,
+                # ⚠ `submitted`, NOT `delivered`, AND THE DIFFERENCE IS THE
+                # WHOLE POINT. Under the default `audit_required=False`,
+                # `dispatch.submit` writes the local spool and returns — it says
+                # nothing about the backend. With a REVOKED key every POST 401s
+                # and retries forever while the event sits in the spool, and a
+                # field called `delivered` would have read True on every one of
+                # those. `submitted` is true in both configurations and claims
+                # only what happened: the event was durably enqueued and handed
+                # to the dispatcher. False means no key — nothing was submitted
+                # at all.
+                #
+                # Under `audit_required=True` a server receipt DID come back,
+                # because `submit(wait=True)` raises otherwise and this hook
+                # never fires. That is a stronger guarantee than the field name
+                # claims, and it is deliberately left here rather than encoded
+                # in a name a reader would then over-trust in the other config.
+                "submitted": submitted,
             })
         except Exception as exc:             # noqa: BLE001 — type name only
             log.debug("foxy-audit: on_event callback failed (%s)", type(exc).__name__)

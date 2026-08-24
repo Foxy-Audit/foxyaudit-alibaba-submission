@@ -57,7 +57,7 @@ def _shipped_source() -> str:
 RECEIPT_FIELDS = {
     "event_id", "event_type", "policy_tag", "decision", "policy_rules",
     "blocked_reason", "ruleset_version", "ruleset_hash", "commitment_alg",
-    "prompt_hash", "response_hash", "pii_signals", "delivered",
+    "prompt_hash", "response_hash", "pii_signals", "submitted",
 }
 
 CLEAN_PROMPT = "What is the capital of France?"
@@ -161,7 +161,7 @@ def test_the_clean_observe_path_reports_no_guard_rather_than_an_empty_guard():
 
 # ── it fires on every path, not just the happy one ───────────────────────────
 
-def test_it_fires_with_delivered_false_when_there_is_no_key():
+def test_it_fires_with_submitted_false_when_there_is_no_key():
     """The testbed's default configuration, and T4's honest empty state.
 
     ``FoxyClient(api_key="")`` means ``cfg.enabled`` is False and nothing is
@@ -176,12 +176,19 @@ def test_it_fires_with_delivered_false_when_there_is_no_key():
 
     assert ask(CLEAN_PROMPT) == "Paris."
     assert len(seen) == 1
-    assert seen[0]["delivered"] is False
+    assert seen[0]["submitted"] is False
     assert seen[0]["event_id"]
 
 
-def test_it_fires_with_delivered_true_when_the_event_was_submitted(monkeypatch):
-    """The other half of the pair — otherwise ``delivered`` could be a constant."""
+def test_it_fires_with_submitted_true_when_the_event_was_submitted(monkeypatch):
+    """The other half of the pair — otherwise ``submitted`` could be a constant.
+
+    ⚠ THE FIELD IS ``submitted`` AND NOT ``delivered`` ON PURPOSE. Under the
+    default ``audit_required=False``, ``dispatch.submit`` writes the local spool
+    and returns; nothing has reached the backend. With a revoked key every upload
+    401s and retries forever while the event waits in the spool, and a receipt
+    saying ``delivered`` would have been a false statement on every one of them.
+    ``submitted`` is what this can prove in both configurations."""
     _capture(monkeypatch)
     seen, cb = _receipts()
     foxy = _client(on_event=cb)
@@ -191,7 +198,7 @@ def test_it_fires_with_delivered_true_when_the_event_was_submitted(monkeypatch):
         return "Paris."
 
     ask(CLEAN_PROMPT)
-    assert seen[0]["delivered"] is True
+    assert seen[0]["submitted"] is True
 
 
 def test_it_fires_for_a_blocked_prompt(monkeypatch):
@@ -309,6 +316,143 @@ def test_the_receipt_never_carries_the_text(monkeypatch, prompt, mode):
     # Without this the excusal could quietly swallow the whole corpus and the
     # test would pass by checking nothing at all.
     assert checked > 20, (checked, prompt)
+
+
+# ── a broken hook is refused where the mistake is ────────────────────────────
+
+def test_an_async_callback_is_refused_at_construction():
+    """The mistake this SDK actively invites, and the one it hid worst.
+
+    Its own decorators are async-aware, so reaching for an ``async def`` callback
+    here is natural — and ``_emit_receipt`` calls it synchronously, so the
+    coroutine is created and dropped. The body never runs, no receipt is ever
+    recorded, and the only trace is a RuntimeWarning about a coroutine never
+    awaited, pointing at a line inside the SDK rather than at the user's code.
+
+    Refused at CONSTRUCTION, where the mistake is, and not per event, where it
+    would be noise on every call."""
+    async def note(receipt):
+        raise AssertionError("this body can never run — that is the defect")
+
+    with pytest.raises(TypeError, match="synchronous"):
+        _client(on_event=note)
+
+
+def test_an_object_with_an_async_call_is_refused_too():
+    """``inspect.iscoroutinefunction`` says False for an INSTANCE whose
+    ``__call__`` is ``async def`` — and that shape fails identically, silently.
+    A guard that only covered the bare ``async def`` would leave the same defect
+    reachable through the shape a consumer with state actually writes."""
+    class Collector:
+        async def __call__(self, receipt):
+            raise AssertionError("this body can never run either")
+
+    with pytest.raises(TypeError, match="synchronous"):
+        _client(on_event=Collector())
+
+
+@pytest.mark.parametrize("bad", [object(), "not-a-function", 42, [], {"a": 1}])
+def test_a_non_callable_on_event_is_refused_at_construction(bad):
+    """Accepted, it fails once per event at ``log.debug`` — so a mis-wired hook
+    looks exactly like no hook, which is the one thing a receipt exists to
+    remove. ``TypeError`` at construction, naming the type that was passed."""
+    with pytest.raises(TypeError, match="callable"):
+        _client(on_event=bad)
+
+
+def test_a_plain_synchronous_callable_object_is_still_accepted(monkeypatch):
+    """The other side of the pair. Rejecting async ``__call__`` must not reject
+    the ordinary callable object a consumer with state writes — a guard that
+    refused both would be green and wrong."""
+    _capture(monkeypatch)
+
+    class Collector:
+        def __init__(self):
+            self.seen = []
+
+        def __call__(self, receipt):
+            self.seen.append(receipt)
+
+    collector = Collector()
+    foxy = _client(on_event=collector)
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return "Paris."
+
+    ask(CLEAN_PROMPT)
+    assert len(collector.seen) == 1
+
+
+def test_none_is_still_the_default_and_costs_nothing():
+    """Validation must not make the un-hooked client raise."""
+    assert _client().on_event is None
+    assert _client(on_event=None).on_event is None
+
+
+# ── the README describes the event types that are actually emitted ───────────
+
+def test_the_readme_lists_every_event_type_the_receipt_emits(monkeypatch):
+    """⚠ ``redacted`` WAS MISSING FROM IT, while the changelog listed it — two
+    shipped documents contradicting each other about the same field.
+
+    The types are DRIVEN OUT OF THE CODE first and the prose is checked against
+    them, never the other way round. ``sdk/README.md`` is the PyPI long
+    description, so a wrong list here is wrong on the package page.
+
+    Anchored on ``parents[1]`` so it resolves in the sdist too, where ``tests/``
+    sits beside ``README.md`` at the archive root with no ``sdk/`` above it."""
+    import pathlib as _pathlib
+
+    _capture(monkeypatch)
+    emitted = set()
+
+    def collect(receipt):
+        emitted.add(receipt["event_type"])
+
+    def drive(**kw):
+        foxy = _client(on_event=collect, **kw)
+
+        @foxy.audit(policy="hipaa")
+        def ask(prompt: str) -> str:
+            return XSS_RESPONSE
+
+        @foxy.audit(policy="hipaa")
+        def stream(prompt: str):
+            yield "Paris."
+
+        for call in (lambda: ask(CLEAN_PROMPT), lambda: list(stream(CLEAN_PROMPT)),
+                     lambda: ask(PHI_PROMPT), lambda: list(stream(PHI_PROMPT))):
+            try:
+                call()
+            except (FoxyPolicyBlocked, FoxyResponseBlocked):
+                pass
+
+    drive()
+    drive(mode="redact")
+    drive(mode="block")
+    drive(response_scan="block")
+
+    foxy = _client(on_event=collect)
+
+    @foxy.audit(policy="default")
+    def boom(prompt: str) -> str:
+        raise ValueError("provider is down")
+
+    with pytest.raises(ValueError):
+        boom(CLEAN_PROMPT)
+
+    # The control: if the drive above stopped producing variety, the prose check
+    # below would pass by checking almost nothing.
+    assert emitted >= {"interaction", "stream", "redacted", "blocked",
+                       "response_blocked", "exception"}, emitted
+
+    readme = (_pathlib.Path(__file__).resolve().parents[1] / "README.md"
+              ).read_text(encoding="utf-8")
+    row = next(line for line in readme.splitlines()
+               if line.startswith("| `event_type` |"))
+    missing = sorted(t for t in emitted if f"`{t}`" not in row)
+    assert not missing, (missing, row)
 
 
 # ── it cannot break the host, and it cannot move what exists ─────────────────

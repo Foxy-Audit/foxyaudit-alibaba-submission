@@ -49,7 +49,7 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #   The receipt is a plain dict — no new type, no new dependency, no new config
 #   field — carrying event_id, event_type, policy_tag, decision, policy_rules,
 #   blocked_reason, ruleset_version, ruleset_hash, commitment_alg, prompt_hash,
-#   response_hash, pii_signals and delivered.
+#   response_hash, pii_signals and submitted.
 #
 #   BUILT FROM THE PAYLOAD THAT WAS ACTUALLY SENT, never from the caller's
 #   arguments, so the receipt cannot describe an event different from the one
@@ -59,9 +59,29 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #
 #   IT FIRES ON EVERY PATH, including `blocked`, `blocked_by_org_policy`,
 #   `redacted`, `exception`, `response_blocked` — the turns a consumer most needs
-#   to name — and including when there is no API key, with `delivered=False`. A
+#   to name — and including when there is no API key, with `submitted=False`. A
 #   hook wired only to the happy path, or only to keyed clients, would be dead
 #   code on every offline run.
+#
+#   ⚠ `submitted`, NOT `delivered`. Under the default `audit_required=False`,
+#   `dispatch.submit` writes the local spool and returns — it says nothing about
+#   the backend. With a REVOKED key every upload 401s and retries forever while
+#   the event waits in the spool, and `delivered: True` on every one of those
+#   receipts would have been a false statement in an audit product. `submitted`
+#   is true in both configurations and claims only what happened. Under
+#   `audit_required=True` a server receipt genuinely did come back, because the
+#   call raises otherwise and the hook never fires; that nuance lives in the
+#   docstring rather than in a name a reader would over-trust elsewhere.
+#
+#   TWO MISTAKES ARE REFUSED AT CONSTRUCTION, not per event. A non-callable
+#   `on_event` raises TypeError; so does an `async def` one, whose coroutine
+#   `_emit_receipt` would create and never await — the body never runs, nothing
+#   is recorded, and the only trace is a RuntimeWarning on a line the user did
+#   not write. This SDK's own decorators are async-aware, so reaching for an
+#   async callback here is a natural mistake to make. Loud at configuration is
+#   not a breach of "telemetry must never break the host app": that rule governs
+#   the per-event path, and a hook that only whispers at log.debug per event is
+#   indistinguishable from no hook at all.
 #
 #   IT NEVER PROPAGATES. A customer's broken callback must not raise out of their
 #   model call, and must not reach `log_interaction`'s blanket handler either:
