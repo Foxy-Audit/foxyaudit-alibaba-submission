@@ -85,46 +85,47 @@ def test_the_allowlist_is_loopback_and_nothing_else():
     assert set(LOOPBACK_HOSTS) == {"localhost", "127.0.0.1", "::1"}
 
 
-def test_a_worker_cannot_outlive_the_drain_its_window_gives_it(app, dialled, tmp_path):
-    """The property #242 violated, measured at the seam where it broke.
+def test_a_request_finishes_inside_the_drain_its_window_would_give_it(dialled):
+    """The property #242 violated, measured where it broke.
 
-    `dashboard.closeEvent` hands every tracked worker to
-    `shutdown_workers(wait_ms=1500)`, which is best-effort BY DESIGN — it
-    waits, it cannot interrupt. So the only thing that keeps a worker from
-    walking out of the test that owns it is the work being short, and the work
-    is short only because nothing it does reaches the network. A worker that
-    outlives its window goes on calling `QSettings` off the GUI thread, which
-    is what corrupted the heap.
+    `dashboard.closeEvent` hands every tracked worker to `shutdown_workers`,
+    which waits and CANNOT interrupt — best-effort by design. So the only
+    thing keeping a worker from walking out of the test that owns it is the
+    work being shorter than that wait, and the work is short only because
+    nothing it does reaches the network. A worker that outlives its window
+    goes on reading a GUI-thread `QSettings` from a worker thread, and that is
+    what corrupted the heap.
 
     ⚠ BOTH HALVES ARE MEASURED, because either alone is satisfiable by
-    accident: a warm connection can also come back inside 1.5 s, which is
-    precisely how this stayed invisible on the dev machine for four merges.
-    So the wait is asserted AND the socket that must never open.
+    accident: a warm connection also comes back inside 1.5 s, which is exactly
+    how this stayed invisible on the dev machine for four merges. So the clock
+    is asserted AND the socket that must never open.
+
+    ⚠ AND IT RUNS NO QThread. The first version of this guard spawned a real
+    `ApiWorker` and was itself CI's next segfault, twice: `spawn_worker` with
+    no `parent` leaves the QThread owned by Python, `finished` posts a
+    `deleteLater()`, and the wrapper is collected at end of test while that
+    event is still queued. The request is the subject; the thread was scenery
+    that could only add a second way to crash.
     """
-    from PyQt6.QtCore import QSettings
+    import inspect
+    import time
 
-    from fox_settings import FoxSettings
-    from foxy_client import (FoxyClient, MemorySecretStore, shutdown_workers,
-                             spawn_worker)
+    from foxy_client import shutdown_workers
 
-    store = QSettings(str(tmp_path / "console.ini"), QSettings.Format.IniFormat)
-    client = FoxyClient(settings=FoxSettings(store, MemorySecretStore()))
-    workers: set = set()
-    # The console's own announcement call, with the console's own timeout —
-    # `dashboard._refresh_announcement` fires three of these on every window.
-    spawn_worker(client, "GET", "/v1/billing/plan", timeout=10,
-                 track=workers, on_err=lambda _err: None)
-    shutdown_workers(workers, 1500)
-    app.processEvents()
-    assert not [w for w in workers if w.isRunning()], (
-        "a worker survived the 1500 ms its window would have given it; it now "
-        "outlives the test, and goes on reading a GUI-thread QSettings from a "
-        "worker thread")
-    assert dialled == [], f"the worker dialled {dialled} — see the docstring"
+    # Read from the code, not typed in: `closeEvent` calls `shutdown_workers`
+    # with no `wait_ms`, so the default IS the budget, and a guard holding its
+    # own copy of it would go quietly stale the day someone changed it.
+    budget_ms = inspect.signature(shutdown_workers).parameters["wait_ms"].default
 
+    http = FoxyHttp(base_url="https://app.foxyaudit.tech")
+    started = time.monotonic()
+    with pytest.raises(ApiError):
+        # `timeout=10` is `_refresh_announcement`'s own, three times per window.
+        http.request("GET", "/v1/billing/plan", timeout=10)
+    elapsed_ms = (time.monotonic() - started) * 1000
 
-@pytest.fixture(scope="module")
-def app():
-    from PyQt6.QtWidgets import QApplication
-    # RETURNED, never dropped — see test_qt_lifecycle on exit 127.
-    return QApplication.instance() or QApplication([])
+    assert elapsed_ms < budget_ms, (
+        f"a console request took {elapsed_ms:.0f} ms against a {budget_ms} ms "
+        f"drain — the worker running it outlives the window that owns it")
+    assert dialled == [], f"the request dialled {dialled} — see the docstring"
