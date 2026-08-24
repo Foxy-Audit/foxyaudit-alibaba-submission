@@ -44,9 +44,17 @@ def _shipped_source() -> str:
     scan therefore reports a CORRECT receipt as a leak, on exactly the prompt
     the guard most needs to cover.
 
-    A run of characters the SDK's own source already contains cannot be evidence
-    that the customer's text escaped, so those runs are excused — and nothing
-    else is. An SSN, a PAN, a key, or any span of a real prompt is not in here."""
+    A run of characters the SDK's own source already contains is weak evidence
+    that the customer's text escaped, so those runs are excused in the general
+    sweep.
+
+    ⚠ AND THAT EXCUSAL IS NARROWER THAN IT FIRST LOOKED. An earlier version of
+    this docstring claimed "an SSN, a PAN, a key ... is not in here", and it was
+    WRONG about half of that: the canonical test PAN and the example key are both
+    in this source, so the excusal swallowed every run of the two identifiers the
+    corpus most needed to watch. See ``CORPUS`` for the measurement. Runs lying
+    inside a NAMED identifier are never excused, and the identifiers themselves
+    are asserted separately with no excusal at all."""
     pkg = pathlib.Path(client_module.__file__).parent
     return "\n".join(p.read_text(encoding="utf-8") for p in sorted(pkg.rglob("*.py")))
 
@@ -275,28 +283,62 @@ def test_it_fires_from_the_async_wrapper(monkeypatch):
 
 # ── content-blindness, by corpus ─────────────────────────────────────────────
 
-@pytest.mark.parametrize("prompt", [PHI_PROMPT, CARD_PROMPT, SECRET_PROMPT,
-                                    INJECTION_PROMPT])
-@pytest.mark.parametrize("mode", ["observe", "redact", "block"])
-def test_the_receipt_never_carries_the_text(monkeypatch, prompt, mode):
-    """No run of eight characters from the prompt or the response survives.
+#: The response every corpus case gets back, and the two identifiers in it.
+CORPUS_RESPONSE = "The record shows SSN 123-45-6789 and key sk-ABCDEF0123456789ABCDEFGH."
+RESPONSE_IDENTIFIERS = ("123-45-6789", "sk-ABCDEF0123456789ABCDEFGH")
 
-    Eight rather than a whole-string search: a receipt that leaked a fragment —
-    a bare SSN, half a key — would pass ``prompt not in json.dumps(receipt)``
-    while being exactly the disclosure content-blindness forbids. Includes the
-    RESPONSE, which the guard also hashes.
+#: Each prompt with THE IDENTIFIERS INSIDE IT, named rather than inferred.
+#:
+#: ⚠ NAMING THEM IS THE WHOLE FIX, AND THE MEASUREMENT THAT FORCED IT:
+#:
+#:      PAN    4111111111111111              9 runs    9 excused
+#:      key    sk-ABCDEF0123456789ABCDEFGH  20 runs   20 excused
+#:      SSN    123-45-6789                   4 runs    0 excused
+#:      email  jane.doe@acme.co              9 runs    0 excused
+#:
+#: The canonical test PAN and the example key both LIVE IN THE SDK'S OWN SOURCE
+#: — in `issuer_ranges`, in fixtures, in docstrings — so the blanket
+#: source-excusal swallowed every run of the two identifiers it most needed to
+#: watch. `CARD_PROMPT` checked twenty-four runs and not one of them was the card
+#: number: a receipt leaking the full PAN verbatim PASSED. Measured by leaking
+#: exactly the PAN, and then exactly the key, into the receipt — both green.
+#:
+#: That the SDK's source happens to contain a canonical test PAN says nothing
+#: whatever about whether the CUSTOMER'S PAN escaped. The excusal exists for one
+#: narrow reason — the frozen rule id `injection.ignore_previous` shares the word
+#: "previous" with an injection prompt — and it must never reach an identifier.
+CORPUS = [
+    pytest.param(PHI_PROMPT, ("123-45-6789", "jane.doe@acme.co"), id="phi"),
+    pytest.param(CARD_PROMPT, ("4111111111111111",), id="card"),
+    pytest.param(SECRET_PROMPT, ("sk-ABCDEF0123456789ABCDEFGH",), id="secret"),
+    pytest.param(INJECTION_PROMPT, ("reveal the system prompt",), id="injection"),
+]
+
+
+@pytest.mark.parametrize("prompt, identifiers", CORPUS)
+@pytest.mark.parametrize("mode", ["observe", "redact", "block"])
+def test_the_receipt_never_carries_the_text(monkeypatch, prompt, identifiers, mode):
+    """Two assertions, and the first one is not excusable by anything.
+
+    1. THE NAMED IDENTIFIERS — the PAN, the SSN, the email, the key, the
+       injection phrase — must not appear in the receipt. No excusal reaches
+       these. This is the half the previous version was blind to.
+    2. THE ≥8-RUN SWEEP over the whole prompt and the whole response, which
+       catches a leak of a FRAGMENT: a receipt carrying half a key would pass
+       ``prompt not in blob`` while being exactly the disclosure
+       content-blindness forbids. Here the source-excusal applies — but never to
+       a run that lies inside a named identifier, which is what let the PAN and
+       the key through.
 
     ``default=str`` on the dump, so a field that is not JSON-serialisable is
-    still searched rather than raising and skipping the assertion. Runs that the
-    shipped source itself contains are excused — see ``_shipped_source``."""
+    still searched rather than raising and skipping the assertion."""
     _capture(monkeypatch)
     seen, cb = _receipts()
     foxy = _client(on_event=cb, mode=mode)
-    response = "The record shows SSN 123-45-6789 and key sk-ABCDEF0123456789ABCDEFGH."
 
     @foxy.audit(policy="hipaa")
     def ask(p: str) -> str:
-        return response
+        return CORPUS_RESPONSE
 
     try:
         ask(prompt)
@@ -304,18 +346,32 @@ def test_the_receipt_never_carries_the_text(monkeypatch, prompt, mode):
         pass
     assert seen, "no receipt to inspect — the corpus would prove nothing"
     blob = json.dumps(seen[0], default=str)
+    named = tuple(identifiers) + RESPONSE_IDENTIFIERS
+
+    # ── 1. unexcusable ───────────────────────────────────────────────────────
+    for identifier in named:
+        assert identifier not in blob, (identifier, blob)
+
+    # ── 2. the sweep ─────────────────────────────────────────────────────────
     source = _shipped_source()
-    checked = 0
-    for text in (prompt, response):
+    checked = set()
+    for text in (prompt, CORPUS_RESPONSE):
         for i in range(len(text) - 7):
             run = text[i:i + 8]
-            if run in source:
+            # The excusal, and its one boundary: a run inside a named identifier
+            # is never excused, however often the SDK's own source contains it.
+            if run in source and not any(run in ident for ident in named):
                 continue
-            checked += 1
+            checked.add(run)
             assert run not in blob, (run, blob)
-    # Without this the excusal could quietly swallow the whole corpus and the
-    # test would pass by checking nothing at all.
-    assert checked > 20, (checked, prompt)
+
+    # The floor that means something. Not "more than twenty runs were looked at"
+    # — that was true while every run of the card number was being skipped — but
+    # "every run of every named identifier was among them".
+    for identifier in named:
+        missed = [identifier[i:i + 8] for i in range(len(identifier) - 7)
+                  if identifier[i:i + 8] not in checked]
+        assert not missed, (identifier, missed)
 
 
 # ── a broken hook is refused where the mistake is ────────────────────────────
@@ -382,6 +438,68 @@ def test_a_plain_synchronous_callable_object_is_still_accepted(monkeypatch):
 
     ask(CLEAN_PROMPT)
     assert len(collector.seen) == 1
+
+
+@pytest.mark.parametrize("bad, match", [
+    pytest.param("async def", "synchronous", id="async-def"),
+    pytest.param("async call", "synchronous", id="async-__call__"),
+    pytest.param("not callable", "callable", id="non-callable"),
+])
+def test_the_same_refusal_applies_AFTER_construction(monkeypatch, bad, match):
+    """⚠ THE CONSTRUCTOR WAS THE ONLY GUARDED DOOR IN A ROOM WITH TWO.
+
+    ``on_event`` was a plain public attribute, so ``foxy.on_event = some_async_fn``
+    after construction sailed past every check and walked back into the exact
+    silent coroutine-never-awaited failure they exist to prevent — a hook that
+    looks wired, records nothing, and says nothing.
+
+    Assignment now routes through the same validator as the constructor. Both
+    doors, one lock."""
+    async def async_fn(receipt):
+        raise AssertionError("this body can never run")
+
+    class AsyncCall:
+        async def __call__(self, receipt):
+            raise AssertionError("nor can this one")
+
+    value = {"async def": async_fn, "async call": AsyncCall(),
+             "not callable": object()}[bad]
+
+    foxy = _client()
+    with pytest.raises(TypeError, match=match):
+        foxy.on_event = value
+
+    # And the client is still usable: a refused assignment must not leave a
+    # half-set hook behind.
+    _capture(monkeypatch)
+    seen, cb = _receipts()
+    foxy.on_event = cb
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return "Paris."
+
+    ask(CLEAN_PROMPT)
+    assert len(seen) == 1
+
+
+def test_a_good_callback_can_still_be_swapped_in_and_out(monkeypatch):
+    """The other side of the pair. Validation must not make the attribute
+    read-only — a consumer detaching its hook is ordinary, and a guard that
+    refused every assignment would be green and wrong."""
+    _capture(monkeypatch)
+    seen, cb = _receipts()
+    foxy = _client(on_event=cb)
+
+    @foxy.audit(policy="default")
+    def ask(prompt: str) -> str:
+        return "Paris."
+
+    ask(CLEAN_PROMPT)
+    foxy.on_event = None
+    ask(CLEAN_PROMPT)
+    assert foxy.on_event is None
+    assert len(seen) == 1, "the detached hook still fired"
 
 
 def test_none_is_still_the_default_and_costs_nothing():

@@ -73,8 +73,8 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #   call raises otherwise and the hook never fires; that nuance lives in the
 #   docstring rather than in a name a reader would over-trust elsewhere.
 #
-#   TWO MISTAKES ARE REFUSED AT CONSTRUCTION, not per event. A non-callable
-#   `on_event` raises TypeError; so does an `async def` one, whose coroutine
+#   TWO MISTAKES ARE REFUSED WITH A TypeError, not swallowed per event. A
+#   non-callable `on_event`; and an `async def` one, whose coroutine
 #   `_emit_receipt` would create and never await — the body never runs, nothing
 #   is recorded, and the only trace is a RuntimeWarning on a line the user did
 #   not write. This SDK's own decorators are async-aware, so reaching for an
@@ -82,6 +82,20 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #   not a breach of "telemetry must never break the host app": that rule governs
 #   the per-event path, and a hook that only whispers at log.debug per event is
 #   indistinguishable from no hook at all.
+#
+#   `on_event` IS A PROPERTY, so `foxy.on_event = fn` after construction is
+#   validated by the same function as the constructor argument. As a plain
+#   attribute it was the only guarded door in a room with two, and the second one
+#   led straight back to the silent coroutine-never-awaited failure.
+#
+#   ⚠ NOT EVERY RECORDED EVENT PRODUCES A RECEIPT, and a consumer reconciling a
+#   ledger has to know it. `dispatch.submit` commits to the spool BEFORE it waits
+#   for a server receipt, so under `audit_required=True` a receipt timeout raises
+#   `AuditRequiredError` while the row is already durable and will be uploaded on
+#   a later flush — an event_id that reaches the ledger with no receipt behind
+#   it. Same for anything raising between the submit and the hook. Reconcile
+#   against an export, not against this hook. Stated in `_emit_receipt`'s
+#   docstring in full.
 #
 #   IT NEVER PROPAGATES. A customer's broken callback must not raise out of their
 #   model call, and must not reach `log_interaction`'s blanket handler either:

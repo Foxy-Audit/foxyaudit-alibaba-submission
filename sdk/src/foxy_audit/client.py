@@ -230,36 +230,9 @@ class FoxyClient:
         # it on the frozen config dataclass would invent a setting nobody can
         # set. See `_emit_receipt` for the contract.
         #
-        # ⚠ VALIDATED HERE, LOUDLY, AND THAT IS NOT A BREACH OF THE STANDING
-        # RULE. "Telemetry must never break the host app" governs the per-event
-        # path, where the alternative to swallowing is losing the customer's
-        # call. This is CONFIGURATION, at construction, once — and a mis-wired
-        # hook that only whispers at `log.debug` per event is indistinguishable
-        # from no hook at all, which is the failure mode a receipt exists to
-        # remove. The mistake is here; the report belongs here too.
-        if on_event is not None:
-            if not callable(on_event):
-                raise TypeError(
-                    f"on_event must be callable, got {type(on_event).__name__}. "
-                    "It is invoked with one argument: the receipt dict.")
-            # An `async def` callback is the mistake this SDK invites: its own
-            # decorators are async-aware, so reaching for one here is natural and
-            # WRONG. `_emit_receipt` calls it synchronously, so a coroutine
-            # function would return a coroutine nobody awaits — the body never
-            # runs, nothing is recorded, and the only trace is a RuntimeWarning
-            # about a coroutine never awaited, on a line the user did not write.
-            # `__call__` is checked too: `iscoroutinefunction` says False for an
-            # instance whose `__call__` is `async def`, and that shape fails
-            # identically.
-            if (inspect.iscoroutinefunction(on_event)
-                    or inspect.iscoroutinefunction(getattr(on_event, "__call__", None))):
-                raise TypeError(
-                    "on_event must be a synchronous callable; an `async def` "
-                    "callback would never be awaited and its body would never "
-                    "run. Hand the receipt to your loop yourself — e.g. "
-                    "`on_event=lambda r: loop.call_soon_threadsafe(q.put_nowait, r)` "
-                    "— and note that from an async call site it arrives on a "
-                    "worker thread, not the event loop.")
+        # Assigned through the PROPERTY below, so construction and a later
+        # `foxy.on_event = ...` are validated by the same function. As a plain
+        # attribute this line was the only guarded door in a room with two.
         self.on_event = on_event
         self.cfg = FoxyConfig.resolve(
             api_key=api_key,
@@ -290,6 +263,21 @@ class FoxyClient:
             # background refresh. Reads a small JSON file; performs no network I/O
             # and cannot fail into the caller (P4 §B2/§B3).
             org_policy.register(self.cfg)
+
+    @property
+    def on_event(self):
+        """The receipt callback. See :meth:`_emit_receipt` for what it is handed."""
+        return self._on_event
+
+    @on_event.setter
+    def on_event(self, value) -> None:
+        """⚠ A PROPERTY BECAUSE A PLAIN ATTRIBUTE HAD ONLY ONE GUARDED DOOR.
+
+        The constructor rejected an ``async def`` callback; ``foxy.on_event = fn``
+        afterwards did not, and walked straight back into the silent
+        coroutine-never-awaited failure the constructor check exists to prevent.
+        Both paths now route through the same validator."""
+        self._on_event = _validate_on_event(value)
 
     def check(self, prompt, policy: str = "default"):
         """Would this prompt trip anything, under ``policy``? LABELS ONLY.
@@ -961,10 +949,28 @@ class FoxyClient:
           The id and the decision are real even when nothing shipped, and a hook
           that only fired for keyed clients would be dead code on every offline
           run.
-        * IT DOES NOT FIRE WHEN THE EVENT DID NOT LAND. It sits inside
-          log_interaction's blanket handler, so under ``audit_required`` a
-          delivery failure raises ``AuditRequiredError`` before reaching here —
-          correct, because there is no durable row to name.
+        * ⚠ SOME EVENTS EXIST WITH NO RECEIPT. A REAL HOLE IN THIS HOOK'S
+          COVERAGE, not a wording slip. An earlier version of this docstring said
+          the hook does not fire "because there is no durable row to name", and
+          that is FALSE under ``audit_required=True``: ``dispatch.submit`` calls
+          ``spool.enqueue``, which commits to SQLite/WAL, BEFORE it starts
+          waiting. A receipt timeout therefore raises ``AuditRequiredError``
+          while the row is already durable and will be delivered on a later
+          flush. The caller is told the event failed, the event lands anyway, and
+          no receipt was ever emitted for it — an ``event_id`` that reaches the
+          ledger and that this hook can never point ``explain()`` at.
+
+          Two classes of event have no receipt, both because this call sits after
+          the submit and inside the blanket handler:
+
+            - ``audit_required=True`` and the server receipt did not arrive
+              before the deadline — spooled, delivered later, NOT reported here;
+            - anything raising between the submit returning and this call (the
+              ``hash_ok`` desktop ping is the only such call today) — likewise
+              spooled and delivered later.
+
+          A consumer that must account for every row cannot read "no receipt" as
+          "no event". Reconcile against an export, not against this hook.
         * IT RUNS WHEREVER log_interaction RUNS. ``_record_async`` calls that
           under ``asyncio.to_thread``, so in async use the callback arrives OFF
           the event loop, on a worker thread. A Qt or Tk consumer must not touch
@@ -1013,6 +1019,42 @@ class FoxyClient:
             })
         except Exception as exc:             # noqa: BLE001 — type name only
             log.debug("foxy-audit: on_event callback failed (%s)", type(exc).__name__)
+
+
+def _validate_on_event(value):
+    """Return ``value`` if it can serve as a receipt callback, else raise.
+
+    ⚠ LOUD, AND THAT IS NOT A BREACH OF THE STANDING RULE. "Telemetry must never
+    break the host app" governs the PER-EVENT path, where the alternative to
+    swallowing is losing the customer's call. This is CONFIGURATION — and a
+    mis-wired hook that only whispers at ``log.debug`` once per event is
+    indistinguishable from no hook at all, which is the exact failure a receipt
+    exists to remove. The mistake is here; so is the report.
+    """
+    if value is None:
+        return None
+    if not callable(value):
+        raise TypeError(
+            f"on_event must be callable, got {type(value).__name__}. "
+            "It is invoked with one argument: the receipt dict.")
+    # An `async def` callback is the mistake this SDK invites: its own decorators
+    # are async-aware, so reaching for one here is natural and WRONG.
+    # `_emit_receipt` calls it synchronously, so a coroutine function would
+    # return a coroutine nobody awaits — the body never runs, nothing is
+    # recorded, and the only trace is a RuntimeWarning about a coroutine never
+    # awaited, on a line the user did not write. `__call__` is checked too:
+    # `iscoroutinefunction` says False for an INSTANCE whose `__call__` is
+    # `async def`, and that shape fails identically.
+    if (inspect.iscoroutinefunction(value)
+            or inspect.iscoroutinefunction(getattr(value, "__call__", None))):
+        raise TypeError(
+            "on_event must be a synchronous callable; an `async def` callback "
+            "would never be awaited and its body would never run. Hand the "
+            "receipt to your loop yourself — e.g. "
+            "`on_event=lambda r: loop.call_soon_threadsafe(q.put_nowait, r)` — "
+            "and note that from an async call site it arrives on a worker "
+            "thread, not the event loop.")
+    return value
 
 
 def _block_message(policy: str, plan: dict) -> str:

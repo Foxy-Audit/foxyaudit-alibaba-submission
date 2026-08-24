@@ -59,11 +59,19 @@ Five things worth knowing before you wire it up:
   inline, and from an `async` call site it arrives on a worker thread rather
   than the event loop — do not touch GUI widgets from it.
 
-Two mistakes are refused at construction rather than per event, because a
-mis-wired hook that only whispers once per event is indistinguishable from no
-hook: a non-callable `on_event` raises `TypeError`, and so does an `async def`
-one — it would never be awaited, so its body would never run and nothing would
-be recorded. Hand the receipt to your loop yourself if you need one.
+Two mistakes are refused with a `TypeError`, because a mis-wired hook that only
+whispers once per event is indistinguishable from no hook: a non-callable
+`on_event`, and an `async def` one — it would never be awaited, so its body would
+never run and nothing would be recorded. Hand the receipt to your loop yourself
+if you need one. The same refusal applies to `foxy.on_event = ...` after
+construction, not only to the constructor argument.
+
+**Not every recorded event produces a receipt.** With `audit_required=True`, the
+event is written to the durable spool *before* the wait for a server receipt
+begins — so a receipt timeout raises `AuditRequiredError` while the row is
+already durable and will be uploaded on a later flush. That event reaches the
+ledger and no receipt was ever emitted for it. If you must account for every row,
+reconcile against an export rather than against this hook.
 
 ## 1.11.0 — a card number begins with an issuer
 
