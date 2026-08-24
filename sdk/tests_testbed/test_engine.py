@@ -123,19 +123,41 @@ def test_the_turn_carries_the_ruleset_that_judged_it():
 
 
 # ── SDK FINDING, pinned so it cannot quietly start working ────────────────────
-def test_the_turn_cannot_name_its_own_ledger_row():
-    """``event_id`` is empty, and that is a reported SDK gap, not an oversight.
+def test_the_turn_names_its_own_ledger_row():
+    """``event_id`` is real now, and the assertion is INVERTED rather than
+    deleted.
 
-    ``log_interaction`` mints the id internally and returns it to nobody, so a
-    consumer cannot say which row its own call produced. T4's "verify this turn"
-    needs exactly this. Pinned in both directions: if the SDK ever hands the id
-    back, this fails and T4 is unblocked -- which is the notification we want.
+    Until SDK 1.12.0 this test asserted the opposite and said so: "if the SDK
+    ever hands the id back, this fails and T4 is unblocked -- which is the
+    notification we want." ``ce491e1`` handed it back, this went red, and that
+    is what it was for. Deleting it would have thrown away the only guard on the
+    field; flipped, it now catches the id silently going empty again.
+
+    BOTH PATHS, because they are different call sites in the SDK: a blocked turn
+    is recorded by ``_emit_block`` and an allowed one by the decorator's own
+    ``log_interaction``. The first version of the receipt could easily have been
+    wired to one and not the other.
     """
-    turn = _assistant("block").ask(PHI_PROMPT)
-    assert turn.event_id == ""
+    blocked = _assistant("block").ask(PHI_PROMPT)
+    assert blocked.decision == "blocked"
+    assert blocked.event_id, "a blocked turn produces a row and must name it"
 
+    allowed = _assistant("block").ask(CLEAN_PROMPT)
+    assert allowed.event_id, "an allowed turn produces a row and must name it"
+    assert allowed.event_id != blocked.event_id,         "two turns reported the same row"
+
+
+def test_an_unshipped_turn_says_so_rather_than_looking_like_a_shipped_one():
+    """``submitted`` is the whole of honest state 1.
+
+    The testbed is keyless by default, so nothing is sent anywhere -- and the id
+    above is still REAL, because the SDK mints it whether or not the event
+    ships. Reading a non-empty ``event_id`` as "there is a row" is the mistake
+    this field exists to prevent.
+    """
     turn = _assistant("block").ask(CLEAN_PROMPT)
-    assert turn.event_id == ""
+    assert turn.event_id and turn.submitted is False
+    assert turn.as_dict()["submitted"] is False
 
 
 # ── configuration ─────────────────────────────────────────────────────────────

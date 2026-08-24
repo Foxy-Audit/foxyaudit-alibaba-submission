@@ -52,7 +52,8 @@ import sys
 
 from .core import (Assistant, DECISION_ALLOWED, DECISION_BLOCKED,
                    DECISION_BLOCKED_RESPONSE, DECISION_ERROR, DECISION_FLAGGED,
-                   DECISION_REDACTED, MODES)
+                   DECISION_REDACTED, EVIDENCE_EXPLAINED, FAMILY_ANSWERED,
+                   FAMILY_CANNOT, FAMILY_DISAGREED, MODES)
 # Private, and deliberately: they are this package's own wrapping discipline,
 # and importing them is what keeps the REPL and the scoreboard from wrapping the
 # same policy_note to two different widths in the same session -- `/probe`
@@ -355,6 +356,76 @@ def turn_lines(turn, provider_is_live=None) -> list:
     return lines
 
 
+# ── rendering the evidence ────────────────────────────────────────────────────
+#: The mark each family wears in a terminal. THREE SHAPES, not three colours:
+#: this renderer writes to a pipe as often as to a TTY, and the offline gate
+#: drives it through one. ASCII only -- `foxy explain` already died once with
+#: UnicodeEncodeError on a cp1252 console, which is the tool failing to say
+#: anything at all, and that lesson is one function away from here.
+_FAMILY_MARK = {
+    FAMILY_ANSWERED: "[ANSWERED]",
+    FAMILY_CANNOT: "[CANNOT ANSWER]",
+    FAMILY_DISAGREED: "[DISAGREED]",
+}
+
+
+def evidence_lines(evidence) -> list:
+    """One :class:`~foxy_testbed.core.Evidence`, rendered.
+
+    ⚠ THE STATUS IS PRINTED VERBATIM AND IS NEVER TRANSLATED. `explain` has
+    eight outcomes and four of them mean "I cannot answer"; collapsing them into
+    a pass and a fail would report a salt this machine could not find in the same
+    shape as a commitment that did not match. The family above is a heading, the
+    `status` line below is the answer, and the SDK's own sentence is what
+    explains it -- `ExplainResult.message` is the product here as much as the
+    data is, and rewording it would be writing a second opinion.
+    """
+    lines = ["", _rule(), "  {0}".format(evidence.headline)]
+    lines += _wrap(evidence.message, 2)
+    lines.append("")
+
+    if evidence.event_id:
+        lines += _field("event", evidence.event_id)
+    if evidence.state != EVIDENCE_EXPLAINED:
+        lines.append(_rule())
+        return lines
+
+    lines += _field("mark", _FAMILY_MARK.get(evidence.family, "[CANNOT ANSWER]"))
+    # VERBATIM. This is the value a reader can grep the SDK for.
+    lines += _field("status", evidence.status)
+    lines += _field("commitment",
+                    "verified" if evidence.commitment_verified
+                    else "not verified")
+    # ⚠ THREE-STATE, RENDERED AS THREE THINGS. `None` is not `False`: the digest
+    # check did not run at all, and saying "not verified" for both would tell a
+    # reader their ruleset registry may have been altered when in fact `explain`
+    # answered before it got that far.
+    lines += _field("ruleset", {
+        True: "definition verified against the digest the row recorded",
+        False: "DIGEST DISAGREED -- same version name, different rules",
+        None: "not checked (the check did not run for this outcome)",
+    }[evidence.ruleset_verified])
+    if evidence.ruleset_version:
+        lines += _field("version", evidence.ruleset_version)
+    if evidence.policy_tag:
+        lines += _field("policy", evidence.policy_tag)
+    lines += _field("matches", "{0} span(s)".format(evidence.match_count))
+    if evidence.matches:
+        # ⚠ THE SPANS REACH STDOUT AND NOWHERE ELSE. That is the SDK's own rule
+        # for `explain`, stated on `Match` and enforced by
+        # `ExplainResult.as_dict` defaulting to omitting the text. A terminal on
+        # the user's own machine, showing the user their own prompt, is the one
+        # place it belongs -- and `web.py` renders the COUNT alone for exactly
+        # the same reason.
+        lines.append("")
+        lines += _wrap("the spans, from the text you supplied:", 2)
+        for match in evidence.matches:
+            lines += _wrap("{0}  [{1}:{2}]  {3!r}".format(
+                match.rule_id, match.start, match.end, match.text), 4)
+    lines.append(_rule())
+    return lines
+
+
 # ── the session ───────────────────────────────────────────────────────────────
 def _provenance(provider) -> str:
     """Where the text goes, in the only two shapes this can take."""
@@ -404,6 +475,8 @@ def help_lines() -> list:
         # stale. The NAME is padded to fit `_wrap`'s hanging indent, which is
         # why it is "<mode>" here and the values live in the description.
         ("/mode <mode>", "switch the preflight mode ({0})".format(", ".join(MODES))),
+        ("/verify [file]", "trace the last turn to its ledger row; [file] is an "
+                           "export, else --export"),
         ("/quit", "leave (Ctrl-D does the same)"),
     ):
         lines += _wrap(what, 20, first="    " + name)
@@ -427,8 +500,28 @@ class Session:
     ``Assistant.with_mode``'s problem and not this class's -- see below.
     """
 
-    def __init__(self, assistant) -> None:
+    def __init__(self, assistant, export: str = "",
+                 salt_sidecar_path: str = "") -> None:
         self.assistant = assistant
+        #: Where `/verify` looks for the customer's own export, and the salt
+        #: sidecar for rows committed with a per-event salt. Session-wide,
+        #: because they are properties of the run and not of a turn.
+        self.export = export
+        self.salt_sidecar_path = salt_sidecar_path
+        #: The last turn, and the text that produced it.
+        #:
+        #: ⚠ THE PROMPT IS HELD HERE AND NOWHERE ELSE. `Turn` does not carry
+        #: it, so `/verify` needs it from the session -- `explain` recomputes
+        #: the commitment from the text the user supplies, and Foxy never had
+        #: it. One turn deep on purpose: a scrollback of every prompt typed
+        #: this session is a transcript, and this surface does not keep one.
+        self.last_turn = None
+        self.last_prompt = ""
+
+    def record(self, turn, prompt: str) -> None:
+        """Remember the turn `/verify` will act on."""
+        self.last_turn = turn
+        self.last_prompt = prompt
 
     def switch_mode(self, mode: str) -> None:
         """Rebuild the assistant under ``mode``. Raises ValueError on a typo.
@@ -481,6 +574,20 @@ def _handle_command(session, text: str, out):
         # assistant is the authority on its own sector, mode and provider, so
         # there is nothing left to pass.
         _write(out, run_probes(None, assistant=assistant).render())
+    elif name == "verify":
+        # ⚠ THE ENGINE DECIDES; THIS PRINTS. `Assistant.verify` is the only
+        # thing that touches `foxy_audit`, and `test_cli.py` asserts no name
+        # from that package appears in this file at all -- so a verdict
+        # cannot be computed here even by accident.
+        if session.last_turn is None:
+            _write_all(out, _wrap(
+                "Nothing to verify yet. Send a prompt first: /verify traces "
+                "the LAST turn to its ledger row.", 2))
+        else:
+            _write_all(out, evidence_lines(session.assistant.verify(
+                session.last_turn, session.last_prompt,
+                export=argument or session.export,
+                salt_sidecar_path=session.salt_sidecar_path)))
     elif name == "mode":
         if not argument:
             _write_all(out, _wrap("mode is {0}. /mode <{1}> to change it.".format(
@@ -501,7 +608,8 @@ def _handle_command(session, text: str, out):
     return None
 
 
-def repl(assistant, read_line=None, out=None, banner: bool = True) -> int:
+def repl(assistant, read_line=None, out=None, banner: bool = True,
+         export: str = "", salt_sidecar_path: str = "") -> int:
     """Run the session. Returns the process exit code.
 
     ALWAYS 0 ONCE THE SESSION HAS STARTED, and that is not laziness. The probe
@@ -514,7 +622,8 @@ def repl(assistant, read_line=None, out=None, banner: bool = True) -> int:
     """
     out = out or sys.stdout
     read_line = read_line or _default_reader(out)
-    session = Session(assistant)
+    session = Session(assistant, export=export,
+                      salt_sidecar_path=salt_sidecar_path)
 
     if banner:
         _write_all(out, banner_lines(assistant))
@@ -591,8 +700,11 @@ def repl(assistant, read_line=None, out=None, banner: bool = True) -> int:
         # The provider is read HERE rather than captured before the loop:
         # `/mode` replaces the assistant, and a captured flag would then be
         # describing the provider of a previous configuration.
+        # RECORDED BEFORE IT IS PRINTED, so a renderer that raised could not
+        # leave `/verify` pointing at the turn before last.
+        session.record(turn, text)
         _write_all(out, turn_lines(turn, session.assistant.provider.is_live))
 
 
-__all__ = ["COMMAND_PREFIX", "PROMPT", "Session", "banner_lines", "help_lines",
-           "repl", "turn_lines"]
+__all__ = ["COMMAND_PREFIX", "PROMPT", "Session", "banner_lines",
+           "evidence_lines", "help_lines", "repl", "turn_lines"]

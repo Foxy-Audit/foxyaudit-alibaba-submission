@@ -115,6 +115,11 @@ MAX_BODY_BYTES = MAX_PROMPT_CHARS * _WORST_JSON_BYTES_PER_CHAR + 4096
 #: The same map ``__main__`` uses, so one flag cannot mean two things.
 _KEY_ENV = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}
 
+#: `--foxy-key` with no value; and where it then reads from. Both spelled the
+#: same way as in `__main__`, so one flag means one thing on both entry points.
+_FROM_ENV = "<from FOXY_API_KEY>"
+_FOXY_KEY_ENV = "FOXY_API_KEY"
+
 
 # ── the sentences the page renders ────────────────────────────────────────────
 def _reply_status(turn) -> str:
@@ -212,13 +217,30 @@ class Testbed:
     """
 
     def __init__(self, provider: str = "mock", api_key: str = "",
-                 model: str = "", mode: str = DEFAULT_MODE) -> None:
+                 model: str = "", mode: str = DEFAULT_MODE,
+                 foxy_api_key: str = "", export: str = "",
+                 salt_sidecar_path: str = "") -> None:
         self.mode = str(mode or DEFAULT_MODE).strip().lower()
+        #: Where `/verify` reads the customer's own export, and the salt
+        #: sidecar. Properties of the RUN, given on the command line --
+        #: never asked for through the page, which would mean typing a
+        #: filesystem path into a browser that then posts it back here.
+        self.export = export
+        self.salt_sidecar_path = salt_sidecar_path
+        #: event_id -> (Turn, the Assistant that produced it).
+        #:
+        #: ⚠ THE SERVER REMEMBERS WHAT IT RECORDED; THE PAGE DOES NOT TELL
+        #: IT. `/verify` could have taken `submitted` from the request and
+        #: saved this dict -- and then a front-end would be asserting
+        #: whether a row reached a ledger, which is precisely the class of
+        #: decision no surface in this package is allowed to make. The page
+        #: sends an id and the prompt; every claim comes from here.
+        self._turns = {}
         self._assistants = {}
         for name in SECTOR_NAMES:
             self._assistants[(name, self.mode)] = Assistant(
                 name, mode=self.mode, provider=provider,
-                api_key=api_key, model=model)
+                api_key=api_key, model=model, foxy_api_key=foxy_api_key)
         # Every sector shares one provider CONFIGURATION, so any of them answers
         # for it. Read off an assistant rather than off the constructor's
         # arguments: `Assistant` resolves "" and None to real defaults, and the
@@ -233,8 +255,35 @@ class Testbed:
             self._assistants[key] = found
         return found
 
+    #: How many turns stay verifiable. A page session is short and this is a
+    #: local process, but an unbounded dict fed by a loop is still a leak.
+    #: Oldest out first, and the page is told when an id has aged out
+    #: rather than being answered as though the turn never existed.
+    MAX_REMEMBERED = 50
+
     def ask(self, sector: str, mode: str, prompt: str) -> dict:
-        return turn_payload(self.assistant(sector, mode).ask(prompt))
+        assistant = self.assistant(sector, mode)
+        turn = assistant.ask(prompt)
+        if turn.event_id:
+            self._turns[turn.event_id] = (turn, assistant)
+            while len(self._turns) > self.MAX_REMEMBERED:
+                self._turns.pop(next(iter(self._turns)))
+        return turn_payload(turn)
+
+    def verify(self, event_id: str, prompt: str) -> dict:
+        """Trace one remembered turn to its row. → a plain dict, or None.
+
+        None means this server has no such turn, which the caller reports
+        as a 404 rather than inventing an outcome for it. The DECISION is
+        `Assistant.verify`'s; this only looks the turn up.
+        """
+        found = self._turns.get(str(event_id))
+        if found is None:
+            return None
+        turn, assistant = found
+        return assistant.verify(
+            turn, prompt, export=self.export,
+            salt_sidecar_path=self.salt_sidecar_path).as_dict()
 
     def config(self, bind: str) -> dict:
         provider = self.provider
@@ -364,8 +413,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, self.testbed.config(self.bind))
         else:
             self._send_json(404, {"error": "no such route",
-                                  "detail": "this server serves /, /session "
-                                            "and /turn."})
+                                  "detail": "this server serves /, /session, "
+                                            "/turn and /verify."})
 
     def do_POST(self) -> None:                         # noqa: N802 — stdlib name
         if not self._host_ok():
@@ -378,10 +427,11 @@ class Handler(BaseHTTPRequestHandler):
                                   "detail": "another page asked your browser to "
                                             "send this. Nothing was run."})
             return
-        if self.path.split("?", 1)[0] != "/turn":
+        route = self.path.split("?", 1)[0]
+        if route not in ("/turn", "/verify"):
             self._send_json(404, {"error": "no such route",
-                                  "detail": "this server serves /, /session "
-                                            "and /turn."})
+                                  "detail": "this server serves /, /session, "
+                                            "/turn and /verify."})
             return
 
         try:
@@ -400,6 +450,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not isinstance(body, dict):
             self._send_json(400, {"error": "the body was not a JSON object"})
+            return
+
+        if route == "/verify":
+            self._do_verify(body)
             return
 
         sector = str(body.get("sector") or "")
@@ -435,6 +489,54 @@ class Handler(BaseHTTPRequestHandler):
             # never do is put a prompt somewhere the user did not put it.
             self._send_json(500, {"error": "the turn could not be run",
                                   "detail": type(exc).__name__})
+            return
+        self._send_json(200, payload)
+
+    def _do_verify(self, body: dict) -> None:
+        """Trace one turn to its ledger row.
+
+        ⚠ THE PROMPT COMES BACK UP AND NEVER GOES BACK DOWN. `explain`
+        recomputes the commitment from the text the user supplies -- Foxy never
+        had it -- so the page has to send it again. Nothing in the response
+        carries it: `Evidence.as_dict` omits the matched spans for the same
+        reason the SDK's own `ExplainResult.as_dict` does, and the access log
+        below never sees a body at all.
+        """
+        event_id = body.get("event_id")
+        prompt = body.get("prompt")
+        if not isinstance(event_id, str) or not event_id.strip():
+            self._send_json(400, {"error": "no event id",
+                                  "detail": "send the event_id of a turn this "
+                                            "server ran."})
+            return
+        if not isinstance(prompt, str) or not prompt.strip():
+            self._send_json(400, {"error": "no prompt",
+                                  "detail": "verifying replays the text you "
+                                            "sent, so it has to be sent again."})
+            return
+        if len(prompt) > MAX_PROMPT_CHARS:
+            self._send_json(413, {"error": "prompt too long",
+                                  "detail": "at most {0} characters.".format(
+                                      MAX_PROMPT_CHARS)})
+            return
+        try:
+            payload = self.testbed.verify(event_id, prompt)
+        except Exception as exc:                       # noqa: BLE001
+            # The TYPE only, exactly as /turn does: a message could carry the
+            # text the user typed, and putting a prompt somewhere the user did
+            # not put it is the one thing this server must never do.
+            self._send_json(500, {"error": "the check could not be run",
+                                  "detail": type(exc).__name__})
+            return
+        if payload is None:
+            # ⚠ NOT AN OUTCOME. This server does not know that turn -- it aged
+            # out, or came from a different run -- and answering with any
+            # `explain` status would be inventing one.
+            self._send_json(404, {
+                "error": "this server did not run that turn",
+                "detail": "only the most recent turns of THIS session can be "
+                          "traced from here. Send the prompt again and verify "
+                          "the new turn."})
             return
         self._send_json(200, payload)
 
@@ -508,6 +610,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=None,
                         help=("key for a live provider; falls back to "
                               "OPENAI_API_KEY / GEMINI_API_KEY"))
+    # ── T4: reaching a ledger, and then checking the row ──────────────────
+    # See `__main__.build_parser` for why the environment is read only when
+    # the flag is typed. One flag, one meaning, in both entry points.
+    parser.add_argument("--foxy-key", nargs="?", default=None,
+                        const=_FROM_ENV, metavar="KEY",
+                        help=("your FOXY key -- the one that makes a turn "
+                              "reach a ledger at all. Bare --foxy-key reads "
+                              "FOXY_API_KEY. Without it nothing is shipped "
+                              "anywhere (the default)"))
+    parser.add_argument("--export", default=None, metavar="FILE",
+                        help=("your own GET /v1/logs/export?format=json "
+                              "document, so the page can verify a row"))
+    parser.add_argument("--sidecar", default=None, metavar="FILE",
+                        help=("the salt sidecar the SDK wrote, for rows "
+                              "committed with a per-event salt"))
     parser.add_argument("--no-browser", action="store_true",
                         help="do not open a browser window")
     return parser
@@ -544,9 +661,30 @@ def main(argv=None) -> int:
     if api_key is None and args.provider in _KEY_ENV:
         api_key = os.getenv(_KEY_ENV[args.provider]) or None
 
+    # Refused loudly rather than degraded: a user who typed --foxy-key and
+    # got a keyless server anyway would watch every turn report "never
+    # shipped to a ledger" with no way to tell that from the offline
+    # default they were trying to leave.
+    foxy_key = args.foxy_key
+    if foxy_key == _FROM_ENV:
+        foxy_key = os.getenv(_FOXY_KEY_ENV) or ""
+        if not foxy_key:
+            print("Could not start: --foxy-key was given with no value and "
+                  "{0} is not set. Pass the key, or set that variable."
+                  .format(_FOXY_KEY_ENV), file=sys.stderr)
+            return 2
+    elif foxy_key is not None and not foxy_key.strip():
+        print("Could not start: --foxy-key was given an empty value. Omit "
+              "the flag to run offline, which is the default.",
+              file=sys.stderr)
+        return 2
+
     try:
         testbed = Testbed(provider=args.provider or "mock", api_key=api_key or "",
-                          model=args.model or "", mode=args.mode or DEFAULT_MODE)
+                          model=args.model or "", mode=args.mode or DEFAULT_MODE,
+                          foxy_api_key=foxy_key or "",
+                          export=args.export or "",
+                          salt_sidecar_path=args.sidecar or "")
     except (ProviderError, ValueError) as exc:
         print("Could not start: {0}".format(exc), file=sys.stderr)
         return 2

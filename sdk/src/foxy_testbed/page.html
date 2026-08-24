@@ -348,6 +348,49 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
   font-size:1rem;color:var(--muted);max-width:70ch;
 }
 
+/* ── the evidence panel ─────────────────────────────────────────────────────
+   The record says what the guard did; this says whether the row it produced can
+   be traced. Built from the classes already on this page -- the inset surface of
+   .reply, the grid of .fields, the ghost button of .clear -- because a second
+   visual vocabulary for the same card would read as a second product.
+
+   ⚠ THE MARK APPEARS ONLY WHEN `explain` ACTUALLY RAN. The other three states
+   are not verdicts: "no key, so no row" is the default configuration, not a
+   finding. Giving them a coloured pill would put four outcomes on the same
+   footing as the eight the SDK computes, and a reader would have no way to tell
+   which of them a tool had decided. Colour here means a replay happened. */
+.ev-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:16px}
+.ev-hint{font-size:.875rem;color:var(--muted)}
+.evidence{
+  margin-top:16px;padding:14px 16px;
+  background:var(--surf2);border:1px solid var(--line);border-radius:8px;
+}
+.ev-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+/* Same fill/ink pair as .mark, one step smaller: it is a verdict about the
+   record, not the record's own verdict, and outranking the word above it would
+   invert the hierarchy. */
+.ev-mark{
+  display:inline-block;padding:3px 9px;border-radius:6px;
+  background:var(--st-flagged);color:var(--on-status);
+  font-size:.875rem;font-weight:700;
+}
+.evidence[data-family="answered"]  .ev-mark{background:var(--st-allowed)}
+.evidence[data-family="cannot"]    .ev-mark{background:var(--st-flagged)}
+.evidence[data-family="disagreed"] .ev-mark{background:var(--st-fault)}
+.ev-title{font-weight:650}
+.ev-note{margin-top:8px;font-size:1rem;color:var(--muted);max-width:70ch}
+.ev-fields{
+  display:grid;grid-template-columns:minmax(96px,auto) minmax(0,1fr);
+  gap:7px 16px;margin-top:14px;padding-top:14px;
+  border-top:1px solid var(--line);font-size:.875rem;
+}
+.ev-fields dt{color:var(--muted)}
+.ev-fields dd{margin:0;word-break:break-word}
+.ev-fields dd.data{font-family:var(--mono);font-size:.875rem}
+/* The digest DISAGREED: same version name, different rules. The one evidence
+   line that must not read like an ordinary field. */
+.ev-fields dt.loud,.ev-fields dd.loud{color:var(--st-fault);font-weight:600}
+
 .empty{
   border:1px dashed var(--ctl);border-radius:var(--r);
   padding:26px 20px;color:var(--muted);max-width:66ch;
@@ -381,6 +424,7 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
      sector -- in the one mode nobody looks at. A fix explained in a comment is
      not a fix applied everywhere it belongs. */
   .mark,.sector > span,.probe,.record,.panel,.reply,.nothing,.empty{border:1px solid}
+  .ev-mark,.evidence{border:1px solid}
   .send,.ghost,select,textarea{border:1px solid}
 
   /* ⚠ THE CHOSEN SECTOR WAS INVISIBLE HERE, AND EVERY SIGNAL IT USED IS ONE
@@ -548,6 +592,11 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
       <div class="reply-body"></div>
     </div>
     <p class="nothing hidden"></p>
+    <div class="ev-actions">
+      <button class="ghost ev-run" type="button">Verify this turn</button>
+      <span class="ev-hint"></span>
+    </div>
+    <div class="evidence hidden" aria-live="polite"></div>
   </article>
 </template>
 
@@ -672,8 +721,117 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
     }
   }
 
+  // ── the evidence panel ────────────────────────────────────────────────────
+  // WHAT THIS FILE DECIDES ABOUT A VERIFY RESULT: nothing. `status` is printed
+  // exactly as the SDK produced it, `message` is the SDK's own sentence, and
+  // `family` -- which of three marks it wears -- is computed in core.py from a
+  // map a Python test asserts covers every entry of `introspect.STATUSES`.
+  // Eight outcomes, four of which mean "I cannot answer"; a JavaScript shortcut
+  // turning them into a tick and a cross would report a salt this machine could
+  // not find in the same shape as a commitment that did not match.
+  //
+  // ⚠ NO SPAN TEXT ARRIVES HERE AND NONE IS ASKED FOR. `Evidence.as_dict` omits
+  // the matched spans -- they are the user's own prompt, and the SDK's rule is
+  // that they reach stdout and nowhere else. The count is what this page can say
+  // honestly; `foxy_testbed.cli` is where the spans themselves are shown.
+  var RULESET_WORDS = {
+    "true": "definition verified against the digest the row recorded",
+    "false": "DIGEST DISAGREED, same version name and different rules",
+    "null": "not checked (the check did not run for this outcome)"
+  };
+
+  function renderEvidence(host, evidence) {
+    host.textContent = "";
+    host.setAttribute("data-family", evidence.family || "");
+    host.setAttribute("data-state", evidence.state || "");
+
+    var head = el("div", "ev-head");
+    // The mark appears only where a replay actually happened -- see the CSS.
+    if (evidence.state === "explained") {
+      head.appendChild(el("span", "ev-mark", evidence.status));
+    }
+    head.appendChild(el("span", "ev-title", evidence.headline));
+    host.appendChild(head);
+    host.appendChild(el("p", "ev-note", evidence.message));
+
+    if (evidence.state !== "explained") {
+      show(host, true);
+      return;
+    }
+
+    var list = el("dl", "ev-fields");
+    // VERBATIM, and first: the value a reader can grep the SDK for.
+    addField(list, "status", evidence.status, { data: true });
+    addField(list, "commitment", evidence.commitment_verified
+      ? "verified" : "not verified");
+    // THREE-STATE, KEYED THROUGH A STRING so that `false` and `null` cannot
+    // collapse into one another the way they would in any truthiness test --
+    // the exact mistake the SDK made this field three-state to prevent.
+    addField(list, "ruleset", RULESET_WORDS[String(evidence.ruleset_verified)],
+      { loud: evidence.ruleset_verified === false });
+    if (evidence.ruleset_version) {
+      addField(list, "version", evidence.ruleset_version, { data: true });
+    }
+    if (evidence.policy_tag) {
+      addField(list, "policy", evidence.policy_tag, { data: true });
+    }
+    addField(list, "matches", evidence.match_count + " span(s)", { data: true });
+    host.appendChild(list);
+    show(host, true);
+  }
+
+  function wireVerify(node, turn, prompt) {
+    var button = node.querySelector(".ev-run");
+    var hint = node.querySelector(".ev-hint");
+    var host = node.querySelector(".evidence");
+    // ⚠ NO event_id, NO CONTROL. The SDK emitted no receipt for this turn, so
+    // there is nothing to look up -- and a button that reports the same refusal
+    // every time it is pressed is worse than one sentence saying it once.
+    if (!turn.event_id) {
+      button.parentNode.removeChild(button);
+      hint.textContent = "No receipt for this turn, so it cannot be traced from "
+        + "here. That is not the same as there being no row.";
+      return;
+    }
+    hint.textContent = "row " + turn.event_id;
+    button.addEventListener("click", function () {
+      if (button.disabled) { return; }
+      button.disabled = true;
+      button.textContent = "Checking…";
+      fetch("/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // The prompt goes back UP because `explain` recomputes the commitment
+        // from the text the caller supplies -- Foxy never had it. It never comes
+        // back DOWN: no response this server sends carries a prompt.
+        body: JSON.stringify({ event_id: turn.event_id, prompt: prompt })
+      }).then(function (response) {
+        return response.json().then(function (payload) {
+          if (!response.ok) {
+            throw new Error(payload.detail || payload.error
+              || "the server refused it.");
+          }
+          return payload;
+        });
+      }).then(function (evidence) {
+        renderEvidence(host, evidence);
+      }).catch(function (err) {
+        // A failed CHECK is not a failed row, and saying so is the whole job of
+        // this branch: anything shorter reads as a verdict about the evidence.
+        renderEvidence(host, {
+          state: "unavailable", family: "", headline: "THE CHECK DID NOT RUN",
+          message: err.message + " Nothing was concluded about this turn or its "
+            + "row; the check itself did not complete."
+        });
+      }).then(function () {
+        button.disabled = false;
+        button.textContent = "Verify this turn";
+      });
+    });
+  }
+
   // ── one record ────────────────────────────────────────────────────────────
-  function renderTurn(turn) {
+  function renderTurn(turn, prompt) {
     var node = $("tpl-record").content.cloneNode(true);
     var article = node.querySelector(".record");
     article.setAttribute("data-family", familyOf(turn));
@@ -703,6 +861,10 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
       show(nothing, true);
       nothing.textContent = turn.reply_status;
     }
+
+    // The prompt is handed to the closure and kept nowhere else: this page
+    // builds no transcript of what was typed, and `state` holds none.
+    wireVerify(node, turn, prompt);
 
     var stream = $("stream");
     // NEWEST FIRST, which is not the chat convention and is deliberate: you type
@@ -855,7 +1017,7 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
         return payload;
       });
     }).then(function (turn) {
-      renderTurn(turn);
+      renderTurn(turn, text);
       $("prompt").value = "";
     }).catch(function (err) {
       // Errors name the problem and the recovery. A turn that failed here proved

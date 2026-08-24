@@ -7,11 +7,20 @@ record; none of them holds any policy logic, and neither does this module.
 
 THE TESTBED IS A CONSUMER OF THE SDK
 ====================================
-Nothing here reaches into ``foxy_audit``'s internals. It uses exactly three
-pieces of public API — ``FoxyClient.audit``, ``check``, and the two block
-exceptions — which is the same surface a customer has. Where that surface turns
-out not to reach something the plan asked for, this module records the gap in a
-comment marked ``SDK FINDING`` and works within the API rather than around it.
+Nothing here reaches into ``foxy_audit``'s internals. It uses the package's
+public API and nothing else — ``FoxyClient.audit``, ``FoxyClient(on_event=…)``,
+``check``, ``explain`` and the two block exceptions — which is the same surface
+a customer has. Where that surface turns out not to reach something the plan
+asked for, this module records the gap in a comment marked ``SDK FINDING`` and
+works within the API rather than around it.
+
+⚠ ONE SUCH GAP IS NOW CLOSED, AND IT IS WORTH KNOWING WHY IT WAS THERE. Until
+SDK 1.12.0 (``ce491e1``) the decorator returned the wrapped function's response
+and nothing else, so a consumer could not name the ledger row its own call had
+just produced — ``Turn.event_id`` was a real field left honestly empty, because
+a fabricated event id in an audit product is the worst possible placeholder.
+``FoxyClient(on_event=…)`` hands back a content-blind receipt built from the
+payload that was actually written, and :meth:`Assistant.ask` reads the id off it.
 
 WHAT THE GUARD ACTUALLY SEES
 ============================
@@ -39,7 +48,8 @@ import re
 import time
 from dataclasses import dataclass
 
-from foxy_audit import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked, check
+from foxy_audit import (FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked,
+                        check, explain)
 
 from . import providers as _providers
 from .sectors import Sector, get_sector
@@ -200,13 +210,37 @@ class Turn:
     ruleset_version: str = ""
     ruleset_hash: str = ""
 
-    # ⚠ SDK FINDING — ALWAYS EMPTY TODAY. See the report and the note in
-    # `Assistant.ask`. The SDK mints an event_id inside `log_interaction` and
-    # returns it to nobody, so a consumer cannot name the ledger row its own
-    # call produced. T4's "verify this turn" needs exactly this. Left as a real
-    # field, honestly empty, rather than filled with an id we invented: a
-    # fabricated event id in an audit product is the worst possible placeholder.
+    #: The id of the ledger row this turn produced, off the SDK's own receipt.
+    #:
+    #: ⚠ THIS FIELD WAS EMPTY BY NECESSITY UNTIL SDK 1.12.0. Where these lines
+    #: stand there was an ``SDK FINDING`` comment recording that
+    #: ``log_interaction`` minted an event id and returned it to nobody, so a
+    #: consumer of the SDK — which is exactly what this package is — could not
+    #: name the row its own call had just written. ``ce491e1`` closed it with
+    #: ``FoxyClient(on_event=…)``; see :meth:`Assistant._receipt`.
+    #:
+    #: STILL EMPTY IN ONE HONEST CASE, and it is not the same as ``submitted``
+    #: being False: no receipt arrived at all. The SDK documents one class of
+    #: event with no receipt (``audit_required=True`` and the server receipt
+    #: missed its deadline — the row IS durable and will be delivered later).
+    #: An empty id therefore means "this turn cannot be traced from here", which
+    #: is a different sentence from "there is no row", and the surfaces say so.
     event_id: str = ""
+    #: Was the event durably enqueued and handed to the dispatcher?
+    #:
+    #: ⚠ ``submitted``, NOT ``delivered``, AND THE SDK CHOSE THAT WORD ON
+    #: PURPOSE. Under the default ``audit_required=False`` the dispatcher writes
+    #: the local spool and returns, saying nothing about the backend — with a
+    #: revoked key every POST 401s and retries while the event sits in the
+    #: spool, and a field called ``delivered`` would have read True throughout.
+    #: Carried here under the SDK's own name rather than renamed, because a
+    #: surface that calls it "delivered" re-introduces the claim the SDK
+    #: deliberately refused to make.
+    #:
+    #: False is the DEFAULT CONFIGURATION, not a failure: the testbed builds a
+    #: keyless client, so nothing is submitted and there is no row to verify.
+    #: That is honest state 1, and it is readable straight off this field.
+    submitted: bool = False
 
     latency_ms: float = 0.0
     #: The exception type and its message from a provider that RAISED, never a
@@ -424,7 +458,147 @@ class Turn:
                 "blocked_reason": self.blocked_reason,
                 "ruleset_version": self.ruleset_version,
                 "ruleset_hash": self.ruleset_hash, "event_id": self.event_id,
+                # Carried so a JSON surface can reach honest state 1 without
+                # re-deriving it from the absence of something else.
+                "submitted": self.submitted,
                 "latency_ms": round(self.latency_ms, 1), "error": self.error}
+
+
+# ── the evidence states ───────────────────────────────────────────────────────
+# Three honest states, and one the plan did not know it needed. Each names a
+# DIFFERENT missing thing, and collapsing any two would report the wrong fix.
+#: No receipt reached the caller, so there is no id to look up. NOT "no row".
+EVIDENCE_NO_RECEIPT = "no_receipt"
+#: The default. `submitted=False` — no Foxy key, so nothing was ever shipped.
+EVIDENCE_NO_LEDGER = "no_ledger"
+#: The row exists; `explain` needs the customer's own export document.
+EVIDENCE_NO_EXPORT = "no_export"
+#: `explain` ran. `Evidence.status` then carries its verdict VERBATIM.
+EVIDENCE_EXPLAINED = "explained"
+
+EVIDENCE_STATES = (EVIDENCE_NO_RECEIPT, EVIDENCE_NO_LEDGER, EVIDENCE_NO_EXPORT,
+                   EVIDENCE_EXPLAINED)
+
+# ── which family an explain status belongs to ─────────────────────────────────
+# ⚠ THREE FAMILIES FOR EIGHT STATUSES, AND THE SPLIT IS THE SDK'S OWN. Its
+# `introspect.STATUSES` docstring says "Four of them are 'I cannot'", and those
+# four are exactly the ones below: a tool that cannot answer has not failed the
+# row. `salt_unavailable`'s own message spells the rule out — "this is not a
+# mismatch and not a pass".
+#
+# ⚠ THE FAMILY IS A COLOUR, NEVER THE ANSWER. Every surface prints
+# `Evidence.status` verbatim beside the mark, because eight outcomes rendered as
+# three colours would be exactly the tick-and-cross collapse this phase exists to
+# refuse. The family only decides which of the page's four existing status tokens
+# the mark wears.
+#
+# ⚠ AND AN UNKNOWN STATUS FALLS TO "CANNOT", NOT TO "ANSWERED". A future SDK
+# adding an outcome this map has never seen must not render green. The default is
+# the understating direction, the verbatim word still prints, and
+# `test_engine.py` asserts this map covers every entry of `introspect.STATUSES`
+# so the day it stops being complete is a red test rather than a quiet miscolour.
+FAMILY_ANSWERED = "answered"
+FAMILY_CANNOT = "cannot"
+FAMILY_DISAGREED = "disagreed"
+
+EXPLAIN_FAMILIES = {
+    # the replay ran and produced an answer
+    "explained": FAMILY_ANSWERED,
+    "no_matches": FAMILY_ANSWERED,
+    # the check ran and DISAGREED
+    "hash_mismatch": FAMILY_DISAGREED,
+    "ruleset_mismatch": FAMILY_DISAGREED,
+    # the four the SDK calls "I cannot"
+    "row_not_found": FAMILY_CANNOT,
+    "salt_unavailable": FAMILY_CANNOT,
+    "unknown_ruleset": FAMILY_CANNOT,
+    "predates_provenance": FAMILY_CANNOT,
+}
+
+
+def family_of_status(status: str) -> str:
+    """Which mark an explain status wears. Unknown → ``cannot``."""
+    return EXPLAIN_FAMILIES.get(str(status), FAMILY_CANNOT)
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """What tracing one turn to its ledger row found. The record all three
+    surfaces render, exactly as :class:`Turn` is for the turn itself.
+
+    ⚠ ``status`` IS THE SDK's WORD AND IS NEVER TRANSLATED. `explain` has eight
+    outcomes and four of them mean "I cannot answer"; a surface that mapped them
+    onto a tick and a cross would report a salt it could not find in the same
+    shape as a commitment that did not match. The mark is a colour; the word is
+    the answer.
+    """
+
+    state: str
+    headline: str
+    message: str
+    event_id: str = ""
+    #: ``ExplainResult.status``, verbatim, and empty in the three states where
+    #: ``explain`` was never called.
+    status: str = ""
+    policy_tag: str = ""
+    ruleset_version: str = ""
+    commitment_verified: bool = False
+    #: ⚠ THREE-STATE, AND ``None`` IS NOT ``False``. True — the digest ran and
+    #: agreed. False — it ran and DISAGREED, which the SDK only ever pairs with
+    #: `ruleset_mismatch`. None — IT DID NOT RUN. Collapsing the last two tells a
+    #: reader their registry may have been tampered with when in fact they simply
+    #: supplied the wrong prompt.
+    ruleset_verified: bool = None
+    #: How many spans the replay matched. ⚠ THE COUNT, NEVER THE SPANS: a span is
+    #: the user's own text, and the SDK's rule is that it reaches stdout and
+    #: nowhere else. `ExplainResult.as_dict()` defaults to omitting it for the
+    #: same reason; `matches` below carries the objects for a stdout renderer and
+    #: `as_dict` here drops their text exactly as the SDK's does.
+    match_count: int = 0
+    matches: tuple = ()
+
+    @property
+    def family(self) -> str:
+        """Which mark this wears. Only meaningful once `explain` has run."""
+        return family_of_status(self.status)
+
+    @classmethod
+    def from_explain(cls, result) -> "Evidence":
+        """Wrap an :class:`~foxy_audit.ExplainResult`. Carries its own words."""
+        return cls(
+            state=EVIDENCE_EXPLAINED,
+            # THE STATUS IS THE HEADLINE. Upper-cased for the mark and not
+            # reworded: `row_not_found` reads as `ROW_NOT_FOUND`, which is the
+            # value a reader can grep the SDK for.
+            headline=str(result.status).upper(),
+            message=result.message,
+            event_id=result.event_id,
+            status=result.status,
+            policy_tag=result.policy_tag,
+            ruleset_version=result.ruleset_version,
+            commitment_verified=result.commitment_verified,
+            ruleset_verified=result.ruleset_verified,
+            match_count=len(result.matches),
+            matches=tuple(result.matches))
+
+    def as_dict(self) -> dict:
+        """A plain dict for a surface to render or serialise.
+
+        ⚠ NO SPAN TEXT, EVER. `matches` is deliberately absent rather than
+        included-without-text: the count is what a page can say honestly, the
+        offsets say nothing without the text, and the SDK's own
+        `ExplainResult.as_dict` is default-safe for exactly this reason. A guard
+        feeds a prompt full of PHI through a real verify and asserts no substring
+        of it appears anywhere in this dict.
+        """
+        return {"state": self.state, "headline": self.headline,
+                "message": self.message, "event_id": self.event_id,
+                "status": self.status, "family": self.family,
+                "policy_tag": self.policy_tag,
+                "ruleset_version": self.ruleset_version,
+                "commitment_verified": self.commitment_verified,
+                "ruleset_verified": self.ruleset_verified,
+                "match_count": self.match_count}
 
 
 class Assistant:
@@ -438,7 +612,7 @@ class Assistant:
 
     def __init__(self, sector, mode: str = DEFAULT_MODE, provider="mock",
                  api_key: str = "", model: str = "", client=None,
-                 desktop_ping: bool = False) -> None:
+                 desktop_ping: bool = False, foxy_api_key: str = "") -> None:
         self.sector = sector if isinstance(sector, Sector) else get_sector(sector)
 
         resolved_mode = str(mode or DEFAULT_MODE).strip().lower()
@@ -462,8 +636,35 @@ class Assistant:
         # shared ~/.foxy-audit spool — which would make an offline probe run
         # depend on whose laptop it is. A caller who genuinely wants a keyed
         # client passes one in as `client`.
+        # ⚠ TWO DIFFERENT KEYS, AND CONFLATING THEM WOULD BE THE WORST KIND OF
+        # BUG HERE. `api_key` above is the PROVIDER's (OpenAI, Google) and buys
+        # model output. `foxy_api_key` is the FOXY key and is the only thing
+        # that makes a turn reach a ledger at all. Until T4 only the first
+        # existed on any surface, so nothing the testbed ever ran had written a
+        # row — which is why "no ledger" is the DEFAULT honest state and not an
+        # error. Empty stays empty: `FoxyConfig.resolve` falls back to
+        # $FOXY_API_KEY, so a bare FoxyClient() on a developer's machine picks
+        # up their real key, registers org policy and starts writing the shared
+        # ~/.foxy-audit spool — which would make an offline probe run depend on
+        # whose laptop it is.
         self._client = client if client is not None else FoxyClient(
-            api_key="", desktop_ping=desktop_ping)
+            api_key=foxy_api_key or "", desktop_ping=desktop_ping)
+
+        #: Receipts the SDK emitted during the turn in flight. See `_receipt`.
+        self._receipts: list = []
+        # ⚠ SET ON THE CLIENT, AND RE-SET ON EVERY REBUILD. `with_mode` hands
+        # the SAME client to a new Assistant, so without this line the hook
+        # would still point at the DISCARDED instance and every turn after a
+        # `/mode` switch would append to a list nobody reads — `event_id` empty,
+        # and the surface would report "cannot be traced" for a turn that was
+        # traced perfectly well. Assigned rather than passed to the constructor
+        # because the caller-supplied `client` path has no constructor to reach.
+        #
+        # THE TESTBED OWNS THIS HOOK. A caller passing their own client with
+        # their own `on_event` has it replaced, not chained: chaining across
+        # `with_mode` would grow one link per mode switch, and each link is a
+        # dead Assistant kept alive by the client that outlives it.
+        self._client.on_event = self._receipt
 
         self._reached = False
         self._delivered = None
@@ -495,9 +696,117 @@ class Assistant:
         provider and the already-built client makes all three unreachable, by
         construction. If a parameter is ever added, ``test_cli.py`` fails on the
         signature rather than on a symptom six months later.
+
+        ⚠ ``foxy_api_key`` IS THE FOURTH SUCH PARAMETER and needs no line here
+        for the same reason: it feeds the ``FoxyClient`` constructor ONLY, and
+        the client is handed over already built. What the rebuild DOES have to
+        do is re-point the receipt hook at the new instance, and that happens in
+        ``__init__`` — see the assignment there for what breaks without it.
         """
         return Assistant(self.sector, mode=mode, provider=self.provider,
                          client=self._client)
+
+    def _receipt(self, receipt: dict) -> None:
+        """The SDK handing back the row it just wrote. CONTENT-BLIND.
+
+        ``FoxyClient(on_event=…)``, shipped in 1.12.0 (``ce491e1``) for exactly
+        this. The receipt is built from the payload the wire actually carries, so
+        every value in it is a commitment or a label and none of it is text.
+
+        APPENDS RATHER THAN ASSIGNS, and :meth:`ask` reads the LAST one. Exactly
+        one fires per turn on the path this package uses — the synchronous
+        decorator emits one ``log_interaction`` per call on every branch (block,
+        response-block, exception, ordinary) — so today "last" and "only" are the
+        same receipt. It is written as a list because if that ever stops being
+        true the terminal outcome is the one a reader is asking about, and
+        silently keeping the FIRST would name a row that was superseded.
+
+        ⚠ ONE CLASS OF EVENT ARRIVES HERE NEVER, and the SDK says so in
+        ``_emit_receipt``: under ``audit_required=True`` a server receipt that
+        misses its deadline raises ``AuditRequiredError`` while the row is
+        already durable in the spool. The turn then carries no ``event_id`` and
+        the surfaces report that it cannot be traced from here — which is true,
+        and is not the same claim as "there is no row".
+        """
+        self._receipts.append(dict(receipt or {}))
+
+    def verify(self, turn, prompt, export=None, commitment_key: str = "",
+               salt_sidecar_path: str = "") -> "Evidence":
+        """Trace one turn to its ledger row. THE VERIFY CALL LIVES HERE.
+
+        Not in ``cli.py`` and not in ``web.py``: both are asserted by their own
+        tests to contain no name from ``foxy_audit`` at all, so neither could run
+        this even by accident. They render what this returns.
+
+        ⚠ THE PROMPT IS THE ONE THE USER TYPED, not the one the provider
+        received. Every branch of ``_evaluate_preflight`` commits
+        ``hash_prompt=prompt`` — the ORIGINAL — so a redacted turn's row commits
+        the text before redaction, and replaying the delivered text against it
+        would report ``hash_mismatch`` on a perfectly intact row.
+
+        ⚠ AND THE TURN DOES NOT CARRY IT, SO THE CALLER PASSES IT BACK IN.
+        That is what keeps the prompt travelling in ONE direction: the page
+        posts it, the server never sends it back, and no payload this package
+        emits can contain text the user typed. Putting it on the record would
+        have been simpler and would have put it in every ``as_dict``.
+
+        Defaults are read off the client's own resolved config rather than asked
+        for again: the commitment key and the salt sidecar are SDK settings, and
+        a surface that prompted for them separately would be a second place for
+        them to disagree with the client that wrote the row.
+        """
+        if not turn.event_id:
+            return Evidence(
+                state=EVIDENCE_NO_RECEIPT, event_id="",
+                headline="NOT TRACEABLE FROM HERE",
+                message=(
+                    "The SDK emitted no receipt for this turn, so there is no "
+                    "event id to look up. That is not the same as there being no "
+                    "row: under audit_required the event can be durable in the "
+                    "local spool and delivered later while the receipt missed "
+                    "its deadline. Reconcile against an export, not against this "
+                    "surface."))
+        if not turn.submitted:
+            return Evidence(
+                state=EVIDENCE_NO_LEDGER, event_id=turn.event_id,
+                headline="NEVER SHIPPED TO A LEDGER",
+                message=(
+                    "This turn was decided locally and nothing was sent "
+                    "anywhere, so there is no row to verify. The guard is the "
+                    "same one a keyed client runs; what is missing is a Foxy "
+                    "key, not a check. Start the testbed with --foxy-key "
+                    "<your key> (or FOXY_API_KEY) and the turns after it will "
+                    "write rows you can trace."))
+        if not export:
+            return Evidence(
+                state=EVIDENCE_NO_EXPORT, event_id=turn.event_id,
+                headline="SHIPPED - EXPORT NEEDED TO CHECK IT",
+                message=(
+                    "Row {0} exists. Verifying it replays the row against the "
+                    "ruleset it names, which needs your own export of the "
+                    "ledger: download GET /v1/logs/export?format=json and start "
+                    "the testbed with --export <that file>. Foxy never had your "
+                    "prompt, so the replay happens here, on your machine, "
+                    "against text you supply.".format(turn.event_id)))
+
+        key = commitment_key or self._client.cfg.commitment_key
+        sidecar = salt_sidecar_path or self._client.cfg.salt_sidecar_path
+        try:
+            result = explain(prompt, turn.event_id, export, key,
+                             salt_sidecar_path=sidecar)
+        except (OSError, ValueError) as exc:
+            # ⚠ THE TYPE ONLY. `explain` opens a path the user named and parses
+            # it; a decoder error can carry a fragment of the document, and this
+            # message is rendered on a page and printed to a terminal.
+            return Evidence(
+                state=EVIDENCE_NO_EXPORT, event_id=turn.event_id,
+                headline="THE EXPORT COULD NOT BE READ",
+                message=(
+                    "Row {0} exists, but the export could not be opened or "
+                    "parsed ({1}). Point --export at a file downloaded from "
+                    "GET /v1/logs/export?format=json.".format(
+                        turn.event_id, type(exc).__name__)))
+        return Evidence.from_explain(result)
 
     # THE OBSERVATION POINT. This is the only place in the package that sees
     # what the provider was actually handed, which is why both of the
@@ -530,6 +839,9 @@ class Assistant:
 
         self._reached = False
         self._delivered = None
+        # CLEARED PER TURN, not appended to for the life of the session: the
+        # id this turn is asking about is the one this turn produced.
+        self._receipts = []
         started = time.perf_counter()
         reply, error = "", ""
         empty_reply = False
@@ -585,6 +897,9 @@ class Assistant:
         #
         # Skipped entirely when nothing was delivered: no text, no findings, and
         # `rules_removed` correctly becomes everything that fired.
+        # The SDK's receipt for this turn. See `_receipt` on why the LAST.
+        receipt = self._receipts[-1] if self._receipts else None
+
         rules_delivered = ()
         if self._reached:
             rules_delivered = tuple(
@@ -614,7 +929,13 @@ class Assistant:
             blocked_reason=pre.reason,
             ruleset_version=pre.ruleset_version,
             ruleset_hash=pre.ruleset_hash,
-            event_id="",          # see the field's comment, and the SDK finding
+            # ⚠ OFF THE RECEIPT THE SDK ACTUALLY EMITTED, never re-derived.
+            # `_receipt` records what `log_interaction` wrote; reading it here
+            # means the id names the row this turn produced and not a row we
+            # believe it produced. Empty when no receipt arrived — see the
+            # field, and `_receipt` for the one case where that happens.
+            event_id=str(receipt.get("event_id") or "") if receipt else "",
+            submitted=bool(receipt.get("submitted")) if receipt else False,
             latency_ms=elapsed_ms,
             error=error,
         )
@@ -622,5 +943,8 @@ class Assistant:
 
 __all__ = ["Assistant", "DECISIONS", "DECISION_ALLOWED", "DECISION_BLOCKED",
            "DECISION_BLOCKED_RESPONSE", "DECISION_ERROR", "DECISION_FLAGGED",
-           "DECISION_REDACTED", "DEFAULT_MODE", "MODES", "PROVIDER_FAULTS",
-           "Turn"]
+           "DECISION_REDACTED", "DEFAULT_MODE", "EVIDENCE_EXPLAINED",
+           "EVIDENCE_NO_EXPORT", "EVIDENCE_NO_LEDGER", "EVIDENCE_NO_RECEIPT",
+           "EVIDENCE_STATES", "EXPLAIN_FAMILIES", "Evidence", "FAMILY_ANSWERED",
+           "FAMILY_CANNOT", "FAMILY_DISAGREED", "MODES", "PROVIDER_FAULTS",
+           "Turn", "family_of_status"]

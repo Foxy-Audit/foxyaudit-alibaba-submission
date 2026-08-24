@@ -41,6 +41,16 @@ from .sectors import SECTOR_NAMES
 #: Where each live provider's key is read from when --api-key is not given.
 _KEY_ENV = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}
 
+#: `--foxy-key` with no value. A sentinel and not "" so that "the user asked
+#: for the environment and it was empty" stays distinguishable from "the user
+#: passed an empty string", which are different mistakes and get different
+#: messages.
+_FROM_ENV = "<from FOXY_API_KEY>"
+
+#: Where the Foxy key is read from when `--foxy-key` is given with no value.
+#: The same variable `FoxyConfig.resolve` reads, so one name means one thing.
+_FOXY_KEY_ENV = "FOXY_API_KEY"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -75,8 +85,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None,
                         help="override the provider's default model id")
     parser.add_argument("--api-key", default=None,
-                        help=("key for a live provider; falls back to "
+                        help=("key for a live PROVIDER; falls back to "
                               "OPENAI_API_KEY / GEMINI_API_KEY"))
+
+    # ── T4: reaching a ledger, and then checking the row ──────────────
+    # ⚠ A DIFFERENT KEY FROM --api-key, AND THE HELP SAYS SO IN THE FIRST
+    # FOUR WORDS. Until T4 the only key any surface took was the
+    # provider's, so no turn this testbed ever ran had written a ledger
+    # row -- which is why "never shipped to a ledger" is the DEFAULT
+    # state of the verify control and not an error.
+    #
+    # ⚠ `nargs="?"` SO THE FLAG CAN CARRY THE KEY OR NAME THE ENVIRONMENT,
+    # and `default=None` so its ABSENCE still means keyless. The
+    # environment is read only when the user typed the flag: `FoxyConfig`
+    # would happily fall back to $FOXY_API_KEY on its own, and a probe run
+    # that silently started writing to whoever's ledger the machine
+    # happens to be configured for is the one thing the keyless default
+    # exists to prevent. Opt-in, never inherited.
+    parser.add_argument("--foxy-key", nargs="?", default=None,
+                        const=_FROM_ENV, metavar="KEY",
+                        help=("your FOXY key -- the one that makes a turn "
+                              "reach a ledger at all. Bare --foxy-key "
+                              "reads FOXY_API_KEY. Without it nothing is "
+                              "shipped anywhere (the default)"))
+    parser.add_argument("--export", default=None, metavar="FILE",
+                        help=("your own GET /v1/logs/export?format=json "
+                              "document, so /verify can replay a row"))
+    parser.add_argument("--sidecar", default=None, metavar="FILE",
+                        help=("the salt sidecar the SDK wrote, for rows "
+                              "committed with a per-event salt"))
     return parser
 
 
@@ -93,6 +130,23 @@ def main(argv=None) -> int:
     if api_key is None and args.provider in _KEY_ENV:
         api_key = os.getenv(_KEY_ENV[args.provider]) or None
 
+    # ⚠ RESOLVED BEFORE EITHER BRANCH, and refused loudly rather than degraded.
+    # A user who typed --foxy-key and got a keyless session anyway would watch
+    # every turn report "never shipped to a ledger" and have no way to tell that
+    # from the offline default they were trying to leave.
+    foxy_key = args.foxy_key
+    if foxy_key == _FROM_ENV:
+        foxy_key = os.getenv(_FOXY_KEY_ENV) or ""
+        if not foxy_key:
+            print("Could not start: --foxy-key was given with no value and "
+                  "{0} is not set. Pass the key, or set that variable."
+                  .format(_FOXY_KEY_ENV), file=sys.stderr)
+            return 2
+    elif foxy_key is not None and not foxy_key.strip():
+        print("Could not start: --foxy-key was given an empty value. Omit the "
+              "flag to run offline, which is the default.", file=sys.stderr)
+        return 2
+
     if args.probe is None:
         # ⚠ ONE ASSISTANT, BUILT HERE, HELD FOR THE SESSION. Every argument
         # arrives as None when the user did not type it, and `Assistant` already
@@ -105,11 +159,17 @@ def main(argv=None) -> int:
         try:
             assistant = Assistant(args.sector, mode=args.mode,
                                   provider=args.provider, api_key=api_key,
-                                  model=args.model)
+                                  model=args.model,
+                                  foxy_api_key=foxy_key or "")
         except (ProviderError, ValueError) as exc:
             print("Could not start: {0}".format(exc), file=sys.stderr)
             return 2
-        return repl(assistant)
+        # The verify inputs travel WITH the session rather than being asked for
+        # at `/verify` time: they are properties of this run, and a REPL that
+        # prompted for a file path mid-session would be asking the user to type
+        # a path into the same box that sends prompts to a guard.
+        return repl(assistant, export=args.export or "",
+                    salt_sidecar_path=args.sidecar or "")
 
     try:
         board = run_probes(args.sector, mode=args.mode, provider=args.provider,

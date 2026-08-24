@@ -721,20 +721,48 @@ def test_with_mode_carries_every_constructor_argument_that_can_matter():
     trusted.
 
     ``with_mode`` passes sector, mode, provider and client, and argues that the
-    remaining three (``api_key``, ``model``, ``desktop_ping``) are unreachable
-    because each feeds only something already being handed over built. That
-    argument is true of TODAY's signature and says nothing about tomorrow's --
-    so an eighth parameter fails here, naming the decision to make, rather than
-    being dropped in silence the way ``client`` was.
+    remaining four (``api_key``, ``model``, ``desktop_ping``, ``foxy_api_key``)
+    are unreachable because each feeds only something already being handed over
+    built. That argument is true of TODAY's signature and says nothing about
+    tomorrow's -- so a ninth parameter fails here, naming the decision to make,
+    rather than being dropped in silence the way ``client`` was.
+
+    ⚠ T4 ADDED ``foxy_api_key`` AND THIS WENT RED, WHICH IS THE POINT. The
+    decision it forced: the Foxy key feeds the ``FoxyClient`` constructor only,
+    and ``with_mode`` hands the client over already built, so the key survives a
+    mode switch without being listed. The list is widened only after answering
+    that -- and the SECOND assertion below is what T4 owed on top of it, because
+    a parameter can be carried and still be broken.
     """
     import inspect
 
     parameters = list(inspect.signature(Assistant.__init__).parameters)
     assert parameters == ["self", "sector", "mode", "provider", "api_key",
-                          "model", "client", "desktop_ping"], (
+                          "model", "client", "desktop_ping",
+                          "foxy_api_key"], (
         "Assistant.__init__ changed. Decide whether with_mode must carry the "
         "new parameter across, then update this list. Do not just widen it: "
         "dropping `client` here is what made /mode change ledgers.")
+
+
+def test_a_mode_switch_does_not_stop_turns_naming_their_row():
+    """The half a signature check cannot see.
+
+    The receipt hook is bound to an INSTANCE (`self._receipt`), and `with_mode`
+    hands the shared client to a NEW Assistant. Without a rebind the hook keeps
+    pointing at the discarded one, every later turn appends to a list nobody
+    reads, and `event_id` comes back empty -- so `/verify` would report "cannot
+    be traced from here" for turns that traced perfectly well before the switch.
+    Nothing in the signature list above would have noticed.
+    """
+    first = Assistant(get_sector("healthcare"), mode="block", provider=Stub())
+    before = first.ask("What is a deductible?")
+    assert before.event_id
+
+    second = first.with_mode("observe")
+    after = second.ask("What is a deductible?")
+    assert after.event_id, "the receipt hook was left on the discarded assistant"
+    assert after.event_id != before.event_id
 
 
 def test_an_unknown_mode_leaves_the_session_running_and_unchanged():
