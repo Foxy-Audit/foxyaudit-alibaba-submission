@@ -235,3 +235,106 @@ def test_the_verifier_still_catches_a_tampered_typed_tag(make_org, client):
     broken = verifier.verify_export(export)
     assert broken["ok"] is False
     assert broken["first_broken_seq"] == 1
+
+
+# ── the duplicate-content comparison ignores the typed tag, on both sides ─────
+def _without_raw(event):
+    """The same event as the SDK's degrade path would resend it."""
+    stripped = {key: value for key, value in event.items() if key != "event_metadata"}
+    stripped["event_metadata"] = {key: value
+                                  for key, value in event["event_metadata"].items()
+                                  if key != "policy_tag_raw"}
+    return stripped
+
+
+def test_a_stripped_resend_is_a_duplicate_not_a_conflict(make_org, client):
+    """THE DEADLOCK GUARD. A row stored WITH the typed tag, resent WITHOUT it.
+
+    That is not a hypothetical: `policy_tag_raw` is client-supplied, so it
+    persists in the stored row, and the SDK half of S13 puts it in
+    ``ruleset.PROVENANCE_KEYS`` — the tuple its degrade path strips when a
+    backend rejects the key. A spool entry that outlives its POST (a crash
+    before the ack) is later resent to a backend that has been rolled back or
+    never upgraded; the SDK strips the key and retries. If the comparison in
+    ``logs.py`` still counted the tag, that resend could never match its own
+    stored row: 409 forever, taking every other event in the batch with it on
+    every retry, and the spool never drains.
+    """
+    org = make_org()
+    event = _event()
+
+    first = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+    assert first.status_code == 202, first.text
+    assert first.json()["receipts"][0]["status"] == "accepted"
+
+    resend = client.post("/v1/logs/batch", headers=org["auth"],
+                         json=[_without_raw(event)])
+    assert resend.status_code == 202, resend.text
+    assert resend.json()["receipts"][0]["status"] == "duplicate"
+
+
+def test_the_tag_arriving_late_is_a_duplicate_too(make_org, client):
+    """The other direction, because the pop is on BOTH sides.
+
+    Stored WITHOUT the tag, resent WITH it — an SDK that degraded, then
+    recovered, or a row written by an older SDK and retried by a newer one.
+    Popping only the stored side would leave this one 409ing.
+    """
+    org = make_org()
+    event = _event()
+
+    first = client.post("/v1/logs/batch", headers=org["auth"],
+                        json=[_without_raw(event)])
+    assert first.status_code == 202, first.text
+    assert first.json()["receipts"][0]["status"] == "accepted"
+
+    resend = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+    assert resend.status_code == 202, resend.text
+    assert resend.json()["receipts"][0]["status"] == "duplicate"
+
+
+def test_a_different_canonical_tag_on_one_event_id_still_conflicts(make_org, client):
+    """CONTROL, and the one that stops the pop from widening.
+
+    Excluding a key from the identity comparison is one edit away from
+    excluding the comparison. Without this, "never 409" passes the two tests
+    above and stays green while two genuinely different events silently
+    collapse into one row. `policy_tag` — the CANONICAL tag — is still
+    compared, so only two SPELLINGS of one tag are allowed to match.
+    """
+    org = make_org()
+    event = _event()
+
+    first = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+    assert first.status_code == 202, first.text
+
+    conflicting = _without_raw(event)
+    conflicting["policy_tag"] = "pci"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[conflicting])
+    assert response.status_code == 409, response.text
+    assert "already used with different content" in response.text
+
+
+def test_a_stripped_resend_does_not_rewrite_the_stored_row(make_org, client):
+    """The claim that makes the pop safe for EVIDENCE, asserted.
+
+    A duplicate returns the original receipt; it never writes. So the tag an
+    auditor reads is the one from the POST that was chained, and no resend —
+    stripped or not — can quietly replace it or move the chain.
+    """
+    org = make_org()
+    event = _event()
+
+    first = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+    original = first.json()["receipts"][0]
+
+    resend = client.post("/v1/logs/batch", headers=org["auth"],
+                         json=[_without_raw(event)])
+    duplicate = resend.json()["receipts"][0]
+    assert duplicate["seq"] == original["seq"]
+    assert duplicate["chain_hash"] == original["chain_hash"]
+
+    rows = client.get("/v1/logs", headers=org["auth"]).json()["items"]
+    assert len(rows) == 1
+    assert rows[0]["event_metadata"]["policy_tag_raw"] == RAW_TAG
+    assert client.get("/v1/verify", headers=org["auth"]).json()["ok"] is True

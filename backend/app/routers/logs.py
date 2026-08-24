@@ -115,9 +115,27 @@ def ingest_batch(
             # this pop the resend could never match the stored row, so it would
             # 409 forever and take the other nine events in its batch down with
             # it on every retry.
-            for _provenance_key in ("ruleset_version", "ruleset_hash"):
-                stored_metadata.pop(_provenance_key, None)
-                requested_metadata.pop(_provenance_key, None)
+            #
+            # policy_tag_raw is here for that SECOND reason only. The first one
+            # does not cover it: it is what the CALLER TYPED, so it describes
+            # neither the rules nor the interaction. The degrade path does
+            # cover it, identically — it is client-supplied, it persists in the
+            # stored row, and the SDK half of S13 adds it to
+            # ruleset.PROVENANCE_KEYS, the same tuple _strip_provenance walks,
+            # so a resend to a backend that rejects it arrives without it and
+            # would 409 against its own stored row forever. This pop lands
+            # first, on purpose: the backend must forgive the stripped resend
+            # before any SDK is able to strip one.
+            #
+            # It does not blunt the check. `policy_tag` — the CANONICAL tag —
+            # is still compared below, so two events whose canonical tags
+            # differ still 409. Only two SPELLINGS of one canonical tag now
+            # compare equal, and those are the same event. And a resend never
+            # overwrites the stored row, so nothing already recorded as
+            # evidence can change either way.
+            for _excluded_key in ("ruleset_version", "ruleset_hash", "policy_tag_raw"):
+                stored_metadata.pop(_excluded_key, None)
+                requested_metadata.pop(_excluded_key, None)
             if existing and any((
                 existing.prompt_hash != item.prompt_hash,
                 existing.response_hash != item.response_hash,
