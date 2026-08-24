@@ -39,8 +39,8 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QPushButton, QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
 )
 
 import panel_state
@@ -383,7 +383,11 @@ class TestbedSections:
         #: rebuilding from sector/mode/provider alone is how T1's REPL silently
         #: swapped a keyed session's client for a keyless one.
         self._assistants: dict = {}
+        #: provider name → fingerprint of the key its cached Assistants were
+        #: built with. A digest, never the key — see `tbd.key_fingerprint`.
+        self._key_fps: dict = {}
         self._worker = None
+        self._turns = 0
 
     # ── build ──
     def build(self, t: dict) -> QWidget:
@@ -417,6 +421,12 @@ class TestbedSections:
         scroll.setWidget(body)
         outer.addWidget(scroll)
         o.tb_scroll = scroll
+        # ⚠ HERE, AND NOT IN `_work`. Everything above is parented now — `body`
+        # owns the layouts, `scroll` owns `body` — so setting the empty state
+        # visible shows a card inside a page. Run one line earlier, when the
+        # column was still detached, the same call mapped a top-level window.
+        if self.engine is not None:
+            self._after_stream_change()
         return page
 
     def _head(self) -> QWidget:
@@ -566,9 +576,14 @@ class TestbedSections:
         # the prompt box rendered at four hundred-odd pixels with its own label
         # stranded halfway down. The rail already ends in one; so does this.
         col.addStretch()
-
-        self._turns = 0
-        self._after_stream_change()
+        # ⚠ NO `_after_stream_change()` HERE, AND THAT IS THE WHOLE FIX. `col`
+        # is not attached to anything yet, so `QLayout.addWidget` has not
+        # reparented a single one of these widgets — `tb_empty.parentWidget()`
+        # is None. Calling `setVisible(True)` on a parentless widget does not
+        # "show a card in a column"; it MAPS A TOP-LEVEL WINDOW. Measured on a
+        # real window, not offscreen, which cannot see it: at that call
+        # `isWindow()` was True and `isVisible()` was True. `build` runs it once
+        # the layout is attached instead.
         return col
 
     def _rail(self) -> QWidget:
@@ -672,8 +687,18 @@ class TestbedSections:
         o.tb_policy_tag.setText("policy_tag = " + sector.policy_tag)
 
         panel_state.clear_rows(o.tb_probes)
+        # Rebuilt every time the sector changes, so the list `_set_busy` reaches
+        # for is rebuilt with them rather than left pointing at deleted buttons.
+        o.tb_probe_buttons = []
         for probe in sector.probes:
-            panel_state.add_visible(o.tb_probes, self._probe_button(probe))
+            button = self._probe_button(probe)
+            # A sector switch is itself disabled mid-flight, so this cannot
+            # normally run while busy — it is set from the live state anyway,
+            # because a control that decides its own enabledness from a
+            # constant is one refactor away from being wrong.
+            button.setEnabled(self._worker is None)
+            o.tb_probe_buttons.append(button)
+            panel_state.add_visible(o.tb_probes, button)
         o.tb_probes.activate()
 
     def _probe_button(self, probe) -> QWidget:
@@ -688,12 +713,25 @@ class TestbedSections:
             f" border-radius: {RADIUS['sm']}px; padding: 8px 10px;"
             f" text-align: left; }}"
             f"QPushButton#tbProbe:hover {{ background: {WEB['surf2']}; }}"
-            f"QPushButton#tbProbe:focus {{ border-color: {WEB['fox']}; }}")
+            f"QPushButton#tbProbe:focus {{ border-color: {WEB['fox']}; }}"
+            f"QPushButton#tbProbe:disabled {{ border-color: {WEB['line']}; }}")
         lay = QVBoxLayout(button)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
-        lay.addWidget(_label(probe.id, size=9.5, colour=WEB["muted"], mono=True))
-        lay.addWidget(_label(probe.intent, size=10.5, wrap=True))
+        for text, size, colour, mono in ((probe.id, 9.5, WEB["muted"], True),
+                                         (probe.intent, 10.5, WEB["ink"], False)):
+            # ⚠ THE LABELS NEED THE `:disabled` RULE THEMSELVES. `setEnabled`
+            # propagates to children, but an explicit `color:` on a child does
+            # not yield to it — so disabling a probe starter left it looking
+            # exactly as clickable as before, which is worse than leaving it
+            # live. `muted2` is the console's disabled colour (`#ctaBtn`,
+            # `#segBtn`) and this is the one use WCAG 1.4.3 exempts.
+            line = _label(text, size=size, colour=colour, mono=mono,
+                          wrap=not mono)
+            line.setStyleSheet(
+                f"QLabel {{ {line.styleSheet()} }}"
+                f"QLabel:disabled {{ color: {WEB['muted2']}; }}")
+            lay.addWidget(line)
         button.clicked.connect(lambda _c, p=probe: self._load_probe(p))
         return button
 
@@ -749,18 +787,37 @@ class TestbedSections:
         raises a ProviderError naming `--api-key`, which is a CLI flag this
         surface does not have — so the missing key is caught first and the
         message names where a key actually goes on THIS surface.
-        """
-        key = (self._sector, self._mode, self._provider)
-        found = self._assistants.get(key)
-        if found is not None:
-            return found
 
+        ⚠ AND IT IS RE-READ ON EVERY CALL, WHICH IS WHY THE CACHE IS CONSULTED
+        SECOND. It used to be consulted first, so the key that happened to be in
+        the keychain when the first Assistant for a combination was built stayed
+        pinned for the life of the window: a user whose key had been revoked,
+        who then pasted a working one into Settings, kept failing every turn
+        until they restarted the console — and nothing on the page could have
+        told them why.
+        """
         api_key = ""
         if tbd.provider_needs_key(self._provider):
             api_key = tbd.provider_key(
                 self._provider, getattr(self.o, "settings", None))
             if not api_key:
                 raise RuntimeError(tbd.no_key_message(self._provider))
+
+        # A CHANGED KEY EVICTS; it does not merely miss. Putting the fingerprint
+        # in the cache key instead would leave the old Assistant — and the
+        # revoked credential inside its provider — alive in this dict for the
+        # rest of the session, which is the wrong way to hold a secret you have
+        # just been told is dead.
+        fingerprint = tbd.key_fingerprint(api_key)
+        if self._key_fps.get(self._provider) != fingerprint:
+            self._assistants = {k: v for k, v in self._assistants.items()
+                                if k[2] != self._provider}
+            self._key_fps[self._provider] = fingerprint
+
+        key = (self._sector, self._mode, self._provider)
+        found = self._assistants.get(key)
+        if found is not None:
+            return found
 
         sibling = self._assistants.get(
             (self._sector, self.engine.core.DEFAULT_MODE, self._provider))
@@ -826,9 +883,20 @@ class TestbedSections:
     def _set_busy(self, busy: bool):
         """The whole composer, not just the button.
 
-        Disabling a focused widget drops the focus, so it is handed back when
-        the turn returns — but only if the composer is where it was, so a user
-        who tabbed to the rail mid-flight is not yanked back."""
+        ⚠ THE PROBE BUTTONS ARE PART OF THE COMPOSER. They were left live while
+        everything around them went dead, so a probe clicked mid-flight wrote
+        its prompt into a DISABLED box — and `_on_turn` then cleared that box
+        the moment the turn returned. The staged prompt vanished with no error
+        and no way to tell it had ever been staged.
+
+        ⚠ AND THE FOCUS IS RESTORED ONLY IF NOBODY ELSE MOVED IT. This docstring
+        used to promise that and the code did not check: it remembered only
+        whether the prompt box had focus BEFORE the send, so a user who tabbed
+        to the sidebar mid-flight was yanked back to the composer when the turn
+        landed. Qt hands focus onward when it disables the focused widget, so
+        wherever it parks is the "nobody touched it" reading; anything else is
+        the user, and the user wins.
+        """
         o = self.o
         if busy:
             self._had_focus = o.tb_prompt.hasFocus()
@@ -837,9 +905,16 @@ class TestbedSections:
         o.tb_prompt.setEnabled(not busy)
         for button in o.tb_sector_buttons:
             button.setEnabled(not busy)
+        for button in getattr(o, "tb_probe_buttons", ()):
+            button.setEnabled(not busy)
         o.tb_mode.setEnabled(not busy)
         o.tb_provider.setEnabled(not busy)
-        if not busy and getattr(self, "_had_focus", False):
+        if busy:
+            self._focus_parked = QApplication.focusWidget()
+            return
+        if tbd.should_restore_focus(getattr(self, "_had_focus", False),
+                                    getattr(self, "_focus_parked", None),
+                                    QApplication.focusWidget()):
             o.tb_prompt.setFocus()
 
     def _on_turn(self, turn):

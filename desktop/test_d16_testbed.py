@@ -17,12 +17,36 @@ what the guards below are actually about:
 3. **It runs a network call.** The turn goes on a `QThread` and the composer is
    dead while it is in flight.
 
-⚠ WHERE THE ENGINE COMES FROM HERE. The desktop suite runs in environments that
-may have `foxy-audit` installed (CI, from the wheel) or not (a dev checkout on
-this machine's Python 3.13). Neither is what these guards are ABOUT: the
-contract is with the engine in THIS repo, the one that will be published, so
-`_engine()` reaches for `sdk/src` and restores `sys.path` immediately — the same
-shape `test_guard_bridge._demo` uses for `demo/`.
+⚠ WHICH `foxy_testbed` THESE GUARDS TEST, AND WHY IT HAD TO BE DECIDED
+======================================================================
+**The copy in this repo — `sdk/src` — every run.** Not the installed wheel.
+
+The first version of `_engine()` claimed to reach for `sdk/src` and did not: it
+put the path on, called `importlib.import_module`, and took `sys.path` back off.
+`import_module` returns the CACHED module when one exists, and by the time this
+file runs, one usually does — every console fixture in the suite builds a
+DashboardWindow, whose Testbed page imports `foxy_testbed` through
+`load_engine`. So the subject of the wording-parity guards was decided by
+whichever test file happened to run first, and under `pytest-randomly` that
+changes between runs. A guard whose subject changes between runs is not a guard
+(register #237).
+
+The repo copy is the right subject for three reasons:
+
+* The contract is between `desktop/testbed_data.py` and `foxy_testbed/cli.py`
+  **as they ship together**, and they ship from here. A reword on either side
+  has to go red in the commit that makes it. Pointed at the wheel, the guard
+  could only notice a divergence *after* it had been published.
+* `desktop/requirements.txt` asks for `foxy-audit>=1.11,<2`, so "the installed
+  copy" is whatever pip resolved that morning. A subject chosen by a dependency
+  resolver cannot be pinned.
+* The wheel CI installs is **1.11.0, which is behind this repo** — it does not
+  even carry `foxy_testbed/web.py`. Guarding it would validate a stale copy.
+
+So `_engine()` evicts any cached copy that did not come from `sdk/src`, puts
+`sdk/src` on `sys.path` and LEAVES it there, and then **asserts** what it got.
+The assertion is the half that matters: if a future change ever binds this to
+something else, the suite says so instead of quietly guarding the wrong file.
 """
 
 from __future__ import annotations
@@ -55,24 +79,63 @@ def app():
 
 
 # ══ reaching the engine ═════════════════════════════════════════════════════
-def _engine():
-    """The repo's own `foxy_testbed`, or skip.
+#: The two packages the engine is made of. `foxy_audit` is here too because
+#: `foxy_testbed.core` imports `check` and `FoxyClient` from it: a repo
+#: `foxy_testbed` running on a site-packages `foxy_audit` is a hybrid engine, and
+#: the probe expectations below are about one engine from one place.
+_ENGINE_PACKAGES = ("foxy_testbed", "foxy_audit")
 
-    `sys.path` is restored on the way out; the package stays in `sys.modules`,
-    which is exactly what makes the page's own guarded import succeed for the
-    tests below that need a working engine.
+
+def _from_repo(module) -> bool:
+    """Did this module come out of `sdk/src`?"""
+    path = getattr(module, "__file__", None)
+    if not path:
+        return False
+    try:
+        return Path(path).resolve().is_relative_to(_SDK_SRC.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _engine():
+    """The `foxy_testbed` in THIS repo — `sdk/src` — or skip. Never the wheel.
+
+    See the module docstring for why it is the repo copy and not the installed
+    one. This function is what makes that true on every run rather than on the
+    runs where nothing imported it first.
     """
-    sys.path.insert(0, str(_SDK_SRC))
+    if str(_SDK_SRC) not in sys.path:
+        # LEFT ON, not restored. Restoring it was the bug: the path came off and
+        # every later import — including the page's own `load_engine` — fell
+        # back to whatever `pip` had put in site-packages.
+        sys.path.insert(0, str(_SDK_SRC))
+
+    # ⚠ EVICT FIRST. `import_module` hands back the cached module, so a copy
+    # already imported from the wheel would be returned no matter what is on
+    # `sys.path`. Only a wrong copy is evicted, so a warm repo copy costs
+    # nothing and no live object is swapped underneath a running test.
+    stale = [name for name in list(sys.modules)
+             if name.split(".")[0] in _ENGINE_PACKAGES
+             and sys.modules[name] is not None
+             and not _from_repo(sys.modules[name])]
+    for name in stale:
+        del sys.modules[name]
+
     try:
         for name in ("foxy_testbed", "foxy_testbed.core", "foxy_testbed.cli",
                      "foxy_testbed.sectors", "foxy_testbed.providers"):
             importlib.import_module(name)
     except Exception:                                 # noqa: BLE001
         pytest.skip("the SDK in sdk/src is not importable here")
-    finally:
-        sys.path.remove(str(_SDK_SRC))
+
     engine, problem = tbd.load_engine()
     assert engine is not None, problem
+    # THE HALF THAT MATTERS. Everything above is machinery; this is the claim.
+    for module in (engine.core, engine.cli, engine.sectors, engine.providers):
+        assert _from_repo(module), (
+            f"the parity guards are reading {module.__name__} from "
+            f"{module.__file__} — an installed wheel, not this repo. See the "
+            f"module docstring: the subject of these guards is sdk/src.")
     return engine
 
 
@@ -460,10 +523,17 @@ def test_each_verdict_mark_is_measured_against_the_card_behind_it(family, fill):
 
 
 def test_no_live_text_on_this_page_uses_muted2():
-    """`muted2` is under AA and is legitimate only on `:disabled` states."""
+    """`muted2` is under AA and is legitimate only on `:disabled` states.
+
+    ⚠ COMMENT LINES ARE STRIPPED FIRST, and skipping that cost a red run: the
+    comment EXPLAINING why the probe starters may use `muted2` names the token
+    on a line with no `:disabled` on it, and this guard read the explanation as
+    the violation. A guard that greps a file greps its own prose — the trap this
+    repo has now paid for more times than any other.
+    """
     source = (_HERE / "testbed_page.py").read_text(encoding="utf-8")
     for line in source.splitlines():
-        if "muted2" not in line:
+        if line.lstrip().startswith("#") or "muted2" not in line:
             continue
         assert ":disabled" in line, (
             f"muted2 on live text: {line.strip()}")
@@ -684,7 +754,253 @@ def test_an_over_long_prompt_is_refused_before_anything_is_sent(app, tmp_path):
         console.close()
 
 
-# ══ 11 · packaging ══════════════════════════════════════════════════════════
+# ══ 11 · T3b — the five polish findings (register #237) ════════════════════
+def test_the_guards_read_the_repo_engine_even_when_a_wheel_got_there_first():
+    """⚠ #237's worst row: A GUARD WHOSE SUBJECT CHANGED BETWEEN RUNS.
+
+    `_engine()` used to put `sdk/src` on `sys.path`, call `import_module`, and
+    take the path back off. `import_module` returns the CACHED module when one
+    exists — and by the time this file runs one usually does, because every
+    console fixture in the suite builds a page that imports `foxy_testbed`. So
+    the wording-parity guards below validated the installed wheel on some runs
+    and this repo on others, decided by collection order.
+
+    The decoy below is that exact situation, made deterministic: something else
+    has already put a non-repo `foxy_testbed` in `sys.modules`. `_engine()` must
+    still come back with the repo's.
+    """
+    import types
+    decoy_dir = _ROOT / "not-the-repo-copy"
+    decoys = {}
+    for name in ("foxy_testbed", "foxy_testbed.cli", "foxy_testbed.core",
+                 "foxy_testbed.sectors", "foxy_testbed.providers"):
+        module = types.ModuleType(name)
+        module.__file__ = str(decoy_dir / (name.split(".")[-1] + ".py"))
+        decoys[name] = module
+    saved = {name: sys.modules.get(name) for name in decoys}
+    sys.modules.update(decoys)
+    try:
+        engine = _engine()
+        # ⚠ THE LITERAL PATH, NOT `_from_repo`. Checking the fix with the fix's
+        # own predicate is how this test would have gone green on a `_from_repo`
+        # that always said yes — the mutation that found it. An expectation
+        # spelled out independently cannot be satisfied by breaking the thing it
+        # is checking.
+        expected = {
+            "core": _SDK_SRC / "foxy_testbed" / "core.py",
+            "cli": _SDK_SRC / "foxy_testbed" / "cli.py",
+            "sectors": _SDK_SRC / "foxy_testbed" / "sectors.py",
+            "providers": _SDK_SRC / "foxy_testbed" / "providers.py",
+        }
+        for attribute, path in expected.items():
+            got = Path(getattr(engine, attribute).__file__).resolve()
+            assert got == path.resolve(), (
+                f"engine.{attribute} came from {got} — the decoy survived, so "
+                f"the parity guards are reading a copy, not this repo")
+        # and the real thing is what is cached now, not the decoy
+        cached = Path(sys.modules["foxy_testbed"].__file__).resolve()
+        assert cached == (_SDK_SRC / "foxy_testbed" / "__init__.py").resolve()
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+def test_a_changed_key_rebuilds_the_assistant_and_drops_the_old_one(
+        app, tmp_path, monkeypatch):
+    """#237: the cache pinned the key used at construction, so a user who
+    replaced a revoked key in Settings kept failing every turn until they
+    restarted the console — with nothing on the page to explain it."""
+    _engine()
+    console = _console(app, tmp_path)
+    try:
+        keys = {"value": "key-A"}
+        monkeypatch.setattr(console.settings, "api_key",
+                            lambda _name: keys["value"], raising=False)
+        sections = console._testbed
+        sections._provider = "openai"
+
+        first = sections._assistant()
+        assert sections._assistant() is first, "the cache stopped working"
+
+        keys["value"] = "key-B"
+        second = sections._assistant()
+        assert second is not first, (
+            "the revoked key is still pinned — this is the whole finding")
+        # ⚠ EVICTED, not merely missed. A cache keyed on the fingerprint would
+        # keep the dead credential alive in this dict for the session.
+        assert first not in sections._assistants.values()
+    finally:
+        console.close()
+
+
+def test_the_key_is_never_kept_in_the_clear_to_notice_a_change(app, tmp_path,
+                                                               monkeypatch):
+    """The mark that says "same key?" is a digest. A live credential must not
+    sit on a long-lived object inside a widget tree this repo grabs and walks."""
+    assert tbd.key_fingerprint("key-A") != tbd.key_fingerprint("key-B")
+    assert tbd.key_fingerprint("key-A") == tbd.key_fingerprint("key-A")
+    assert "key-A" not in tbd.key_fingerprint("key-A")
+
+    _engine()
+    console = _console(app, tmp_path)
+    try:
+        monkeypatch.setattr(console.settings, "api_key",
+                            lambda _name: "super-secret-value", raising=False)
+        sections = console._testbed
+        sections._provider = "openai"
+        sections._assistant()
+        assert "super-secret-value" not in repr(sections._key_fps)
+    finally:
+        console.close()
+
+
+def test_the_probe_buttons_go_dead_with_the_rest_of_the_composer(app, tmp_path):
+    """#237: they stayed live while everything around them went dead, so a
+    probe clicked mid-flight wrote its prompt into a DISABLED box — and
+    `_on_turn` then cleared that box when the turn landed. The staged prompt
+    vanished with no error and no sign it had ever been staged."""
+    _engine()
+    console = _console(app, tmp_path)
+    try:
+        assert console.tb_probe_buttons, "the rail built no probe starters"
+        sections = console._testbed
+        sections._set_busy(True)
+        assert all(not b.isEnabled() for b in console.tb_probe_buttons)
+        sections._set_busy(False)
+        assert all(b.isEnabled() for b in console.tb_probe_buttons)
+    finally:
+        console.close()
+
+
+def test_a_dead_probe_button_does_not_look_like_a_live_one(app, tmp_path):
+    """⚠ MEASURED ON THE PIXELS, because the stylesheet string is not the
+    claim. `setEnabled(False)` propagates to child widgets, but an explicit
+    `color:` on a child does NOT yield to it — so the first version of the fix
+    above disabled the probe starters while leaving them looking exactly as
+    clickable as before, which is worse than leaving them live.
+
+    ⚠ AND IT GRABS THE LABEL, NOT THE BUTTON. Comparing whole-button renders
+    was the first version and it was too coarse to mean anything: the button
+    carries its own `#tbProbe:disabled` border rule, so the two pixmaps differed
+    on the border alone and the test stayed green with the label rule deleted.
+    Found by re-breaking it. The claim is about the TEXT, so the text is what is
+    measured.
+    """
+    _engine()
+    console = _console(app, tmp_path)
+    try:
+        console.show()
+        console.go("testbed")
+        app.processEvents()
+        button = console.tb_probe_buttons[0]
+        labels = button.findChildren(QLabel)
+        assert labels, "the probe starter has no text to dim"
+        live = [lbl.grab().toImage() for lbl in labels]
+        console._testbed._set_busy(True)
+        app.processEvents()
+        dead = [lbl.grab().toImage() for lbl in labels]
+        assert all(a != b for a, b in zip(live, dead)), (
+            "a disabled probe starter's text renders identically to a live "
+            "one — the control is inert and still invites the click")
+    finally:
+        console.close()
+
+
+def test_the_empty_state_is_never_shown_while_it_is_still_parentless(app,
+                                                                     tmp_path):
+    """⚠ #237, AND OFFSCREEN CANNOT SEE IT — which is why this measures
+    PARENTAGE rather than pixels.
+
+    `_after_stream_change()` ran at the end of `_work()`, where `col` is not
+    attached to anything yet, so `QLayout.addWidget` has not reparented a single
+    widget. `setVisible(True)` on a parentless widget does not show a card in a
+    column; it maps a TOP-LEVEL WINDOW. Confirmed on a real window before the
+    fix: at that call `parentWidget()` was None, `isWindow()` True and
+    `isVisible()` True.
+    """
+    import testbed_page as tbp
+    _engine()
+    seen = []
+    original = tbp.TestbedSections._after_stream_change
+
+    def spy(self):
+        seen.append((self.o.tb_empty.parentWidget(),
+                     self.o.tb_empty.isWindow()))
+        original(self)
+
+    tbp.TestbedSections._after_stream_change = spy
+    try:
+        console = _console(app, tmp_path)
+    finally:
+        tbp.TestbedSections._after_stream_change = original
+    try:
+        assert seen, "the empty state is never painted at all"
+        parent, is_window = seen[0]
+        assert parent is not None and not is_window, (
+            "the first _after_stream_change ran before the layout was "
+            "attached, so showing the empty state mapped a top-level window")
+    finally:
+        console.close()
+
+
+@pytest.mark.parametrize("had_focus,parked,current,expected", [
+    (True, "parked", "parked", True),      # nobody moved it
+    (True, "parked", None, True),          # Qt parked it nowhere
+    (True, "parked", "sidebar", False),    # ⚠ THE FINDING: the user moved it
+    (False, "parked", "parked", False),    # never had it
+    (False, "parked", "sidebar", False),
+])
+def test_focus_goes_back_only_when_nobody_else_moved_it(had_focus, parked,
+                                                        current, expected):
+    """#237: `_set_busy` restored focus on where it was BEFORE the send and
+    never asked where it was NOW, so a user who tabbed away mid-flight was
+    yanked back to the composer — the exact behaviour its own docstring said it
+    avoided."""
+    assert tbd.should_restore_focus(had_focus, parked, current) is expected
+
+
+@pytest.mark.parametrize("user_moves", [False, True])
+def test_focus_through_the_widget_both_ways(app, tmp_path, user_moves):
+    """The same rule, through the real widget and real focus.
+
+    ⚠ BOTH DIRECTIONS, IN ONE PARAMETRISED TEST, ON PURPOSE. "the prompt does
+    not have focus" is a sentence that is also true when focus never worked at
+    all — under the offscreen platform that is a live possibility, and a
+    one-sided test would have read as green while measuring nothing. The
+    `user_moves=False` leg is what proves the machinery is real.
+    """
+    _engine()
+    console = _console(app, tmp_path)
+    try:
+        console.show()
+        console.go("testbed")
+        app.processEvents()
+        sections = console._testbed
+        console.tb_prompt.setFocus()
+        app.processEvents()
+        assert console.tb_prompt.hasFocus(), \
+            "focus does not work here at all; this test would prove nothing"
+
+        sections._set_busy(True)
+        if user_moves:
+            # the user tabs to something still live while the turn is in flight
+            console.tb_clear.setFocus()
+            app.processEvents()
+        sections._set_busy(False)
+        app.processEvents()
+
+        assert console.tb_prompt.hasFocus() is (not user_moves), (
+            "the composer yanked focus back from where the user put it"
+            if user_moves else
+            "the composer did not hand focus back to an untouched caret")
+    finally:
+        console.close()
+
+
+# ══ 12 · packaging ══════════════════════════════════════════════════════════
 def test_the_shipped_build_carries_the_sdk():
     """⚠ THE OWNER'S DECISION: the page is for everyone who installs the .exe.
     `collect_all` rather than a hiddenimport, because `foxy_testbed` ships DATA

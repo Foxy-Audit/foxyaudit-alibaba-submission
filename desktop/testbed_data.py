@@ -48,6 +48,7 @@ VERBATIM in `cli.turn_lines`'s own output for the same turn.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 
@@ -289,6 +290,22 @@ def provider_key(name: str, settings=None, environ=None) -> str:
     return stored or (environ.get(KEY_ENV.get(name, ""), "") or "").strip()
 
 
+def key_fingerprint(api_key: str) -> str:
+    """A stable, non-reversible mark for "is this still the same key?".
+
+    ⚠ A DIGEST, NOT THE KEY. The page has to notice when a user replaces a
+    revoked key in Settings, and the cheap way is to remember what it last built
+    with — but remembering the key ITSELF would put a live credential on a
+    long-lived object inside a widget tree this repo routinely grabs and walks.
+    The provider already holds the real one; nothing needs a second copy.
+
+    Truncated because a fingerprint only has to be different, not unforgeable:
+    the question it answers is "did this change", asked inside one process
+    against a value that process already holds.
+    """
+    return hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:16]
+
+
 def no_key_message(name: str) -> str:
     """What to say when a live provider has no key, naming the fix on THIS
     surface. Falls back to the variable name for a provider added later."""
@@ -300,6 +317,26 @@ def provider_needs_key(name: str) -> bool:
 
 
 # ── the composer ─────────────────────────────────────────────────────────────
+def should_restore_focus(had_focus, parked, current) -> bool:
+    """Does the prompt box get the caret back when a turn lands?
+
+    Only when both halves hold, and the second half is the one that was missing:
+
+    * ``had_focus`` — the caret was in the composer when the turn began. Sending
+      with Ctrl+Enter is the case this exists for; nobody who clicked the button
+      with the mouse is waiting to keep typing.
+    * ``current in (None, parked)`` — **nobody has moved it since.** Disabling a
+      focused widget makes Qt hand focus onward, so wherever it lands at the
+      moment of disabling is the "untouched" reading. Anything else is the user,
+      and the user outranks the convenience.
+
+    Without the second half the composer stole focus back from whatever the user
+    had tabbed to while the turn was in flight — the exact behaviour `_set_busy`'s
+    own docstring claimed it avoided.
+    """
+    return bool(had_focus) and current in (None, parked)
+
+
 def transcript_count(turns: int) -> str:
     return ("1 turn in this transcript" if turns == 1
             else "{0} turns in this transcript".format(turns))
@@ -315,7 +352,8 @@ __all__ = [
     "Engine", "FAMILY_ALLOWED", "FAMILY_ENFORCED", "FAMILY_FAULT",
     "FAMILY_FLAGGED", "KEY_ENV", "MAX_PROMPT_CHARS", "MISSING_AFTER",
     "MISSING_BODY", "MISSING_FIX", "MISSING_TITLE", "RAIL_LABELS",
-    "family_of", "field_rows", "load_engine", "no_key_message",
+    "family_of", "field_rows", "key_fingerprint", "load_engine",
+    "no_key_message",
     "provider_key", "provider_needs_key", "rail_state", "reply_source",
-    "reply_status", "transcript_count",
+    "reply_status", "should_restore_focus", "transcript_count",
 ]
