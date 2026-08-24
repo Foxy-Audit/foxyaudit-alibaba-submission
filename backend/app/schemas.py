@@ -61,7 +61,24 @@ class LogIngest(BaseModel):
                    # keys and records that it did), but that is a safety net for
                    # self-hosted and lagging deployments, not a licence to ship
                    # the two halves in the wrong order.
-                   "ruleset_version", "ruleset_hash"}
+                   "ruleset_version", "ruleset_hash",
+                   # The policy tag AS THE CALLER TYPED IT (SDK >= 1.13.0),
+                   # sent only when normalisation changed it. `policy_tag`
+                   # above is charset-locked to ^[a-z0-9_]{1,32}$, so
+                   # `policy="HIPAA"` cannot travel as itself: the SDK folds
+                   # it to the canonical tag and preserves the typed form
+                   # here, so an auditor can see that the `hipaa` rules ran
+                   # because a developer wrote `HIPAA`. Before this key the
+                   # miscased call was chained as `default` and the typed
+                   # form was lost. Content-blind by construction: it is an
+                   # argument to a decorator, never anything derived from a
+                   # prompt, and the 256-char cap below bounds it like every
+                   # other label.
+                   #
+                   # SAME DEPLOY ORDER AS THE TWO KEYS ABOVE, for the same
+                   # reason: the whole REQUEST is rejected, so an SDK sending
+                   # this to a backend without it loses the entire batch.
+                   "policy_tag_raw"}
         unknown = set(value) - allowed
         if unknown:
             raise ValueError("event_metadata contains unsupported fields")
