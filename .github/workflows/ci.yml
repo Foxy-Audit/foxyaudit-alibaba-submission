@@ -317,4 +317,7 @@ jobs:
       - name: Desktop unit tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest desktop -q
+        # ⚠ TEMPORARY (#242): `-v` names each test as it starts, so a crash
+        # that prints only `<invalid frame>` can be attributed. Back to `-q`
+        # before this branch is offered for merge.
+        run: python -m pytest desktop -v
