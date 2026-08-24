@@ -506,6 +506,34 @@ EXPLAIN_FAMILIES = {
     "explained": FAMILY_ANSWERED,
     "no_matches": FAMILY_ANSWERED,
     # the check ran and DISAGREED
+    #
+    # ⚠ `ruleset_mismatch` STAYS HERE, AND IT WAS QUESTIONED AT THE GATE.
+    # The argument for moving it to CANNOT is real and quotable: the SDK's own
+    # message ends "Replaying would describe rules that did not run, so this
+    # tool will not." That is a refusal, and it is nothing like
+    # `hash_mismatch`, whose news is "this is not the prompt the row covers".
+    # Reviewed and kept, for three reasons:
+    #
+    # 1. THE SDK'S OWN TAXONOMY EXCLUDES IT. `introspect.STATUSES` says "Four
+    #    of them are 'I cannot'", and this is not one of the four. It is the
+    #    ONE status carrying `ruleset_verified=False` -- "the digest check ran
+    #    and DISAGREED" -- while `hash_mismatch` carries None, "did not run".
+    #    The three-state field the gate cites as the reason not to collapse
+    #    them is itself what files this one as a finding rather than an
+    #    absence. Filing it under CANNOT would put this map at odds with the
+    #    structure every other decision in this phase defers to.
+    # 2. AMBER WOULD UNDERSTATE IT. "cannot" means the check could not run.
+    #    A published ruleset is immutable, so a digest that disagrees means
+    #    something was ALTERED -- the most serious thing `explain` can report,
+    #    and more serious than `hash_mismatch`, which is usually a pasted
+    #    wrong prompt. In an audit product, understating an alteration is the
+    #    worse error of the two available here.
+    # 3. THE COLOUR IS NEVER THE ANSWER, and these two are already told apart
+    #    three ways in words on every surface: the verbatim status, the SDK's
+    #    own message, and the `ruleset` field -- "DIGEST DISAGREED, same
+    #    version name and different rules", rendered LOUD, against "not
+    #    checked" in ordinary ink. `test_evidence` pins that they can never
+    #    become indistinguishable in the data.
     "hash_mismatch": FAMILY_DISAGREED,
     "ruleset_mismatch": FAMILY_DISAGREED,
     # the four the SDK calls "I cannot"
@@ -771,14 +799,35 @@ class Assistant:
         if not export:
             return Evidence(
                 state=EVIDENCE_NO_EXPORT, event_id=turn.event_id,
-                headline="SHIPPED - EXPORT NEEDED TO CHECK IT",
+                # ⚠ "ENQUEUED", AND NOT ONE WORD STRONGER. This headline read
+                # "SHIPPED" and this message opened "Row {0} exists." Neither
+                # is known. Both are asserted on `turn.submitted`, which is
+                # `cfg.enabled` plus a successful SPOOL ENQUEUE -- and
+                # `Turn.submitted`'s own docstring, four hundred lines up,
+                # says why the SDK refused to call that field `delivered`:
+                # with a revoked key every POST 401s and retries while the
+                # event sits in the spool. The surface then re-made the
+                # refused claim one layer up, in different words.
+                #
+                # WHAT IS KNOWN IS THE ENQUEUE. Whether a row reached the
+                # ledger is a question only the export can answer, and
+                # saying so is also the honest setup for `row_not_found`:
+                # the tool reports the absence rather than guessing at it.
+                headline="ENQUEUED - THE EXPORT SAYS WHETHER IT LANDED",
                 message=(
-                    "Row {0} exists. Verifying it replays the row against the "
-                    "ruleset it names, which needs your own export of the "
-                    "ledger: download GET /v1/logs/export?format=json and start "
-                    "the testbed with --export <that file>. Foxy never had your "
-                    "prompt, so the replay happens here, on your machine, "
-                    "against text you supply.".format(turn.event_id)))
+                    "Event {0} was durably enqueued and handed to the "
+                    "dispatcher. That is not the same as it reaching a "
+                    "ledger: the dispatcher writes the local spool and "
+                    "returns, so with a revoked or wrong key every delivery "
+                    "attempt fails while the event waits in that spool, and "
+                    "nothing on this machine can tell the two apart. Your own "
+                    "export settles it. Download GET "
+                    "/v1/logs/export?format=json and start the testbed with "
+                    "--export <that file>: if the row is there the replay "
+                    "runs, and if it is not you are told row_not_found rather "
+                    "than given a guess. Foxy never had your prompt, so the "
+                    "replay happens here, against text you supply."
+                    .format(turn.event_id)))
 
         # ⚠ THE SAME RESOLUTION ORDER THE SDK COMMITS WITH, INCLUDING THE
         # `api_key` FALLBACK. `log_interaction` writes the commitment with
@@ -824,8 +873,9 @@ class Assistant:
                 state=EVIDENCE_NO_EXPORT, event_id=turn.event_id,
                 headline="THE EXPORT COULD NOT BE READ",
                 message=(
-                    "Row {0} exists, but the export could not be opened or "
-                    "parsed ({1}). Point --export at a file downloaded from "
+                    "Event {0} was enqueued, but the export could not be "
+                    "opened or parsed ({1}). Point --export at a file "
+                    "downloaded from "
                     "GET /v1/logs/export?format=json.".format(
                         turn.event_id, type(exc).__name__)))
         return Evidence.from_explain(result)

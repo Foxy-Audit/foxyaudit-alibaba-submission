@@ -812,7 +812,20 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
         + "here. That is not the same as there being no row.";
       return;
     }
-    hint.textContent = "row " + turn.event_id;
+    // ⚠ NEVER THE WORD "row" BEFORE ANYTHING HAS LOOKED FOR ONE. This said
+    // "row " + turn.event_id under EVERY record carrying an id -- including the
+    // keyless default, where nothing was shipped and no row exists. `submitted`
+    // was in the payload and read by nothing, so the offline demo a prospect
+    // sees first announced a row and then, one click later, said "NEVER SHIPPED
+    // TO A LEDGER" in the panel directly beneath it. The page contradicted
+    // itself about evidence, which is the one thing it cannot do.
+    //
+    // "event" is what is known in both cases: the SDK minted the id whether or
+    // not anything shipped. The qualifier carries the rest, and it says
+    // "enqueued" rather than "shipped" for the same reason `core.verify` does --
+    // a successful enqueue is not a delivery, and only the export settles it.
+    hint.textContent = "event " + turn.event_id
+      + (turn.submitted ? " · enqueued" : " · not shipped");
     button.addEventListener("click", function () {
       if (button.disabled) { return; }
       button.disabled = true;

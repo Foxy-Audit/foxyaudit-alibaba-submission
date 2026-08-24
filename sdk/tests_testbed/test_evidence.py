@@ -504,3 +504,98 @@ def test_every_message_survives_a_cp1252_console(tmp_path):
     for evidence in produced:
         for text in (evidence.headline, evidence.message):
             text.encode("cp1252")   # raises UnicodeEncodeError on a bad char
+
+
+# ══ T4d · the gate's three honesty findings ═════════════════════════════════
+def test_no_state_claims_a_row_exists(tmp_path):
+    """🔴 "Row {id} exists." IS NOT KNOWN, AND `Turn.submitted` SAYS SO.
+
+    `submitted` is `cfg.enabled` plus a successful SPOOL ENQUEUE. Its own
+    docstring records why the SDK refused to call the field `delivered`: with a
+    revoked key every POST 401s and retries while the event waits in the spool.
+    The headline said SHIPPED and the message opened "Row {0} exists." -- the
+    refused claim, re-made one layer up, four hundred lines from the warning
+    against it.
+
+    ⚠ ASSERTED ACROSS EVERY STATE, not only the one that carried it. The claim
+    is a wording habit, and a guard on a single message would let it back in
+    through the next one written.
+    """
+    assistant = _keyed(tmp_path)
+    turn = assistant.ask(PHI_PROMPT)
+    export, _ = _export_from_receipt(assistant, tmp_path)
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+
+    produced = [
+        assistant.verify(turn, PHI_PROMPT),
+        assistant.verify(turn, PHI_PROMPT, export=str(broken)),
+        assistant.verify(type(turn)(**{**turn.__dict__, "event_id": ""}),
+                         PHI_PROMPT),
+        Assistant(get_sector("legal")).verify(
+            Assistant(get_sector("legal")).ask("hello"), "hello"),
+    ]
+    for evidence in produced:
+        blob = (evidence.headline + " " + evidence.message).lower()
+        assert "row {0} exists".format(evidence.event_id).lower() not in blob
+        assert " exists" not in blob, (
+            "a state claims something exists that only the export can "
+            "establish: {0!r}".format(evidence.headline))
+        assert "shipped -" not in blob, (
+            "SHIPPED overstates a spool enqueue: {0!r}".format(evidence.headline))
+
+
+def test_the_enqueued_state_says_what_is_known_and_what_settles_it(tmp_path):
+    """The replacement has to carry three things or it is only quieter, not
+    truer: what actually happened, why that is not delivery, and what would
+    answer the question."""
+    assistant = _keyed(tmp_path)
+    turn = assistant.ask(PHI_PROMPT)
+    evidence = assistant.verify(turn, PHI_PROMPT)
+
+    assert evidence.state == EVIDENCE_NO_EXPORT
+    assert "enqueued" in evidence.message.lower()
+    # why an enqueue is not a delivery
+    assert "spool" in evidence.message.lower()
+    # what settles it, named
+    assert "/v1/logs/export?format=json" in evidence.message
+    # and the honest outcome if the row is absent, so the reader is not
+    # surprised by it later
+    assert "row_not_found" in evidence.message
+
+
+def test_hash_mismatch_and_ruleset_mismatch_can_never_become_the_same_reading(
+        tmp_path):
+    """🟡 THE GATE ASKED WHETHER `ruleset_mismatch` BELONGS IN DISAGREED. It
+    stays -- see the reasoning written into `EXPLAIN_FAMILIES` -- and this is
+    what that decision owes in return.
+
+    They share a mark, so what must never converge is the DATA. `hash_mismatch`
+    says the row is intact and this is not its prompt; `ruleset_mismatch` says
+    the prompt and row belong together and the RULES cannot be trusted. Opposite
+    news, and the SDK separates them with two fields that this pins:
+    `commitment_verified` and the three-state `ruleset_verified`.
+    """
+    assistant = _keyed(tmp_path)
+    turn = assistant.ask(PHI_PROMPT)
+    export, document = _export_from_receipt(assistant, tmp_path)
+
+    wrong_prompt = assistant.verify(turn, "an entirely different prompt",
+                                    export=str(export))
+    assert wrong_prompt.status == "hash_mismatch"
+
+    document["logs"][0]["event_metadata"]["ruleset_hash"] = "0" * 64
+    export.write_text(json.dumps(document), encoding="utf-8")
+    altered = assistant.verify(turn, PHI_PROMPT, export=str(export))
+    assert altered.status == "ruleset_mismatch"
+
+    # the commitment: one failed it, the other passed it
+    assert wrong_prompt.commitment_verified is False
+    assert altered.commitment_verified is True
+    # the digest: one never ran, the other ran and disagreed. None is not False.
+    assert wrong_prompt.ruleset_verified is None
+    assert altered.ruleset_verified is False
+    # and the two payloads differ in more than the status word
+    assert wrong_prompt.as_dict() != altered.as_dict()
+    for field in ("commitment_verified", "ruleset_verified"):
+        assert wrong_prompt.as_dict()[field] != altered.as_dict()[field]

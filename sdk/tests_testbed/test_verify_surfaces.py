@@ -36,6 +36,25 @@ PAGE_SOURCE = io.open(_PKG / "page.html", encoding="utf-8").read()
 PHI_PROMPT = "Draft a note for the patient at alice@example.org about their MRI."
 
 
+def _strip_js_comments(text: str) -> str:
+    """`//` lines removed. Every guard here that greps the page needs this:
+    the comments quote the defects they replaced, verbatim and on purpose."""
+    return chr(10).join(line for line in text.splitlines()
+                      if not line.strip().startswith("//"))
+
+
+def _verify_code() -> str:
+    """`wireVerify`'s body, comments stripped."""
+    return _strip_js_comments(
+        PAGE_SOURCE.split("function wireVerify")[1].split("function ")[0])
+
+
+def _evidence_code() -> str:
+    """`renderEvidence`'s body, comments stripped."""
+    return _strip_js_comments(
+        PAGE_SOURCE.split("function renderEvidence")[1].split("function ")[0])
+
+
 def _keyed(tmp_path):
     """See ``test_evidence._keyed``: built with the spool, never swapped after.
 
@@ -560,3 +579,52 @@ def test_the_page_and_the_repl_both_degrade_on_an_unknown_ruleset_value():
     assert "is not a value this build knows" in CLI_SOURCE
     # and the page must not go back to a bare subscript
     assert "RULESET_WORDS[String(evidence.ruleset_verified)]" not in PAGE_SOURCE
+
+
+# ══ T4d · the page must not announce a row it has not looked for ════════════
+def test_the_page_reads_submitted_and_never_promises_a_row():
+    """🔴 THE PAGE CONTRADICTED ITSELF IN THE OFFLINE DEMO A PROSPECT SEES FIRST.
+
+    The hint under every record with an id read `"row " + turn.event_id` --
+    including the keyless default, where nothing was shipped and no row exists.
+    `submitted` rode in the payload and was read by NOTHING in this file, so the
+    page announced a row and then, one click later, said "NEVER SHIPPED TO A
+    LEDGER" in the panel directly beneath it.
+
+    ⚠ THE WORD "row" IS BANNED FROM THE PRE-CLICK HINT, not merely made
+    conditional. Nothing has looked for a row at that point on any path, so
+    there is no branch on which it is the right word.
+    """
+    # ⚠ COMMENTS STRIPPED. The comment explaining the fix QUOTES the defect it
+    # replaced -- `"row " + turn.event_id` -- so the first version of this guard
+    # read its own explanation as the violation and failed a correct file. The
+    # repo's oldest trap, in a third syntax.
+    body = _verify_code()
+    assert "turn.submitted" in body, (
+        "the hint still does not read `submitted`; it is in the payload and "
+        "the page was ignoring it")
+    assert '"row "' not in body, "the pre-click hint still promises a row"
+    assert '"event "' in body
+
+
+def test_the_two_hints_say_different_things():
+    """Reading `submitted` is only half of it -- the two branches have to
+    DIVERGE, or the field is read and thrown away."""
+    body = _verify_code()
+    assert "enqueued" in body
+    assert "not shipped" in body
+    # and "enqueued", not "shipped", for the same reason core.verify says so:
+    # a successful spool enqueue is not a delivery.
+    assert '" \\u00b7 shipped"' not in body
+
+
+def test_the_page_never_calls_an_enqueue_a_delivery():
+    """The word `core.verify` refuses is refused in the verify code too.
+
+    ⚠ SCOPED TO THE VERIFY CODE, NOT THE WHOLE FILE. "delivered" is correct
+    English elsewhere on this page and says nothing about a ledger -- the
+    observe hint reads "Prompts are delivered exactly as typed", which is about
+    the PROVIDER. A blanket ban failed that correct sentence.
+    """
+    assert "delivered" not in _verify_code()
+    assert "delivered" not in _evidence_code()
