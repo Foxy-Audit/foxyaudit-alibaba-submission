@@ -1,328 +1,379 @@
-# SDK — Policy Truth: additive checks, provable blocks, a console API
+# SDK — Policy Truth II: the tag you typed, the rules that ran, the limits we admit
 
-**Plan of record** · 2026-08-12 · MAIN chat is the committer; executors build per this file.
+**Plan of record** · original written 2026-08-12 · **re-cut 2026-08-24 against `676a908`**
+MAIN chat is the committer; executors build per this file.
 
-Phases **S3 → S7**, continuing the `S` series (S1 = response scanning / OWASP LLM05,
-shipped in 1.4.0 at `3e0f6d8`).
+Phases **S12 → S16**, continuing the `S` series. S11 (`ce491e1`) was the last.
+
+> **S3–S7 ALL SHIPPED, and four more phases landed after them.** This file
+> described five phases as pending; every one is done. What follows is the
+> second generation of the same defect, plus the one item S7 left behind.
+> The original §1–§9 are archived in `docs/done/sdk-policy-truth-S3-S7.md`.
 
 ---
 
 ## 1 · Context
 
-The owner asked five questions about whether the SDK does what it claims. Four of them
-turned into work; the fifth resolved itself mid-session. The through-line is that the
-SDK's *mechanism* is sound and its *coverage and provability* are not:
+The first plan existed because the SDK's *mechanism* was sound and its *coverage
+and provability* were not. That was fixed: the policy map is additive, rulesets
+are frozen and versioned, `check()` and `explain()` are public, the fox no longer
+invents a risk score.
 
-- `mode="block"` really does stop the model call. That part is not in doubt.
-- But a prompt tagged `hipaa` gets **no injection and no secret scanning**, and the tag
-  our own documentation tells people to use (`hipaa_basic`) does **no PHI scanning at
-  all** — it is not a recognised tag and falls through to the default.
-- And when a block does fire, nothing shipped can prove the rule genuinely matched. The
-  ledger attests *which rule we recorded*, not *that it fired*.
+**The same defect has recurred twice, in new clothes, and one admission is still
+owed.**
 
-1.4.0 went to PyPI at 13:54 UTC today (`Release` run 31603849761, all 8 jobs green),
-so the broken quickstart is now the first thing a visitor to the package page reads.
-That is what makes S3 and S7 urgent rather than merely correct.
+- A developer who types `policy="HIPAA"` — the natural spelling, in the product's
+  own compliance vocabulary — gets **no PHI check and PHI delivered to the
+  model**, and the event is chained as `default`. This is `hipaa_basic` again,
+  triggered by a shift key.
+- `foxy explain` tells an auditor that a row written **today** "was written
+  before SDK 1.7.0". A false statement of fact, in the tool built to establish
+  facts.
+- Injection detection is five English regexes. Eight evasions pass. Nothing on
+  any surface says so.
 
----
-
-## 2 · What the premises actually are
-
-Read at `24d3699`. The owner's five questions, checked against the code:
-
-| # | The premise | Holds? | What is actually true |
-|---|---|---|---|
-| 1 | The SDK blocks non-compliant prompts | **partly** | The mechanism is real — [`client.py:635-637`](../../sdk/src/foxy_audit/client.py#L635-L637) evaluates before the wrapped fn and raises without calling it. The **coverage** is the problem: see rows 2–3. |
-| 2 | HIPAA/GDPR policies and OWASP LLM01 both apply | **NO** | `_POLICY_CHECKS` is **exclusive, not additive** ([`policy.py:61-65`](../../sdk/src/foxy_audit/policy.py#L61-L65)). `hipaa` → PHI only. `gdpr` → PII only. `default` → injection + secrets. No tag runs both families. |
-| 3 | `hipaa_basic` is a HIPAA policy | **NO** | It is not a key in `_POLICY_CHECKS`, so `_checks_for` returns `_DEFAULT_CHECKS` and it runs injection+secrets with **zero PHI detection**. It appears in [`__init__.py:15`](../../sdk/src/foxy_audit/__init__.py#L15), [`sdk/README.md:26`](../../sdk/README.md#L26) (the PyPI long description), [`demo/run_demo.py:24`](../../demo/run_demo.py#L24) and [`sdk_bridge.py:12`](../../desktop/sdk_bridge.py#L12). |
-| 4 | The desktop pet signals a breach | **holds, and more** | It does not merely signal. Red overlay 5s, ALERTING sprite, **native OS toast**, sound, pops out of the tray, and **auto-opens the chat popup** ([`omni_fox.py:1143-1185`](../../desktop/omni_fox.py#L1143-L1185), [`companion_events.py:78-100`](../../desktop/companion_events.py#L78-L100)). Gated on the user's threshold/sound/toast settings. |
-| 5 | The fox reports the breach honestly | **NO** | The SDK's UDP ping carries no `risk_score` ([`client.py:311-315`](../../sdk/src/foxy_audit/client.py#L311-L315)), so `omni_fox` falls back to `100` and renders **"Risk Score: 100/100"** — a hardcoded default presented as a measurement. Hard-rule violation (§5.1, no fake data). |
-| 6 | A blocked event is tamper-evident | **holds** | `event_metadata` — which carries `decision`, `policy_rules`, `blocked_reason` — **is bound into the chain hash** at `chain_version ≥ 2` ([`chain.py:61-71`](../../backend/app/chain.py#L61-L71)) and [`verifier/foxy_verify.py`](../../verifier/foxy_verify.py) recomputes it with zero Foxy imports. Nobody can retroactively change which rule we said fired. |
-| 7 | We can prove the rule actually matched | **NO** | Nothing shipped re-runs a rule against the text. And `policy_rules` carries **no ruleset version or hash**, so an auditor cannot establish what `injection.ignore_previous` meant on the day it fired. This is the real gap behind the owner's question 2. |
-| 8 | The SDK can be called from a console | **NO** | `foxy doctor` is the *only* subcommand and is connectivity-only ([`cli.py:110-120`](../../sdk/src/foxy_audit/cli.py#L110-L120)). `FoxyClient` has **no `.check()`** — the decorator is the sole entry point. `policy.evaluate` is reachable but is a private module, absent from `__all__`, returning an internal dataclass. |
-| 9 | 1.4.0 needs publishing | **already done** | The owner tagged it mid-session. Run 31603849761: `check-version`, `build-sdk`, `publish-pypi`, all three `build-desktop`, `publish-installers-to-vm`, `publish-github-release` — **all success**. Nothing to do; what remains is listing quality (S7). |
-| 10 | A test chatbot exists to try this as a client | **NO** | Nearest are `demo/mock_llm.py` and `demo/live_openai_client.py`, both CLI-only. A repo-wide grep for playground/chatbot/sandbox returns only Paddle's payment sandbox. → separate plan, [`compliance-testbed.md`](compliance-testbed.md). |
-
-**Not in the registers.** `Worth Noting — Issues.md` runs to #161 and contains no entry
-for the policy map, `hipaa_basic`, or the risk score. These are new; allocate **#166
-(policy map) · #167 (`hipaa_basic`) · #168 (fox risk score)** when syncing.
+The through-line is unchanged from the first plan: **the SDK claiming more than
+it does.**
 
 ---
 
-## 3 · Owner decisions · 2026-08-12
+## 2 · Premises, verified at `676a908` (2026-08-24)
+
+The original table was read at `24d3699`. Every row of it has since resolved.
+
+| The original premise | Then | Now |
+|---|---|---|
+| `_POLICY_CHECKS` is exclusive, not additive | NO | ✅ **fixed** — `_BASELINE_CHECKS` + `_POLICY_EXTRA`, shipped 1.6.0 |
+| `hipaa_basic` does no PHI scanning | NO | ✅ **fixed** — `_POLICY_ALIASES`, verified: `hipaa_basic` blocks a PHI prompt |
+| Nothing proves a rule actually matched | NO | ✅ **fixed** — S4 (1.7.0) `ruleset_version`/`ruleset_hash`, S5 (1.8.0) `explain()`, S9 (1.10.0) verifies the ruleset it replays |
+| The SDK cannot be called from a console | NO | ✅ **fixed** — `check()`/`explain()` public, `foxy check`/`foxy explain` |
+| The fox renders a hardcoded 100/100 | NO | ✅ **fixed** — `score_or_none`; a score prints only when the payload carries one |
+| The backend allowlist is a 422 trap | holds | ✅ **widened** — `ruleset_version`, `ruleset_hash` at `schemas.py:64` |
+| S7 ships the listing | pending | ⚠️ **NOT DONE** — see §3 |
+
+**What is true now, and is the work:**
+
+| # | Verified at `676a908` |
+|---|---|
+| 🔴 **#232** | Reproduced in `mode="block"`: `policy="HIPAA"` / `"Hipaa"` / `" hipaa"` → **ALLOWED THROUGH, model called**, wire `policy_tag="default"`. `policy="hipaa"` blocks. The decorator validates with `_POLICY_RE` (`client.py:122`) and falls back at `client.py:615`; `evaluate()` and `check()` normalise internally, so **the two paths disagree**. |
+| 🔴 **#239** | `explain()` on a clean row returns `predates_provenance` — "written before SDK 1.7.0" — for a row written today. Measured: allowed → `ruleset_version=None`; blocked → `'2026.08.4'`. The *behaviour* is correct per S4; the *message* is not. |
+| 🟡 **#230** | Five `_INJECTION_RULES`. Eight measured evasions pass: spaced letters, one-letter typo, synonym, non-English, base64, indirect via retrieved document, polite framing, keyword-free exfiltration. |
+| ⚠️ **S7 tail** | `sdk/README.md:451` — the PyPI long description — still opens Install with `pip install -e .`, the exact line S7 was written to replace. `check-version` still validates **two** of three version stamps. |
+
+**Baselines measured** (`--collect-only`, `676a908`): `sdk/tests` **752** ·
+`sdk/tests_testbed` **413** · `verifier` **31** · `desktop` **936** (2
+pre-existing reds, #235/#236). SDK version **1.12.0, unpublished**.
+
+---
+
+## 3 · Owner decisions · 2026-08-24
 
 | Question | Decision |
 |---|---|
-| How to fix the policy map | **Additive baseline.** Injection + secrets always run on every tag; `hipaa`/`gdpr` add PHI/PII on top. Alias the `_basic` tags. Owner accepted the stated behaviour change. |
-| How far to take provability | **Replay tool + ruleset version.** `foxy explain` replays locally against a *pinned* ruleset, and `ruleset_version` + `ruleset_hash` go on the wire and into the chain. |
-| Test chatbot | **All of the above** — healthcare *and* finance *and* legal, on web *and* desktop *and* CLI. Scoped separately in [`compliance-testbed.md`](compliance-testbed.md). |
-| v1.4.0 to PyPI | Owner tagged it during the session; it published cleanly. Next release is **1.6.0** (S3 changes behaviour — see §5). ⚠ 1.5.0 is TAKEN — it shipped #158 at `b651a62`. |
+| Scope of the next series | **The full sweep**, including broadening injection detection. |
+| #232's tag on the wire | **Normalise the checks, normalise the wire tag, AND preserve what the customer typed** in `event_metadata.policy_tag_raw`. |
+| #230 | **Broaden the ruleset in this plan** — not merely document the limit. |
+| Publishing | **No.** Nothing is tagged; `release.yml` stays disarmed. The listing work is done so a tag is one step whenever the freeze lifts. |
+
+**One version for the whole series: 1.13.0, stamped once in S16.** The repo's
+convention is one phase per version, and it is right when each phase publishes.
+Nothing here publishes, so intermediate bumps would name releases that never
+existed and leave the changelog describing a history PyPI cannot show. S16
+stamps 1.13.0 and its changelog block names S13, S14 and S15.
 
 ---
 
-## 4 · ⚠ The blocker nobody mentioned
+## 4 · 🔴 The blocker nobody mentioned, and it dictates the order
 
-**`event_metadata` is a strict allowlist, and an unknown key is a 422 on ingest.**
+**The backend rejects the very tag #232 is about.**
 
-[`backend/app/schemas.py:35-49`](../../backend/app/schemas.py#L35-L49):
+`backend/app/schemas.py:20`:
 
 ```python
-allowed = {"request_id", "trace_id", "session_id", "provider", "model",
-           "id", "usage", "choice_count", "tool_names", "retrieval_refs",
-           "client_seq_gap", "decision", "blocked_reason", "policy_rules"}
-unknown = set(value) - allowed
-if unknown:
-    raise ValueError("event_metadata contains unsupported fields")
+policy_tag: str = Field(pattern=r"^[a-z0-9_]{1,32}$")
 ```
 
-So S4 is **not** a free ride on an open dict. Three consequences, and the ordering is
-not negotiable:
+Measured: `hipaa` ✅ · `hipaa_basic` ✅ · `HIPAA` ❌ · `Hipaa` ❌ · `" hipaa"` ❌.
 
-1. **The backend must ship the widened allowlist BEFORE any SDK sends the new keys.**
-   Reverse that order and every guarded event from an upgraded SDK is rejected with a
-   422 — a silent, total evidence outage on exactly the events that matter most.
-2. **A self-hosted or lagging backend will reject an upgraded SDK.** The hosted backend
-   is ours to sequence; a customer running their own is not. The SDK must therefore
-   **degrade rather than fail**: on a 422 naming unsupported fields, retry once without
-   the ruleset keys and record that it did. Do not let a provenance nicety cost a
-   customer their audit trail.
-3. The per-key caps (`≤ 64 items`, `≤ 256 chars`) are fine — a version string and a
-   64-char hex hash both clear them comfortably.
+So "keep the tag the customer typed on the wire" was never available — sending
+`HIPAA` would 422 every guarded event from that call site, **a total evidence
+outage on exactly the events this fix exists to protect.** Today's behaviour is
+not preservation either; it is a silent substitution of `default`, which is
+strictly worse than case-folding.
 
-**Second-order:** `event_metadata` has been chain-bound since V2, so adding keys changes
-the chain hash **for new rows only**. Old rows are untouched and keep verifying. Prove
-that rather than assume it (§8).
+**Therefore the wire tag is normalised, and the typed form is preserved beside
+it** — which needs a new `event_metadata` key, and `event_metadata` is a strict
+allowlist. The ordering is not negotiable, and it is the same trap S4 documented:
+
+1. **The backend ships and DEPLOYS `policy_tag_raw` before any SDK sends it.**
+   Reverse this and every normalised event is rejected with a 422.
+2. **The SDK degrades rather than fails** on a 422 naming unsupported fields:
+   retry once without the key, and record that it did. A lagging or frozen
+   backend must not cost a customer their audit trail. ⚠ **Production is frozen
+   and will NOT have this key** — the degrade path is the only thing standing
+   between a devtool SDK pointed at prod and a total ingest failure.
+3. **Send `policy_tag_raw` ONLY when normalisation changed something.** An event
+   whose tag was already canonical must stay byte-for-byte what it is today.
+   This is the same property S4 protected for the clean observe path, and it
+   keeps the chain hash of every unaffected row identical.
+
+**Second-order:** `event_metadata` has been chain-bound since V2, so the new key
+changes the chain hash **for affected new rows only**. Old rows are untouched and
+keep verifying. Prove that with a real export; do not assume it.
 
 ---
 
-## 5 · The blast radius of the additive change — read before building S3
+## 5 · Blast radius — read before building S13 and S15
 
-This is the part to get wrong quietly, so it is stated in full.
+### S13 — prompts that were allowed will now be blocked
 
-**`signals` becomes `pii_signals` on the wire, and `pii_signals` is a deterministic
-breach trigger on the backend** (`if pii_signals: policy_breach = True`). In
-`_evaluate_preflight`, only the **block** and **redact** branches populate `signals`;
-the `allow` branch sets `None` and the observe path produces no plan at all. Therefore:
+That is the point of the fix, and it is still a behaviour change:
 
-| Mode | What changes for a `hipaa`/`gdpr` tag |
-|---|---|
-| `observe` | **Nothing.** No plan, no signals, historical `pii.detect_pii` path unchanged. |
-| `block` | Prompts carrying an injection pattern or an API key now **raise where they previously passed**. This is the point of the change. |
-| `redact` | Injection and secret spans are now **also scrubbed from the prompt the model receives** — `redact()` shares `_checks_for` with `evaluate()`. The model sees different text than it did in 1.4.0. |
-| any of the above | New `prompt_injection` / `secret_key` labels appear in `pii_signals` on rows that had none → **new deterministic breaches on existing customers' dashboards.** |
+| Call | Before | After |
+|---|---|---|
+| `policy="hipaa"` | blocked | blocked — unchanged |
+| `policy="HIPAA"`, `mode="block"` | **allowed, model called** | **raises `FoxyPolicyBlocked`** |
+| `policy="HIPAA"`, `mode="redact"` | prompt untouched | PHI spans now scrubbed — the model sees different text |
+| any miscased tag | chained as `default` | chained as the canonical tag, with `policy_tag_raw` |
 
-That last row is the one to put in the release notes. It is correct behaviour — those
-*are* breaches, and we were silently not looking — but a customer who sees their breach
-count jump after a version bump deserves to have been told.
+A workspace whose dashboards have been quietly recording `default` for HIPAA
+traffic will see those events change tag. **That is a correction, not a
+regression, and it must be in the release notes** — a customer whose compliance
+grouping shifts after an upgrade deserves to have been told why.
 
-**This is a MINOR bump: 1.6.0.** Not a patch. New rules fire, new exceptions raise from
-code that did not raise before, and the redacted prompt changes shape.
+### S15 — new rules fire, on prompts that previously passed
+
+Identical in shape to the 1.6.0 additive change, and the same three consequences:
+
+- New `prompt_injection` labels appear in `pii_signals` on rows that had none →
+  **new deterministic breaches on existing dashboards.** They are real breaches
+  we were not looking for; say so.
+- Under `redact`, more spans are scrubbed → **the model receives different text.**
+- ⚠ **False positives are the risk that matters here**, and the testbed is
+  already the harness for them: `expect_assist` probes must keep coming back
+  answered, and the scoreboard's assistance column fails loudly if a broadened
+  rule starts refusing ordinary work. **Run all three sectors on every iteration
+  of the ruleset, not once at the end.**
+- ✅ Checked: none of the six `*.gap.*` probes is injection — they are MRN, DOB,
+  cardholder data, bank account, privileged document, client confidence. So no
+  declared gap closes and the "2 known gaps" assertions hold.
 
 ---
 
 ## 6 · Phases
 
-| Phase | Branch | Scope |
-|---|---|---|
-| **S3** | `fix/sdk-additive-policy` | Additive baseline + tag aliases + versioned ruleset registry |
-| **S4** | `feat/ruleset-provenance` | Widen the backend allowlist, then ship `ruleset_version`/`ruleset_hash` on the wire |
-| **S5** | `feat/sdk-check-explain` | Public `check()` / `explain()` + `foxy check` / `foxy explain` CLI |
-| **S6** | `fix/fox-unscored-breach` | Stop the fox rendering a hardcoded 100/100 |
-| **S7** | `docs/sdk-1-6-0-listing` | PyPI listing, README, version bump to 1.6.0 |
+| Phase | Branch | Scope | Depends on |
+|---|---|---|---|
+| **S12** | `feat/policy-tag-raw-allowlist` | backend: widen the allowlist, **merge AND deploy to dev2** | — |
+| **S13** | `fix/policy-tag-normalisation` | #232 — the PHI bypass | **S12 deployed** |
+| **S14** | `fix/explain-unversioned-clean-row` | #239 — explain stops blaming 1.7.0 | — |
+| **S15** | `feat/injection-ruleset-2026-08-5` | #230 — broaden injection detection | — |
+| **S16** | `docs/sdk-1-13-0-listing` | the S7 tail + 1.13.0 stamps | **all of the above** |
 
-**Order.** S4 has a hard internal ordering (backend before SDK — §4). S3 → S4 → S5 → S7
-is the dependency chain; **S6 is independent and can be built in parallel by a second
-executor.** S7 must be last: it documents whatever S3–S5 actually shipped.
+**Order.** S12 → S13 is a hard chain with a deploy in the middle. **S14 and S15
+are independent of both and of each other** — three executors can run at once.
+S16 is last and documents whatever actually shipped.
+
+### S12 — the backend accepts `policy_tag_raw`
+
+**Files:** `backend/app/schemas.py` · `backend/tests/integration/`
+
+Add `policy_tag_raw` to the `event_metadata` allowlist beside `ruleset_version`
+and `ruleset_hash`. That is the whole change.
+
+**Traps:**
+- **Do not add a top-level payload field.** Riding inside `event_metadata` gets
+  chain coverage for free; a top-level field means touching `chain.py`'s frozen
+  blob and a new `chain_version`.
+- The per-key caps (≤64 items, ≤256 chars) already cover a 32-char tag.
+- ⚠ **This phase is not done when it merges. It is done when it is DEPLOYED to
+  the dev stack** — `docker compose -f docker-compose.dev2.yml up --build -d` in
+  `/home/devops/foxy-audit-dev`, **never** `/home/devops/foxy-audit`, which
+  production's workflow `git reset --hard`s. Report the deploy, not the merge.
+
+### S13 — the tag you typed does what it says
+
+**Files:** `sdk/src/foxy_audit/client.py` · `sdk/tests/`
+
+```python
+policy = (policy or "default").strip().lower()   # BEFORE _POLICY_RE, not after
+```
+
+Then send the canonical tag on the wire, and add
+`event_metadata["policy_tag_raw"]` **only when the normalised form differs from
+what was passed**.
+
+**Traps:**
+- **`evaluate()` and `check()` already normalise.** This phase makes the
+  decorator agree with them; do not add a second normalisation with different
+  rules. One helper, called from both, or the two drift again.
+- **The 422 degrade path (§4.2) is not optional** and must be tested against a
+  backend that rejects the key — production is exactly that backend.
+- **Prove the unaffected path is byte-identical.** A `policy="hipaa"` event must
+  produce the same payload it produces today, key for key.
+- ⚠ **The regression guard is the whole reason this shipped:** a decorator test
+  over `{hipaa, HIPAA, Hipaa, " hipaa", "HIPAA "}` × `mode="block"` asserting the
+  PHI prompt is blocked in **every** case. Today's suite exercises only the
+  lowercase form, which is why nobody saw it. Add the same sweep for `redact`.
+
+### S14 — explain stops blaming SDK 1.7.0 for a row written today
+
+**Files:** `sdk/src/foxy_audit/introspect.py` · `sdk/tests/`
+
+A row with `event_metadata` carrying a `decision` but no `ruleset_version` is a
+**modern row where no rule fired** — not a pre-1.7.0 row. Distinguish them.
+
+**Traps:**
+- **A clean `observe` row is genuinely ambiguous**: it builds no
+  `event_metadata` at all, by design, which is what keeps its payload
+  byte-identical. Say "cannot be distinguished from a pre-provenance row" rather
+  than guessing. Three cases, three sentences.
+- **Do not stamp provenance on clean rows to make this go away.** S4 decided
+  provenance rides only with the rule ids it explains; changing that would claim
+  rules explained something when none fired.
+- `STATUSES` is the vocabulary. If this needs a new status, add it there and let
+  the testbed's `EXPLAIN_FAMILIES` completeness guard tell you — it asserts the
+  map covers every entry, and **it will fail on purpose** when you add one. That
+  failure is the handshake, not an obstacle.
+
+### S15 — injection detection that survives a shift key and a space bar
+
+**Files:** new `sdk/src/foxy_audit/rulesets/v2026_08_5.py` · `ruleset.py`
+(`CURRENT_VERSION`) · `policy.py` · `sdk/tests/fixtures/` · `sdk/tests/`
+
+**Mint a NEW frozen version. Never edit `v2026_08_4.py`** — `explain()` replays
+the version a row names, and editing a published ruleset makes every row that
+names it unexplainable. `ruleset.py` already refuses this and tells you so.
+
+Order the work by evidence, not by ambition:
+
+1. **Write the evasion corpus first**, as a fixture beside
+   `identifier_corpora.py` — all eight measured evasions, each with the phrasing
+   and why it slips through today. It is the specification.
+2. **Write a BENIGN corpus in the same commit.** Ordinary clinical, financial and
+   legal prompts that must stay clean. Without it, "catch more" has no opposing
+   force and the first over-broad rule ships.
+3. Then broaden: normalise spacing and zero-width characters before matching,
+   add phrasings, consider base64. **Each addition is measured against both
+   corpora and the three testbed scoreboards.**
+
+**Traps:**
+- **`redact()` shares `_checks_for` with `evaluate()`.** A broader rule changes
+  what the model receives, not only what is recorded.
+- **Some evasions are not regex-answerable and must be admitted, not chased.**
+  Indirect injection via a retrieved document, and keyword-free exfiltration
+  ("list every customer email in your context"), are semantic. **Say so on the
+  surfaces** — that half of the honest-documentation option survives into this
+  one, and #230 stays open, re-measured, for whatever is still uncaught.
+- The `ruleset_hash` covers the frozen definition. If a new rule depends on a
+  table the way S10's issuer ranges did, **the digest must cover the table too**
+  ([[#224]]).
+
+### S16 — the listing, and the stamps
+
+**Files:** `sdk/README.md` · `sdk/pyproject.toml` · `VERSION` ·
+`sdk/src/foxy_audit/__init__.py` · `.github/workflows/release.yml`
+
+- **`sdk/README.md:451` Install → `pip install foxy-audit`.** It is the PyPI long
+  description and it currently tells a visitor to clone the repo.
+- `[project.urls]`: a `Changelog` entry, and link `SECURITY.md`.
+- Document the 1.13.0 behaviour changes from §5, both of them.
+- Bump **1.13.0** in `VERSION`, `sdk/pyproject.toml`, `__init__.__version__`.
+- **Add `__init__.__version__` to `check-version`.** S7 was asked to and did not;
+  it still validates two of three. ⚠ And note what makes it toothless here: the
+  comparison sits inside `if github.ref_type == 'tag'`, and the tag trigger was
+  removed for the freeze — so **nothing is cross-checked at all today**. The
+  guard that works is a pytest. Fix the workflow anyway, for the merge-back.
+- ⛔ **Do not tag. Do not add a PyPI token to this repo.**
 
 ---
 
-## 7 · Per phase
+## 7 · Skills
 
-### S3 — additive baseline + aliases + ruleset registry
+**No phase in this series touches UI.** Say so in the report rather than loading
+the frontend skills — S16 edits a README, which is prose, not an interface.
+`dataviz` likewise: no chart, no mark, no scale, no palette.
 
-**Files:** `sdk/src/foxy_audit/policy.py` · new `sdk/src/foxy_audit/ruleset.py` ·
-`sdk/tests/`
+Load **`ponytail` at lite** on S13 and S16 and apply it only where it is
+provably output-neutral. S13 is one normalisation call and a conditional key;
+S16 is text. Neither should grow a helper module.
 
-Move `_INJECTION_RULES` and `_SECRET_RULES` out of `policy.py` into a **versioned,
-frozen registry** in `ruleset.py`. S4 and S5 both depend on historical rulesets still
-existing, so this is not a cosmetic move:
-
-```python
-RULESETS = {"2026.08.1": Ruleset(injection=(...), secrets=(...))}
-CURRENT = "2026.08.1"
-
-def ruleset_hash(version: str) -> str:
-    """sha256 over canonical JSON of sorted (rule_id, signal, pattern_source)."""
-```
-
-Then make the policy map additive:
-
-```python
-BASELINE      = ("injection", "secrets")          # always, every tag
-_POLICY_EXTRA = {"hipaa": ("phi",), "gdpr": ("pii",)}
-_ALIASES      = {"hipaa_basic": "hipaa", "gdpr_basic": "gdpr"}
-```
-
-**Traps for this phase:**
-
-- **`redact()` shares `_checks_for` with `evaluate()`.** Changing the map changes what
-  the model receives under `mode="redact"`, not just what is recorded. Intended — but
-  assert it deliberately rather than discovering it.
-- **`_REASON_PRIORITY` already orders `secret` above `injection` above `phi`/`pii`.** A
-  hipaa-tagged prompt containing both an API key and PHI will now report
-  `blocked_reason: "secret_key"` where it previously said `phi`. Correct by the existing
-  priority table; make sure a test pins it so it is a decision, not a drift.
-- **Alias resolution must happen before `_POLICY_CHECKS` lookup and must not change
-  `policy_tag` on the wire.** The customer tagged their event `hipaa_basic`; the ledger
-  must keep saying `hipaa_basic`. Only the *checks* resolve through the alias. Changing
-  the recorded tag would rewrite the meaning of every historical row that used it.
-- **Prove `default` did not move.** Per playbook §3, load the pre-change module and the
-  post-change module side by side and assert `evaluate(text, "default")` is identical
-  across a wide corpus. A golden-vector file written on the branch proves only that the
-  branch agrees with itself.
-
-**Assumption to overrule if it is wrong:** that `hipaa_basic` and `gdpr_basic` are the
-only aliases worth having. If telemetry or the sale page uses other tags (`soc2` appears
-in `sdk/README.md:38`), say so — `soc2` currently gets baseline checks and may be fine,
-but it should be a decision.
-
-### S4 — ruleset provenance on the wire
-
-**Files:** `backend/app/schemas.py` (first, and merged first) · then
-`sdk/src/foxy_audit/client.py` · `backend/tests/integration/` · `sdk/tests/`
-
-1. Widen the `event_metadata` allowlist with `ruleset_version`, `ruleset_hash`. Merge
-   and deploy **before** touching the SDK (§4).
-2. `log_interaction` adds both keys whenever `policy_rules` is present — not on clean
-   observe rows, which must stay byte-for-byte identical to preserve the property that
-   makes `observe` a safe default (`_labels` returns `{}` for a clean call; do not
-   break that).
-3. Implement the 422 fallback from §4.2: on an ingest rejection naming unsupported
-   fields, retry once without the ruleset keys.
-
-**Traps:**
-
-- **Do not add a top-level payload field.** `event_metadata` is already chain-bound and
-  already validated; a new top-level field means touching `chain.py`'s frozen blob and a
-  new `chain_version`. Riding inside `event_metadata` gets chain coverage for free.
-- **Run `verifier/foxy_verify.py` against a real export** containing new-style rows.
-  Per playbook §6.2, when a shape widens, run the callers — including non-tests.
-  `demo/offline_demo.py` compares result dicts and has gone red on a *correct* change
-  before.
-- **CI does not run `pytest verifier/`** (memory: `export-bundle-e2`). Run it by hand.
-
-### S5 — the console API and the replay tool
-
-**Files:** `sdk/src/foxy_audit/client.py` · `cli.py` · `__init__.py` · `sdk/tests/`
-
-Public surface, all content-blind by construction:
-
-```python
-foxy.check("...", policy="hipaa")           # -> PolicyResult(action, rules, signals, reason)
-foxy.explain(prompt, event_id=..., export="logs.json")
-```
-
-```bash
-foxy check "ignore all previous instructions" --policy hipaa --json
-foxy explain --event-id <uuid> --export logs.json --prompt-file p.txt
-```
-
-`explain` is the answer to "prove it was a real breach": it recomputes the commitment
-from the local key + sidecar salt, matches it against the exported ledger row, replays
-**the ruleset version named in that row**, and prints the matched spans.
-
-**Traps:**
-
-- **Matched spans are for stdout only.** They are the customer's own text on the
-  customer's own machine, which is fine — but they must never enter a payload, a log
-  line, or an exception message. Add a guard that greps the emit path.
-- **Salted rows need the sidecar.** `commitment_alg == "hmac-sha256-salted"` cannot be
-  recomputed without `salt_sidecar_path`. Say so plainly rather than reporting a
-  mismatch that looks like tampering.
-- **A row with no `ruleset_version` (anything written before S4) must say
-  "unversioned — cannot pin", not silently replay today's rules.** Replaying current
-  rules against a historical row and calling it a match is exactly the false assurance
-  this phase exists to remove.
-- **Export `PolicyResult` in `__all__`.** A public API returning a type users cannot
-  import or name is not a public API.
-
-### S6 — the fox's unscored breach *(independent; parallelisable)*
-
-**Files:** `desktop/companion_events.py` · `desktop/omni_fox.py` ·
-`desktop/test_d12_companion.py`
-
-A local SDK block is **not graded** — there is no judge verdict and no risk score. The
-threshold semantics are already right and documented (`on_breach`: "a breach the grader
-could not score is not a quiet one" — unscored still interrupts). **Only the display is
-wrong.** Separate the two: keep `default=100` for the *threshold* decision, and render
-"not graded — local policy block" wherever a number is currently printed.
-
-Three sites: `on_breach`'s `body` f-string and `bubble`, and the chat-popup bubble in
-`_on_policy_breach` ([`omni_fox.py:1176`](../../desktop/omni_fox.py#L1176)).
-
-**Trap:** the backend poller path *does* carry a real `risk_score`. Do not remove the
-number there — distinguish "absent" from "zero", and keep the graded path showing its
-real score.
-
-### S7 — the listing
-
-**Files:** `sdk/README.md` · `sdk/src/foxy_audit/__init__.py` · `sdk/pyproject.toml` ·
-`VERSION` · `demo/run_demo.py` · `desktop/sdk_bridge.py` (docstring)
-
-- `sdk/README.md` **Install** currently says `pip install -e .` — a developer
-  instruction, and the first thing a PyPI visitor reads. Make it `pip install foxy-audit`.
-- Replace every `hipaa_basic` with a tag that does what the surrounding prose claims.
-- Document the additive baseline and the 1.6.0 behaviour change (§5).
-- Document `foxy check` / `foxy explain`.
-- Add a `Changelog` entry to `[project.urls]`, and link `SECURITY.md` (landed at
-  `24d3699`).
-- Bump **1.6.0** in three places: `VERSION`, `sdk/pyproject.toml`, and
-  `sdk/src/foxy_audit/__init__.py.__version__`.
-
-**Trap:** `check-version` in `release.yml` validates only **two** of the three version
-stamps — `__init__.__version__` is unchecked, so a wheel can pass the gate while
-reporting the previous version at runtime (known gap, `foxy-desktop-parity.md`). Bump it
-by hand, and **add it to `check-version` while you are there** — it is four lines and
-closes a gap that has been open since 1.2.0.
+⚠ **`ponytail` does NOT apply to S15.** A corpus that looks repetitive is the
+deliverable there — each case documents a distinct evasion, and collapsing them
+into a parametrised generator loses the one thing they carry, which is *why*
+each one slips through.
 
 ---
 
 ## 8 · Verification
 
 ```bash
-pytest sdk/tests verifier -q                 # SDK 143 · verifier 31 baseline
-pytest desktop                               # FROM THE REPO ROOT — 833 baseline
+# every phase, each suite ALONE; bare `python` here is 3.14 with a stale 1.7.0
+py -3.13 -m pytest sdk/tests -q                  # 752 baseline
+py -3.13 -m pytest sdk/tests_testbed -q          # 413 baseline
+py -3.13 -m pytest verifier -q                   # 31
+PYTHONPATH=sdk/src py -3.13 demo/mock_llm.py --scenario all
+PYTHONPATH=sdk/src py -3.13 demo/offline_demo.py
+
+# S12 — backend
 cd backend && DATABASE_URL=postgresql+psycopg://foxy:foxy@localhost:5433/foxy_pytest \
-  python -m pytest tests/integration -q      # 1101+ baseline
-python demo/mock_llm.py --scenario all       # the guard demo must still pass
-python demo/offline_demo.py                  # §6.2 — has gone red on a correct change
+  python -m pytest tests/integration -q
+#   ⚠ check nothing else is on the test DB first:
+#   SELECT pid, state FROM pg_stat_activity WHERE datname='foxy_pytest';
+
+# S13 / S15 — the testbed is the false-positive harness, run it every iteration
+PYTHONPATH=sdk/src py -3.13 -m foxy_testbed --sector healthcare --probe all
+PYTHONPATH=sdk/src py -3.13 -m foxy_testbed --sector finance   --probe all
+PYTHONPATH=sdk/src py -3.13 -m foxy_testbed --sector legal     --probe all
+
+# S15 — the chain must still verify with a new ruleset in play
+python verifier/foxy_verify.py <a real export>
 ```
 
 **What must NOT move:**
 
-- `evaluate(text, "default")` — identical output for every input, proven by loading the
-  **old** module beside the new one, not by a golden file written on the branch.
-- A clean `observe` call's payload — byte-for-byte identical (`_labels` returns `{}`).
-- Every historical chain hash. Re-verify a real export end to end with
-  `python verifier/foxy_verify.py`.
-- The recorded `policy_tag`. Aliases resolve *checks*, never the tag on the wire.
-
-**Make each new guard fail on purpose before trusting it.** The five ways a guard lies
-are in playbook §6.15 — and note #3 in particular here: a guard anchored to a position
-rather than a name will change subject when the rule tables move to `ruleset.py`.
+- `evaluate(text, "default")` for every input — proven by loading the **old**
+  module beside the new one, not by a golden file written on the branch.
+- A clean `observe` call's payload, byte for byte.
+- An already-canonical tag's payload, byte for byte (§4.3).
+- Every historical chain hash, and every frozen ruleset under `rulesets/`.
+- `sdk/tests_testbed` at 413 unless the phase deliberately moves it — and if it
+  does, that is a finding to report before it is a number to update.
 
 ---
 
 ## 9 · After each merge
 
-Per playbook §4:
+- **Devlog** `Devlogs/YYYY-MM-DD.md`, dated, house style.
+- **Register** — close **#232** (S13), **#239** (S14) with SHAs, keeping the
+  original text. **#230 stays open and is RE-MEASURED** by S15: the entry gets
+  the new evasion table showing what is caught now and what is still not. An
+  entry that says "eight evasions pass" must not survive a phase that fixed six
+  of them, and must not be closed by a phase that fixed six of eight.
+- **Re-stamp** `verified-against:` on `SDK/CLAUDE.md` (S13–S16),
+  `Backend/CLAUDE.md` (S12), `Testbed/CLAUDE.md` if S15 moves any scoreboard.
+- Remove the worktree, delete the branch, **printing its SHA first**.
 
-- **Devlog** `Devlogs/2026-08-12.md` — append. Lead with what surprised you: the
-  allowlist 422, and that our own documented tag did no HIPAA checking.
-- **Area notes** — re-stamp `updated:` / `verified-against:` / `verified-on:` on
-  `SDK/CLAUDE.md` (S3/S4/S5/S7), `Backend/CLAUDE.md` (S4), `Desktop/CLAUDE.md` (S6),
-  `Verifier/CLAUDE.md` (S4, if the export shape moved). Carry the **traps**, not the
-  changelog. `SDK/CLAUDE.md` still says `pip install foxy-audit — 1.3.0`.
-- **Register** — open **#166** (policy map exclusive), **#167** (`hipaa_basic` does no
-  PHI), **#168** (fox renders a hardcoded 100/100), each with `file:line` and why it
-  matters; close them ✅ with the SHA as each phase lands, keeping the original text.
+---
+
+## 10 · Merge gate — MAIN runs all of it
+
+Per `START HERE` §6: `git fetch` **at push time** · `merge-base --is-ancestor`
+immediately above the command that acts on it · three-dot `diff --stat` ·
+**blob** EOL check · each suite **alone** · no-fake-data grep · no-secret grep ·
+single Alembic head if S12 grows one (it should not — an allowlist is code) ·
+`code-review` skill · and **re-break at least three of the executor's guards**.
+
+**Two things this repo has taught, the hard way, in the last week:**
+
+- **`print("APPLIED:", new != src)` before believing any MISSED.** Files here are
+  CRLF; a multi-line pattern written with `\n` silently matches nothing. This has
+  caught a false MISSED at every gate it has been used at.
+- **Establish the harness is sound before reporting a red.** Three times in one
+  day a red was environmental: a vendor service on a UDP port (#236), a leftover
+  background server moving a file's mtime, and a socket race (#240). **Kill what
+  you started before you measure.**
+
+⚠ Merge to **`foxyaudit-devtool`** with a normal push. Never
+`git push origin <sha>:refs/heads/main` on the frozen repo — that is what the
+judges see, and it deploys production.
