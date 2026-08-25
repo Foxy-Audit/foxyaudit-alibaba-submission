@@ -1167,13 +1167,6 @@ _warned_reserved: set = set()
 #: remove, arriving through the one door left open.
 _ENFORCEMENT_KEYS = ("decision", "policy_rules", "blocked_reason")
 
-#: ⚠ AND `dispatch.TYPED_TAG_KEYS` — `policy_tag_raw` — FOR A THIRD REASON.
-#: The ledger enforces that it folds to THIS row's `policy_tag`, so a caller's
-#: own copy cannot say `PCI` on a `hipaa` row; what it CAN do is say a different
-#: legal spelling of the same tag, overwrite the one the SDK computed, and leave
-#: nothing downstream able to tell which it is reading. The set is named in
-#: `dispatch` because stripping it on the 422 path is that module's job.
-
 
 def _typed_tag(policy: str, tag: str):
     """The caller's spelling, but ONLY when the ledger will actually accept it.
@@ -1254,6 +1247,13 @@ def _reserve_provenance(metadata) -> dict:
     ``-W error`` — turning a metadata collision into an application crash.
     """
     clean = dict(metadata)
+    # ⚠ `dispatch.TYPED_TAG_KEYS` — `policy_tag_raw` — IS HERE FOR A THIRD
+    # REASON, neither the ruleset's nor the guard's. The ledger enforces that it
+    # folds to THIS row's `policy_tag`, so a caller's own copy cannot say `PCI`
+    # on a `hipaa` row; what it CAN do is say a different legal SPELLING of the
+    # same tag, overwrite the one the SDK computed, and leave nothing downstream
+    # able to tell which of the two it is reading. The set is named in
+    # `dispatch` because stripping it on the 422 path is that module's job.
     for key in (tuple(ruleset.PROVENANCE_KEYS) + _ENFORCEMENT_KEYS
                 + dispatch.TYPED_TAG_KEYS):
         if key in clean:
