@@ -459,14 +459,29 @@ def test_a_plain_probe_run_is_untouched(capsys):
 
 def test_an_export_that_is_valid_json_but_not_a_ledger_does_not_kill_the_repl(
         tmp_path):
-    """`introspect._row_for` calls `.get` on whatever `logs` turns out to be, so
-    a bare array raises AttributeError -- neither OSError nor ValueError, which
-    was all `verify` caught. It escaped into `_handle_command`, which catches
-    only KeyboardInterrupt, and took the whole session down with a traceback.
+    """`introspect._row_for` called `.get` on whatever `logs` turned out to be,
+    so a bare array raised AttributeError -- neither OSError nor ValueError,
+    which was all `verify` caught. It escaped into `_handle_command`, which
+    catches only KeyboardInterrupt, and took the whole session down.
 
     ⚠ DRIVEN THROUGH `repl`, because the blast radius IS the loop. Calling
-    `verify` directly would prove the exception is caught and say nothing about
-    whether the session survives it.
+    `verify` directly would prove the exception is handled and say nothing about
+    whether the session survives it. THAT is what this test is for and it is
+    unchanged.
+
+    ⚠ WHAT CHANGED AT S14d, AND WHY THIS TEST MOVED. The SDK no longer raises
+    here: `_row_for` skips entries that are not rows, and `explain` reports the
+    file as unreadable ITSELF. The old behaviour only looked safe from inside
+    the testbed, whose `verify` catches every exception -- `foxy explain` has no
+    such catch, so the same file handed a CLI user a traceback out of the branch
+    that promises never to produce one.
+
+    So the NEWS is unchanged and still asserted -- "THE EXPORT COULD NOT BE
+    READ", a non-ledger reported as a non-ledger rather than as a missing row --
+    and only its source moved, from an exception the surface rendered to a
+    sentence the SDK wrote. The exception TYPE is no longer in the text because
+    there is no longer an exception; asserting it would now be asserting that
+    the defect is still there.
     """
     bare = tmp_path / "bare.json"
     bare.write_text('{"logs": [1, 2, 3]}', encoding="utf-8")
@@ -478,7 +493,11 @@ def test_an_export_that_is_valid_json_but_not_a_ledger_does_not_kill_the_repl(
                     banner=False) == 0, "the REPL died on a malformed export"
     text = out.getvalue()
     assert "THE EXPORT COULD NOT BE READ" in text
-    assert "AttributeError" in text, "the type is what the message may carry"
+    assert "not a" in text and "export" in text, (
+        "the reader is not told their FILE is the problem")
+    assert "Check the id" not in text, (
+        "a non-ledger is being reported as a missing row -- the wrong steer")
+    assert "Traceback" not in text, "the REPL printed a traceback"
     assert "bye." in text, "the session never reached /quit"
 
 

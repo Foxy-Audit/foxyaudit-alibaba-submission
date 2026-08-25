@@ -402,8 +402,13 @@ def _salted_export(tmp_path, metadata):
     ("salt_unavailable", None,
      lambda t: (PHI, _salted_export(t, _honest_metadata()))),
     # DID NOT RUN: no version at all. THREE ROWS REACH THAT BRANCH AND S14 GAVE
-    # THEM THREE ANSWERS — rule ids without a version is the only one of the
-    # three that a pre-1.7.0 SDK is the only possible author of.
+    # THEM THREE ANSWERS. ⚠ This comment used to add that rule ids without a
+    # version "can only come from a pre-1.7.0 SDK", which contradicts the
+    # doctrine the same phase established one file over: a CURRENT SDK produces
+    # that shape whenever the backend rejects the provenance keys
+    # (`dispatch._strip_provenance` leaves `policy_rules` standing) or the
+    # ruleset registry cannot answer. The row records ids and no definition; it
+    # does not record why, which is what `ruleset_unrecorded` is named for.
     ("ruleset_unrecorded", None,
      lambda t: (PHI, _export(t, {"decision": "blocked",
                                  "policy_rules": ["phi.ssn_pattern"]}))),

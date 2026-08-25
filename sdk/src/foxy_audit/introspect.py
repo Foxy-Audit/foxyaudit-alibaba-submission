@@ -330,8 +330,17 @@ class ExplainResult:
 
 
 def _row_for(export: dict, event_id: str) -> dict | None:
+    """The row with this event_id, or None. ARBITRARY JSON IN, no traceback out.
+
+    ⚠ `logs` is whatever the reader's file contains. `{"logs": ["not-a-row"]}`
+    reached `.get` on a string and raised AttributeError out of the public path
+    — two lines above the non-dict `event_metadata` guard, and the same class as
+    it. A non-dict entry is not a row, so it is skipped: the answer becomes
+    `row_not_found`, which is a real answer and already the honest one for "your
+    export does not contain that event".
+    """
     for row in export.get("logs", []) or []:
-        if str(row.get("event_id")) == str(event_id):
+        if isinstance(row, dict) and str(row.get("event_id")) == str(event_id):
             return row
     return None
 
@@ -558,14 +567,51 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             export = json.load(handle)
 
     row = _row_for(export, event_id)
+
+    # ⚠ NORMALISED AFTER THE LOOKUP AND BEFORE EVERY MESSAGE, and the ORDER is
+    # the whole trick. `event_id` appears in ALL SIX sentences below, so leaving
+    # it raw left `_printable` guarding the values it was written for while the
+    # one value every message carries went through unescaped — measured: an
+    # export with `event_id = "ev-İ-1"` raised UnicodeEncodeError on a
+    # cp1252 console from every reachable arm, including the three this phase
+    # wrote. Doing it here rather than at each interpolation is deliberate: it
+    # cannot be forgotten by the next sentence somebody adds, and it cannot
+    # break the lookup, which has already happened one line up against the
+    # caller's real value.
+    event_id = _printable(event_id)
     if row is None:
+        # ⚠ TWO DIFFERENT PIECES OF NEWS, AND SENDING BOTH AS "check the id"
+        # STEERS THE READER AT THE WRONG THING. `logs` holding entries none of
+        # which is a row means the file is not a ledger export at all; telling
+        # someone to check their event_id when their FILE is the problem is the
+        # kind of confidently-unhelpful answer this module exists to avoid.
+        #
+        # This distinction used to be carried by an AttributeError — `_row_for`
+        # called `.get` on whatever it found — which the testbed caught broadly
+        # and rendered as "THE EXPORT COULD NOT BE READ". That worked there and
+        # nowhere else: `foxy explain` has no such catch, so the same file gave
+        # a CLI user a traceback. The news is kept; the crash is not.
+        entries = export.get("logs", []) if isinstance(export, dict) else []
+        entries = entries if isinstance(entries, (list, tuple)) else []
+        if entries and not any(isinstance(entry, dict) for entry in entries):
+            return ExplainResult(
+                "row_not_found",
+                f"THE EXPORT COULD NOT BE READ as a ledger: its `logs` holds "
+                f"{len(entries)} entr{'y' if len(entries) == 1 else 'ies'} and "
+                f"none of them is a row. This is valid JSON but not a "
+                f"/v1/logs/export document, so nothing here can be checked "
+                f"against event_id {event_id} — re-export rather than editing "
+                f"this file.",
+                event_id=event_id)
         return ExplainResult(
             "row_not_found",
             f"No row with event_id {event_id} in this export. Check the id, or "
             f"export a range that covers it.",
             event_id=event_id)
 
-    policy_tag = str(row.get("policy_tag") or "default")
+    # Same reasoning, one line instead of two interpolations: the tag is read
+    # once and every message downstream is safe by construction.
+    policy_tag = _printable(row.get("policy_tag") or "default")
     # ⚠ A DICT OR NOTHING. `or {}` alone let a truthy non-dict through — an
     # export with `"event_metadata": [1, 2]` reached `.get` and raised
     # AttributeError out of the public path, which is the same class of defect

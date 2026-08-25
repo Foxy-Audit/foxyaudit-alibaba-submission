@@ -2,10 +2,18 @@
 
 The phase this file guards exists because a verify control that fakes a result
 is the worst thing an audit product could ship. So the guards are almost all
-about REFUSING to answer: that `explain`'s eight outcomes reach a reader as
-eight words and not as a tick and a cross, that "no key" and "no export" and "no
-receipt" stay three different sentences, and that the one field the SDK made
-three-state does not collapse into a boolean on the way to a screen.
+about REFUSING to answer: that EVERY ONE of `explain`'s outcomes reaches a
+reader as its own word and not as a tick and a cross, that "no key" and "no
+export" and "no receipt" stay three different sentences, and that the one field
+the SDK made three-state does not collapse into a boolean on the way to a
+screen.
+
+⚠ THIS PARAGRAPH USED TO SAY "eight outcomes ... as eight words", and it was the
+FOURTH copy of that count to go stale when S14 took the vocabulary to ten. The
+number is gone rather than corrected: `introspect.STATUSES` is the authority,
+`test_every_status_the_sdk_can_return_has_a_family` below is what enforces it,
+and page.html's copy is pinned by a test that DERIVES both counts. Prose that
+restates a number no test reads is prose that will be wrong again.
 
 ⚠ EVERY STATE HERE IS REACHED BY DRIVING THE ENGINE, not by constructing an
 `Evidence` and asserting its fields back. A hand-built record proves the

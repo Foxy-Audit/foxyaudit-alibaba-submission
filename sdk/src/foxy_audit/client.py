@@ -1163,11 +1163,33 @@ def _reserve_provenance(metadata) -> dict:
             del clean[key]
             if key not in _warned_reserved:
                 _warned_reserved.add(key)
+                # ⚠ THIS USED TO SAY "rename your field to keep its value", AND
+                # THAT ADVICE BRICKS THE SPOOL. The backend validates
+                # `event_metadata` against a 16-key ALLOWLIST and answers any
+                # key it does not know with 422 "unsupported fields" — for the
+                # WHOLE request, because `payload: List[LogIngest]` is validated
+                # as one unit. The SDK's degrade path does not save you either:
+                # `dispatch._strip_provenance` removes only
+                # `ruleset.PROVENANCE_KEYS`, so a renamed field strips nothing,
+                # the `and` short-circuits, no retry fires, and every event in
+                # that batch re-queues forever. Following the advice turned one
+                # dropped field into an evidence outage.
+                #
+                # It was wrong for the two provenance keys since 1.7.0 as well —
+                # `my_ruleset_version` is just as unknown to the allowlist — so
+                # this is not a defect S14 introduced, only one it made reachable
+                # by three more keys.
                 log.warning(
                     "foxy-audit: event_metadata[%r] is RESERVED — it records "
                     "what the guard and its ruleset did, and the SDK sets it "
-                    "itself. Your value was dropped; rename your field to keep "
-                    "it. Reported once per process.", key)
+                    "itself. Your value was dropped. DO NOT simply rename the "
+                    "field: the backend allowlists event_metadata keys and 422s "
+                    "the ENTIRE batch for one it does not know, and the SDK's "
+                    "degrade path strips only the ruleset keys — so a renamed "
+                    "field re-queues every event beside it, indefinitely. Drop "
+                    "it, or pass it through log_interaction's own decision / "
+                    "policy_rules / blocked_reason arguments. Reported once per "
+                    "process.", key)
     return clean
 
 
