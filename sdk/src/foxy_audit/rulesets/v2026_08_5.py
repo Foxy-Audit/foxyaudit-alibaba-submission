@@ -84,10 +84,34 @@ past-tense qualifier, and one of five nouns. It now accepts four shapes:
     instructions` is an override in every context this SDK is sold into.
 (c) the assistant's OWN directives, with no qualifier needed at all:
     `your instructions`, `the system prompt`, `safety guidelines`, `guardrails`.
-(d) an unambiguous noun MARKED AS PREVIOUSLY GIVEN up to four words later --
-    `the guidance you were given earlier`, `the constraints you were configured
-    with`. This is what reaches the synonym and polite-framing evasions, where
-    the verb is ordinary English and the SELF-REFERENCE is the whole signal.
+(d) an unambiguous noun MARKED AS GIVEN TO THE ASSISTANT, up to four words
+    later -- `the guidance you were given`, `the constraints you were
+    configured with`, `the rules you were told at the start of this
+    conversation`. This is what reaches the synonym and polite-framing
+    evasions, where the verb is ordinary English and the SELF-REFERENCE is the
+    whole signal.
+
+⚠ SHAPE (d) TAKES NO BARE TEMPORAL MARKER, AND IT DID. It accepted
+`above|earlier|before|previously` after up to four filler words, and that
+blocked ordinary work in three sectors at once: `Ignore the policy limits listed
+above when calculating the reserve`, `Skip the training rows before 2019, they
+are not comparable`, `Omit the rules described earlier in the document`. The
+words cannot tell "earlier in this conversation" from "earlier in this
+document", and requiring the noun and the temporal to TOUCH does not save it
+either -- `Ignore the protocol above and follow the amended one` is ordinary
+legal work with them touching. Only an explicit reference to the conversation
+survives.
+
+THE COST, STATED RATHER THAN HIDDEN: the postposed `ignore the instructions
+above` is no longer reached by this shape. 2026.08.4 did not reach it either,
+and the pre-posed `ignore the above instructions` still is, through shape (b).
+
+⚠ EVERY NOUN ENDS AT A WORD BOUNDARY, AND THEY DID NOT. Without a trailing `\b`
+`policy` matches inside `policyholder` and `rules` inside `ruleset`, so `Please
+ignore the previous policyholder's address and use the new one` was BLOCKED in
+an insurance workspace -- and `mode="redact"` returned `Please
+[REDACTED:ignore_previous]holder's address...`, the guard cutting an ordinary
+word in half on its way to the model. Detection was not the only cost.
 
 The verb list grew from `ignore` alone to fourteen phrasings (`pay no attention
 to`, `set aside`, `stop following`, ...). ⚠ EVERY ONE IS FOLLOWED BY A MANDATORY
@@ -130,8 +154,9 @@ a rule widened without evidence is a false positive waiting for a customer.
 
 WHAT IS ADMITTED AND NOT FIXED
 ==============================
-Two of #230's eight are SEMANTIC, and no pattern separates them from ordinary
-work:
+Two of #230's eight are SEMANTIC: no pattern over the prompt separates them
+from ordinary work, and pretending otherwise is how a guard starts refusing the
+job it exists to protect.
 
 * INDIRECT INJECTION VIA A RETRIEVED DOCUMENT. The dangerous sentence carries no
   override verb and no reference to prior instructions; it is dangerous because
@@ -149,25 +174,47 @@ work:
   invoice in the attached statement` and `List every control PCI DSS requires`,
   which is the ordinary work the compliance testbed measures.
 
+A third is DECLINED rather than semantic -- a pattern could reach it, and the
+mechanism costs more than it buys:
+
+* A BASE64 PAYLOAD SPLIT ACROSS TWO BLOBS. Each blob is decoded into its OWN
+  view, so a match cannot span two. The first cut of this version joined every
+  decoded blob into one view with a newline between them, appeared to catch the
+  split payload, and DELETED THE REAL PROMPT BETWEEN THE BLOBS on the way --
+  measured at 38 characters of business text removed before the model call. A
+  detection assembled by concatenating two unrelated blobs is not a detection:
+  the identical mechanism fires when two innocent attachments' decoded texts
+  happen to abut. One blob at a time, and the split payload goes through.
+
 And three limits of what IS fixed, stated rather than left to be found:
 one layer of base64 only (not base64-of-base64, not hex, not ROT13, not
 URL-encoding); one DELETION only, not a general typo tolerance; nine languages,
 not "other languages".
 
-#230 STAYS OPEN. It is re-measured, not closed. Six of eight is not eight.
+#230 STAYS OPEN. It is re-measured, not closed. Eight of eleven is not eleven.
 
 MEASURED, ON THE CHECKED-IN CORPORA
 ===================================
 `injection_evasion_corpus.py`, at the commit that minted this version:
 
-* EVASIONS -- 8 of 10 entries caught, the two admitted ones being the semantic
-  pair above. Under 2026.08.4 the same corpus scored 0 of 10.
-* BENIGN -- 0 of 47 ordinary clinical, financial and legal prompts fire an
-  injection rule, under `default` and under `hipaa`. Under 2026.08.4: also
-  0 of 47. That is the number which had to NOT move, and it is the one this
-  version was measured against on every iteration rather than at the end.
+* EVASIONS -- 8 of 11 entries caught. The three not caught are the two semantic
+  ones and the declined one above. Under 2026.08.4 the same corpus scored
+  0 of 11.
+* BENIGN -- 0 of 65 ordinary clinical, financial, legal, insurance and
+  data-science prompts fire an injection rule, under `default` and under
+  `hipaa`. Under 2026.08.4: also 0 of 65. That is the number which had to NOT
+  move.
 * ALREADY_CAUGHT -- 5 of 5 of 2026.08.4's own phrasings still fire, with the
   same rule ids.
+
+⚠ THE BENIGN NUMBER WAS 0 OF 47 AND THE CORPUS WAS NOT REPRESENTATIVE. It held
+three sectors, all of them the compliance testbed's, and it missed four
+ordinary sentences that this version's first cut BLOCKED outright -- an
+insurance policyholder's address, an actuarial reserve calculation, a
+data-science training table, a reference to an earlier part of a legal
+document. A true number over the wrong population is the same defect as a guard
+that passes because it never looks. The corpus now spans five sectors and every
+noun the widening added has an adversary in it.
 
 Every figure above is re-derived by `sdk/tests/test_stated_figures.py`, which
 extracts figure claims from this docstring and requires each to match a
@@ -186,7 +233,7 @@ here word for word: a corpus only disproves what it contains.
 There is no public issue tracker to cite: the repository is private, so any
 GitHub URL here would be a 404 on the PyPI page this text reaches.
 
-sha256 over canonical JSON: dce670708dbb12cb088352e4771e2779942ae4aa7e81d9a6b7b6354ac4373bf6
+sha256 over canonical JSON: 7da63a03f602f9fbda04991ef9f53a84e75f019c8af71dcfd08d309c66772bcd
 """
 
 VERSION = "2026.08.5"
@@ -218,7 +265,7 @@ DEFINITION = {'pii_detectors': {'credit_card': {'flags': [],
                                                   'pattern': '\\bDAN\\b',
                                                   'signal': 'prompt_injection'},
                                 'injection.ignore_previous': {'flags': ['IGNORECASE'],
-                                                              'pattern': "(?:ignore|ignoring|skip|omit|overlook|neglect|pay\\s+no\\s+attention\\s+to|take\\s+no\\s+notice\\s+of|set\\s+aside|put\\s+aside|leave\\s+aside|stop\\s+following|no\\s+longer\\s+follow|(?:do\\s+not|don'?t)\\s+follow)\\s+(?:(?:all\\s+|any\\s+)?(?:(?:previous|pevious|preious|previos|previou|previus|prevous|prvious|revious)\\b|prior|preceding|preceeding|earlier|above|foregoing|former|initial|original|last)\\s+(?:messages?|directions?|context|notes?)|(?:all\\s+|any\\s+|the\\s+|these\\s+|those\\s+|your\\s+|its\\s+|my\\s+|our\\s+)?(?:(?:previous|pevious|preious|previos|previou|previus|prevous|prvious|revious)\\b|prior|preceding|preceeding|earlier|above|foregoing|former|initial|original|last)\\s+(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration)|(?:(?:system|safety|initial|original|developer|hidden|base|core|underlying|built-?in)\\s+(?:prompt|message|(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|rules?|policy|policies)|guardrails?|(?:your|its)\\s+(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration))|(?:all\\s+|any\\s+|the\\s+|these\\s+|those\\s+|your\\s+|its\\s+|my\\s+|our\\s+)?(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration)(?:\\s+\\w+){0,4}?\\s+(?:you\\s+(?:were\\s+|have\\s+been\\s+|had\\s+been\\s+)?(?:given|told|received|configured|instructed|set\\s+up|programmed)|above|earlier|before|previously|at\\s+the\\s+start|in\\s+this\\s+(?:conversation|session|chat|thread)))",
+                                                              'pattern': "\\b(?:ignore|ignoring|skip|omit|overlook|neglect|pay\\s+no\\s+attention\\s+to|take\\s+no\\s+notice\\s+of|set\\s+aside|put\\s+aside|leave\\s+aside|stop\\s+following|no\\s+longer\\s+follow|(?:do\\s+not|don'?t)\\s+follow)\\s+(?:(?:all\\s+|any\\s+)?(?:(?:previous|pevious|preious|previos|previou|previus|prevous|prvious|revious)\\b|prior|preceding|preceeding|earlier|above|foregoing|former|initial|original|last)\\s+(?:messages?|directions?|context|notes?)\\b|(?:all\\s+|any\\s+|the\\s+|these\\s+|those\\s+|your\\s+|its\\s+|my\\s+|our\\s+)?(?:(?:previous|pevious|preious|previos|previou|previus|prevous|prvious|revious)\\b|prior|preceding|preceeding|earlier|above|foregoing|former|initial|original|last)\\s+(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration)\\b|(?:(?:system|safety|initial|original|developer|hidden|base|core|underlying|built-?in)\\s+(?:prompt|message|(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|rules?|policy|policies)\\b|guardrails?\\b|(?:your|its)\\s+(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration)\\b)|(?:all\\s+|any\\s+|the\\s+|these\\s+|those\\s+|your\\s+|its\\s+|my\\s+|our\\s+)?(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|prompts?|guardrails?|rules?|restrictions?|constraints?|limitations?|directives?|guidance|policy|policies|protocols?|programming|training|conditioning|persona|configuration)\\b(?:\\s+\\w+){0,4}?\\s+(?:you\\s+(?:were\\s+|have\\s+been\\s+|had\\s+been\\s+)?(?:given|told|received|configured|instructed|set\\s+up|programmed)|in\\s+this\\s+(?:conversation|session|chat|thread)|at\\s+the\\s+(?:start|beginning|top)\\s+of\\s+(?:this|the)\\s+(?:conversation|session|chat|thread)))",
                                                               'signal': 'prompt_injection'},
                                 'injection.jailbreak': {'flags': ['IGNORECASE'],
                                                         'pattern': '\\b(?:do\\s+anything\\s+now|jailbreak|developer\\s+mode|unfiltered\\s+mode)\\b',
@@ -227,7 +274,7 @@ DEFINITION = {'pii_detectors': {'credit_card': {'flags': [],
                                                                     'pattern': "(?:ignore[zr]?|oublie[zr]?|ne\\s+tenez?\\s+pas\\s+compte\\s+(?:de|des))\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}instructions?\\s+(?:précédentes?|precedentes?|antérieures?|anterieures?)|(?:ignora|ignore|olvida|olvide|haz\\s+caso\\s+omiso\\s+(?:a|de))\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}instrucciones\\s+(?:anteriores|previas)|(?:ignore|ignora|esqueça|esqueca|desconsidere)\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}instruções\\s+(?:anteriores|prévias|previas)|(?:ignoriere|ignorieren\\s+sie|vergiss|vergessen\\s+sie|missachte)\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}(?:vorherigen|vorigen|bisherigen|obigen)\\s+(?:anweisungen|anleitungen|vorgaben|instruktionen)|(?:ignora|ignorate|dimentica|dimenticate)\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}istruzioni\\s+precedenti|(?:negeer|vergeet)\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}(?:vorige|eerdere|voorgaande)\\s+(?:instructies|aanwijzingen)|(?:игнорируй(?:те)?|забудь(?:те)?)\\s+(?:[^\\W\\d_]+[\\s'’-]+){0,3}предыдущие\\s+(?:инструкции|указания)|忽略(?:所有)?(?:之前的|以前的|先前的|上面的)?(?:指令|指示|提示|要求)|(?:これまでの|以前の|先の|上記の)(?:指示|命令)を?無視",
                                                                     'signal': 'prompt_injection'},
                                 'injection.override_instructions': {'flags': ['IGNORECASE'],
-                                                                    'pattern': '(?:disregard|forget|override|bypass|circumvent|discard|suspend|turn\\s+off|switch\\s+off)\\s+(?:all\\s+|your\\s+|the\\s+|any\\s+|these\\s+|those\\s+)?(?:previous\\s+|prior\\s+|above\\s+|safety\\s+|system\\s+|content\\s+)?(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|rules?|guardrails?|filters?|restrictions?|policy|policies|guidance|constraints?|limitations?|directives?|protocols?)',
+                                                                    'pattern': '\\b(?:disregard|forget|override|bypass|circumvent|discard|suspend|turn\\s+off|switch\\s+off)\\s+(?:all\\s+|your\\s+|the\\s+|any\\s+|these\\s+|those\\s+)?(?:previous\\s+|prior\\s+|above\\s+|safety\\s+|system\\s+|content\\s+)?(?:(?:instructions|insructions|instrctions|instrucions|instructins|instruction|instructios|instructons|instrutions|instuctions|intructions|istructions|nstructions)\\b|(?:guidelines|gidelines|gudelines|guideines|guidelies|guideline|guidelins|guidelnes|guidlines|guielines|uidelines)\\b|rules?|guardrails?|filters?|restrictions?|policy|policies|guidance|constraints?|limitations?|directives?|protocols?)\\b',
                                                                     'signal': 'prompt_injection'},
                                 'injection.reveal_system_prompt': {'flags': ['IGNORECASE'],
                                                                    'pattern': '(?:reveal|show|print|repeat|display|expose|leak|disclose|tell)\\s+(?:me\\s+)?(?:your\\s+|the\\s+)?(?:system|initial|original|developer|hidden|secret)\\s+(?:prompt|message|instructions?)',

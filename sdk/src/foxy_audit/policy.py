@@ -96,10 +96,23 @@ _PRIOR = ("(?:{0}|prior|preceding|preceeding|earlier|above|foregoing|former|"
 #: Nouns that can only mean "the directives you are operating under". These get
 #: the wider determiner set, because ``ignore the previous instructions`` is an
 #: override in every context a compliance assistant runs in.
+#:
+#: ⚠ THE TRAILING ``\b`` IS NOT TIDINESS — ITS ABSENCE SHIPPED AND WAS CAUGHT AT
+#: THE GATE. Without it ``policy`` matches inside ``policyholder`` and ``rules``
+#: inside ``ruleset``, so ``Please ignore the previous policyholder's address``
+#: was BLOCKED in an insurance workspace, and ``redact()`` returned
+#: ``Please [REDACTED:ignore_previous]holder's address`` — the guard cutting an
+#: ordinary word in half on its way to the model. Four sentences across
+#: insurance, finance, data and legal fired this way. Every one is now a named
+#: entry in ``injection_evasion_corpus.BENIGN``.
+#:
+#: The one-deletion fragments already end in ``\b``; a second one is zero-width
+#: and idempotent, and applying it to the whole group is what makes the rule
+#: "these words", not "these prefixes".
 _STRONG_OBJECT = (
-    "(?:{0}|{1}|prompts?|guardrails?|rules?|restrictions?|constraints?|"
-    "limitations?|directives?|guidance|policy|policies|protocols?|"
-    "programming|training|conditioning|persona|configuration)"
+    r"(?:{0}|{1}|prompts?|guardrails?|rules?|restrictions?|constraints?|"
+    r"limitations?|directives?|guidance|policy|policies|protocols?|"
+    r"programming|training|conditioning|persona|configuration)\b"
 ).format(_one_deletion("instructions"), _one_deletion("guidelines"))
 
 #: Nouns usually about ORDINARY CONTENT and only sometimes about the
@@ -107,7 +120,9 @@ _STRONG_OBJECT = (
 #: ``all`` and ``any`` — because ``please ignore my earlier message`` is the
 #: commonest correction a human types at an assistant, and a guard that refuses
 #: it has made the product worse in exchange for nothing.
-_WEAK_OBJECT = "(?:messages?|directions?|context|notes?)"
+#:
+#: Same trailing ``\b``, same reason: ``context`` matches inside ``contextual``.
+_WEAK_OBJECT = r"(?:messages?|directions?|context|notes?)\b"
 
 #: Determiners allowed in front of a STRONG object.
 _DETERMINER = (r"(?:all\s+|any\s+|the\s+|these\s+|those\s+|your\s+|its\s+|"
@@ -118,27 +133,60 @@ _DETERMINER = (r"(?:all\s+|any\s+|the\s+|these\s+|those\s+|your\s+|its\s+|"
 #: instructions are meant.
 _SELF_DIRECTIVE = (
     r"(?:(?:system|safety|initial|original|developer|hidden|base|core|"
-    r"underlying|built-?in)\s+(?:prompt|message|{0}|{1}|rules?|policy|policies)"
-    r"|guardrails?"
+    r"underlying|built-?in)\s+"
+    r"(?:prompt|message|{0}|{1}|rules?|policy|policies)\b"
+    r"|guardrails?\b"
     r"|(?:your|its)\s+{2})"
 ).format(_one_deletion("instructions"), _one_deletion("guidelines"),
          _STRONG_OBJECT)
 
-#: A phrase marking the object as something the assistant was handed. This is
-#: what reaches ``the guidance you were given earlier`` and ``the constraints
-#: you were configured with`` — the synonym and polite-framing evasions, where
-#: the verb is ordinary and the SELF-REFERENCE is the signal.
+#: A phrase marking the object as something THE ASSISTANT ITSELF was handed.
+#: This is what reaches ``the guidance you were given earlier`` and ``the
+#: constraints you were configured with`` — the synonym and polite-framing
+#: evasions, where the verb is ordinary English and the SELF-REFERENCE is the
+#: whole signal.
+#:
+#: ⚠ NO BARE TEMPORAL MARKER, AND THAT LIST USED TO BE HERE. It read
+#: ``…|above|earlier|before|previously|at\s+the\s+start|…``, and a bare temporal
+#: after up to four filler words turned every reference to an earlier part of a
+#: DOCUMENT into an override of the assistant's instructions:
+#:
+#:     Ignore the policy limits listed above when calculating the reserve.
+#:     Skip the training rows before 2019, they are not comparable.
+#:     Omit the rules described earlier in the document.
+#:
+#: All three were BLOCKED, in three different sectors, with the model never
+#: called. The words cannot distinguish "earlier in this conversation" from
+#: "earlier in this document" — only an explicit reference to the conversation
+#: can, and that is all that survives here.
+#:
+#: ⚠ AND REQUIRING ADJACENCY WAS NOT ENOUGH — it was the first fix considered.
+#: ``Ignore the protocol above and follow the amended one.`` is an ordinary
+#: legal instruction with the noun and the temporal touching. It is now
+#: ``benign.legal.protocol_above``, and it is why the bare temporals are gone
+#: rather than tightened.
+#:
+#: THE COST, STATED: ``ignore the instructions above`` — the postposed form —
+#: is no longer reached by this shape. It is not a regression, because
+#: 2026.08.4 did not catch it either, and the pre-posed ``ignore the above
+#: instructions`` is still caught by shape (b). Both evasions this shape exists
+#: for match through the ``you were …`` branch and are unaffected.
 _PREVIOUSLY_GIVEN = (
     r"(?:you\s+(?:were\s+|have\s+been\s+|had\s+been\s+)?"
     r"(?:given|told|received|configured|instructed|set\s+up|programmed)"
-    r"|above|earlier|before|previously|at\s+the\s+start"
-    r"|in\s+this\s+(?:conversation|session|chat|thread))")
+    r"|in\s+this\s+(?:conversation|session|chat|thread)"
+    r"|at\s+the\s+(?:start|beginning|top)\s+of\s+(?:this|the)\s+"
+    r"(?:conversation|session|chat|thread))")
 
 #: Verbs meaning "stop attending to". ⚠ EVERY ONE IS FOLLOWED BY A MANDATORY
 #: OBJECT TEST. ``Disregard the duplicated line item`` and ``Ignore rounding
 #: differences under one cent`` are the assistant's actual job.
+#: The leading ``\b`` is the same discipline as the nouns' trailing one: a verb
+#: alternative must be a WORD, not a suffix. ``omit`` inside ``vomit`` cannot
+#: reach an object test today, but the boundary costs nothing and the noun list
+#: proved that "cannot reach it today" is a claim with a short shelf life.
 _STOP_ATTENDING = (
-    r"(?:ignore|ignoring|skip|omit|overlook|neglect|"
+    r"\b(?:ignore|ignoring|skip|omit|overlook|neglect|"
     r"pay\s+no\s+attention\s+to|take\s+no\s+notice\s+of|"
     r"set\s+aside|put\s+aside|leave\s+aside|"
     r"stop\s+following|no\s+longer\s+follow|(?:do\s+not|don'?t)\s+follow)")
@@ -161,14 +209,18 @@ _INJECTION_RULES = (
         + _PREVIOUSLY_GIVEN
         + r")", re.IGNORECASE)),
     ("injection.override_instructions", "prompt_injection", re.compile(
-        r"(?:disregard|forget|override|bypass|circumvent|discard|suspend|"
+        r"\b(?:disregard|forget|override|bypass|circumvent|discard|suspend|"
         r"turn\s+off|switch\s+off)\s+"
         r"(?:all\s+|your\s+|the\s+|any\s+|these\s+|those\s+)?"
         r"(?:previous\s+|prior\s+|above\s+|safety\s+|system\s+|content\s+)?"
-        + ("(?:{0}|{1}|rules?|guardrails?|filters?|restrictions?|policy|"
-           "policies|guidance|constraints?|limitations?|directives?|"
-           "protocols?)").format(_one_deletion("instructions"),
-                                 _one_deletion("guidelines")),
+        # ⚠ SAME TRAILING \b AS _STRONG_OBJECT, AND FOR THE SAME MEASURED
+        # REASON. `override the statement of work` and `Disregard the
+        # duplicated line item` are both ordinary work, and this list gained
+        # `policy` — which lives inside `policyholder`.
+        + (r"(?:{0}|{1}|rules?|guardrails?|filters?|restrictions?|policy|"
+           r"policies|guidance|constraints?|limitations?|directives?|"
+           r"protocols?)\b").format(_one_deletion("instructions"),
+                                    _one_deletion("guidelines")),
         re.IGNORECASE)),
     ("injection.reveal_system_prompt", "prompt_injection", re.compile(
         r"(?:reveal|show|print|repeat|display|expose|leak|disclose|tell)\s+"
@@ -539,11 +591,14 @@ def _redact_derived_injection(text: str) -> str:
     TODAY'S transforms, and the next one may not delete-only — but it is not
     claimed as a guard, and no test asserts it.
     """
-    raw_spans = [(start, end) for _r, _s, start, end, view
-                 in _injection_hits(text) if view == "raw"]
+    # ONE scan, not two. It ran `_injection_hits` twice — provably the same
+    # answer both times, and on the guarded redact path that is a second pass
+    # over every view of the prompt for nothing.
+    hits = _injection_hits(text)
+    raw_spans = [(start, end) for _r, _s, start, end, view in hits
+                 if view == "raw"]
     derived = sorted(
-        ((start, end, rule_id) for rule_id, _s, start, end, view
-         in _injection_hits(text)
+        ((start, end, rule_id) for rule_id, _s, start, end, view in hits
          if view != "raw" and end > start
          and not any(start < raw_end and raw_start < end
                      for raw_start, raw_end in raw_spans)),

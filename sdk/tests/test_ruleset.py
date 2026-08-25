@@ -81,7 +81,7 @@ PUBLISHED = {
     # 2026.08.5 — the injection family gains derived VIEWS (`prompt_views`),
     # four match shapes on `ignore_previous`, and `injection.multilingual_
     # override` (SDK #230). Added, never in place of .4.
-    "2026.08.5": "dce670708dbb12cb088352e4771e2779942ae4aa7e81d9a6b7b6354ac4373bf6",
+    "2026.08.5": "7da63a03f602f9fbda04991ef9f53a84e75f019c8af71dcfd08d309c66772bcd",
 }
 
 #: The ISSUER TABLE's own digest, pinned for the same reason the ruleset digests
