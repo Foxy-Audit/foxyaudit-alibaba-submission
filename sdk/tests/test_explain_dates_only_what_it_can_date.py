@@ -410,17 +410,45 @@ def test_a_caller_cannot_forge_a_guard_run_through_metadata(tmp_path):
         "a row no guard ran on is being reported as a guard run")
 
 
-def test_the_callers_own_metadata_still_travels(tmp_path):
+def test_the_callers_own_metadata_still_travels(tmp_path, monkeypatch):
     """CONTROL. The reserved set was WIDENED, not turned into a blocklist for
-    everything — an ordinary key beside a reserved one must survive."""
+    everything — an ordinary key beside a reserved one must reach THE WIRE.
+
+    ⚠ THE FIRST VERSION OF THIS GUARD PROVED NOTHING IN EITHER DIRECTION, and
+    it is the only thing standing between this change and silently dropping
+    every key a customer sends. It read::
+
+        assert stored.get("request_id") == "r-1" or receipt["decision"] is None
+
+    Both halves were constants. `_export_from_receipt` copies only the five
+    receipt keys, so `request_id` could never appear in `stored` and the left
+    side was ALWAYS False; the right side is always True once the fix is in. It
+    survived a mutation that stripped EVERY caller key.
+
+    So this reads the payload `dispatch.submit` is actually handed — the row the
+    backend appends — and names two keys with no relationship to the reserved
+    set. `request_id` is on the backend's own `event_metadata` allowlist and
+    `session_id` beside it, so this is what a real customer sends.
+    """
+    from foxy_audit import dispatch
+
+    captured = {}
+    monkeypatch.setattr(dispatch, "submit",
+                        lambda cfg, payload, **kwargs: captured.update(payload))
+
     receipts = []
     client = _client(tmp_path, receipts)
     client.log_interaction(CLEAN, "a reply", policy="hipaa",
-                           metadata={"decision": "allowed", "request_id": "r-1"})
-    export = _export_from_receipt(receipts[-1], tmp_path)
-    with open(export, encoding="utf-8") as handle:
-        stored = json.load(handle)["logs"][0].get("event_metadata") or {}
-    assert stored.get("request_id") == "r-1" or receipts[-1]["decision"] is None
+                           metadata={"decision": "allowed",     # reserved
+                                     "request_id": "r-1",       # the caller's
+                                     "session_id": "s-9"})
+
+    wire = captured.get("event_metadata") or {}
+    assert wire.get("request_id") == "r-1", (
+        "a caller's own metadata key was dropped -- the reservation became a "
+        "blocklist for everything")
+    assert wire.get("session_id") == "s-9"
+    assert "decision" not in wire, "the reserved key was not dropped"
 
 
 def test_the_guard_still_writes_its_own_decision(tmp_path):
@@ -442,3 +470,54 @@ def test_both_new_messages_survive_a_cp1252_console(tmp_path):
         result = introspect.explain(PHI, EVENT,
                                     _hand_written(tmp_path, metadata), KEY)
         result.message.encode("cp1252")
+
+
+@pytest.mark.parametrize("metadata", [
+    {"policy_rules": ["phi.ssn_patternİ"]},      # a rule id from the export
+    {"policy_rules": ["你好", "ok.id"]},      # and a non-Latin one
+    {"decision": "allowİd", "policy_rules": []},  # the decision label too
+])
+def test_a_non_ascii_value_from_the_export_still_prints(tmp_path, metadata):
+    """⚠ THE CP1252 SWEEP ONLY EVER FED ASCII, which is why it passed while this
+    was broken. An export is a file the reader hands us and every one of these
+    values comes out of it, so a single non-cp1252 character anywhere in a row
+    turned the message into a UnicodeEncodeError — the tool failing to speak,
+    which is the one outcome this module promises never to produce.
+
+    ESCAPED, NOT DROPPED: the reader still sees that the id was not what they
+    expected.
+    """
+    result = introspect.explain(PHI, EVENT,
+                                _hand_written(tmp_path, metadata), KEY)
+    result.message.encode("cp1252")          # the assertion
+    assert "\\u" in result.message, "the offending value was dropped, not escaped"
+    # ⚠ NOT `.encode("ascii")` ON THE WHOLE MESSAGE — this test asserted that
+    # first and it failed on the module's OWN em dash, which is deliberate and
+    # cp1252-safe. `_printable` escapes interpolated VALUES, never a sentence;
+    # escaping the sentences to fix a value would mangle every message here.
+    assert "—" in result.message, "the module's own punctuation was escaped too"
+
+
+def test_a_coverage_only_row_is_not_said_to_have_fired(tmp_path):
+    """⚠ THE MESSAGE MUST NOT OVERSTATE WHAT A RULE ID MEANS.
+
+    `response_scan.degraded` / `.unreadable` ride in ``policy_rules`` and by the
+    SDK's own doctrine never fire: `client.py` says they "never become a
+    ``decision``, never set a ``blocked_reason``, and are never tallied as an
+    enforced rule in the Passport". A message saying "the rules that fired were
+    written down" about a row carrying only those is a claim the row does not
+    support — in the phase whose entire subject is messages that claim exactly
+    what happened.
+
+    The wording now says the IDS were written down and the definition that gave
+    them MEANING was not, which is true of a coverage id and of a fired one.
+    """
+    result = introspect.explain(
+        PHI, EVENT,
+        _hand_written(tmp_path, {"policy_rules": ["response_scan.degraded"]}), KEY)
+
+    assert result.status == "ruleset_unrecorded"
+    assert "response_scan.degraded" in result.message
+    assert "rules that fired" not in result.message
+    assert "what fired then" not in result.message
+    assert "the ids were written down" in result.message

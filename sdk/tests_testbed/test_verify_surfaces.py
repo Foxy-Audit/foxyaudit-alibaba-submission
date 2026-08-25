@@ -111,14 +111,49 @@ def test_neither_surface_can_reach_foxy_audit_even_by_accident(name):
             assert not (node.module or "").startswith("foxy_audit"), node.module
 
 
+def test_the_page_states_the_real_size_of_the_vocabulary():
+    """⚠ THE COUNT IN page.html IS DERIVED HERE, BECAUSE IT HAS GONE STALE
+    THREE TIMES.
+
+    The evidence-panel comment tells the next reader how many outcomes there are
+    and how many wear the understating mark, and nothing in an HTML file can read
+    Python — so the sentence drifts every time the vocabulary grows. S14 took it
+    from eight to ten, updated `cli.py` and `core.py`, and missed this copy.
+
+    Both numbers are computed from the sources of truth and asserted as the exact
+    words the page uses. A future status therefore turns THIS red instead of
+    leaving a confident wrong number on a surface a prospect reads.
+
+    ⚠ SPELLED-OUT NUMBERS, NOT DIGITS, and that is not a style choice: the page
+    is prose in a comment, and `"10 outcomes"` would also match `"110 outcomes"`.
+    """
+    from foxy_audit.introspect import STATUSES
+    from foxy_testbed.core import EXPLAIN_FAMILIES
+
+    words = {2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven",
+             8: "Eight", 9: "Nine", 10: "Ten", 11: "Eleven", 12: "Twelve"}
+    total = len(STATUSES)
+    cannot = sum(1 for family in EXPLAIN_FAMILIES.values()
+                 if family == FAMILY_CANNOT)
+    assert total in words and cannot in words, (
+        "the vocabulary outgrew this table -- add the word and update page.html")
+
+    expected = "{0} outcomes, {1} of which wear".format(
+        words[total], words[cannot].lower())
+    assert expected in PAGE_SOURCE, (
+        "page.html says something other than {0!r}. The vocabulary is now {1} "
+        "statuses, {2} of them 'cannot' -- update the comment in the evidence "
+        "panel.".format(expected, total, cannot))
+
+
 def test_the_page_holds_no_second_copy_of_the_status_vocabulary():
-    """⚠ EIGHT OUTCOMES, RENDERED FROM THE SERVER'S WORD.
+    """⚠ EVERY OUTCOME, RENDERED FROM THE SERVER'S WORD.
 
     The page prints `status` and `message` as it receives them. A JavaScript
-    switch over the eight would be a second vocabulary — the one nobody runs the
+    switch over them would be a second vocabulary — the one nobody runs the
     engine's tests against — and it is exactly how a tick and a cross get back
     in. Only `explained`, which selects whether a MARK is drawn at all, may
-    appear; the other seven must not be spellable from this file.
+    appear; none of the others may be spellable from this file.
     """
     from foxy_audit.introspect import STATUSES
     for status in STATUSES:

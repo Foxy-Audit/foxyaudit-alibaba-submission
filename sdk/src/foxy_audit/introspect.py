@@ -495,6 +495,31 @@ def _load_salt(sidecar_path: str, event_id: str) -> str | None:
     return sidecar.read_salt(sidecar_path, event_id)
 
 
+def _printable(value) -> str:
+    """One untrusted value, rendered so the MESSAGE can always be printed.
+
+    ⚠ MESSAGES ARE PRINTED AND EXPORTS ARE FILES THE READER HANDS US. Every
+    sentence here interpolates values that came out of a row — rule ids, the
+    policy tag, the version name, a decision label — and a Windows console is
+    cp1252. One non-ASCII character anywhere in a hand-edited or foreign export
+    turned ``foxy explain`` into a ``UnicodeEncodeError``, which is the tool
+    failing to say anything at all: the one outcome this module promises never
+    to produce. ``test_every_explain_message_survives_a_cp1252_console`` did not
+    catch it because every id it feeds is ASCII.
+
+    ESCAPED, NOT DROPPED, and to **ASCII** rather than to cp1252. Escaping keeps
+    the information — a reader still sees ``\\u0130`` and can tell the id was not
+    what they expected — and ASCII is a subset of every encoding a terminal
+    uses, so this is encodable on consoles cp1252 has never heard of.
+
+    ⚠ IT IS APPLIED TO INTERPOLATED VALUES ONLY, NEVER TO A WHOLE MESSAGE. The
+    sentences here contain em dashes on purpose; those are this module's own
+    literals, already proven printable, and escaping them would mangle every
+    message to fix a value.
+    """
+    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def _rule_ids(metadata: dict) -> list:
     """The rule ids a row records, as strings, from ARBITRARY JSON.
 
@@ -513,8 +538,8 @@ def _rule_ids(metadata: dict) -> list:
     """
     raw = metadata.get("policy_rules")
     if isinstance(raw, (list, tuple)):
-        return [str(rule) for rule in raw]
-    return [str(raw)] if raw else []
+        return [_printable(rule) for rule in raw]
+    return [_printable(raw)] if raw else []
 
 
 def explain(prompt, event_id: str, export, commitment_key: str,
@@ -635,10 +660,11 @@ def explain(prompt, event_id: str, export, commitment_key: str,
                 "ruleset_unrecorded",
                 f"Row {event_id} records the rule ids "
                 f"{', '.join(recorded_rules)} but no ruleset_version, so the "
-                f"rules that fired were written down and the definition behind "
-                f"them was not. The commitment MATCHES, so this is the right "
-                f"prompt — but replaying today's rules would tell you what would "
-                f"fire NOW, not what fired then, and this tool will not guess. "
+                f"ids were written down and the definition that gave them "
+                f"meaning was not. The commitment MATCHES, so this is the right "
+                f"prompt — but replaying today's rules would tell you what they "
+                f"mean NOW, not what they meant then, and this tool will not "
+                f"guess. "
                 f"THE ROW DOES NOT RECORD WHY the version is missing, and there "
                 f"are three live causes: the backend rejected the provenance "
                 f"keys and the SDK resent without them, this SDK's ruleset "
@@ -650,7 +676,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         if decision is not None:
             return ExplainResult(
                 "no_rules_fired",
-                f"Row {event_id} records decision={str(decision)!r} and no rule "
+                f"Row {event_id} records decision={_printable(decision)!r} and no rule "
                 f"ids: the guard ran on this prompt and nothing matched. A row "
                 f"that fired nothing carries no ruleset_version by design — "
                 f"provenance rides only with the rule ids it explains — so its "

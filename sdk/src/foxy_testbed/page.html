@@ -726,9 +726,19 @@ textarea:disabled{opacity:.55;cursor:not-allowed}
   // exactly as the SDK produced it, `message` is the SDK's own sentence, and
   // `family` -- which of three marks it wears -- is computed in core.py from a
   // map a Python test asserts covers every entry of `introspect.STATUSES`.
-  // Eight outcomes, four of which mean "I cannot answer"; a JavaScript shortcut
+  // Ten outcomes, six of which wear the "cannot" mark; a JavaScript shortcut
   // turning them into a tick and a cross would report a salt this machine could
   // not find in the same shape as a commitment that did not match.
+  //
+  // ⚠ THOSE TWO NUMBERS ARE PINNED, NOT REMEMBERED. This sentence has gone
+  // stale three times -- most recently when S14 took the vocabulary from eight
+  // to ten and the sweep updated cli.py and core.py but missed this copy. It is
+  // not fixable by being more careful, because nothing in this file can read
+  // Python. So a test derives both counts from `introspect.STATUSES` and
+  // `core.EXPLAIN_FAMILIES` and asserts these exact words appear here:
+  // test_verify_surfaces.py::test_the_page_states_the_real_size_of_the_vocabulary.
+  // The day the SDK adds an outcome, that goes red instead of this going quietly
+  // wrong.
   //
   // ⚠ NO SPAN TEXT ARRIVES HERE AND NONE IS ASKED FOR. `Evidence.as_dict` omits
   // the matched spans -- they are the user's own prompt, and the SDK's rule is
