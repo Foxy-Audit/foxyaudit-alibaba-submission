@@ -32,6 +32,7 @@ _PKG = pathlib.Path(web.__file__).resolve().parent
 WEB_SOURCE = io.open(_PKG / "web.py", encoding="utf-8").read()
 CLI_SOURCE = io.open(_PKG / "cli.py", encoding="utf-8").read()
 PAGE_SOURCE = io.open(_PKG / "page.html", encoding="utf-8").read()
+CORE_SOURCE = io.open(_PKG / "core.py", encoding="utf-8").read()
 
 PHI_PROMPT = "Draft a note for the patient at alice@example.org about their MRI."
 
@@ -144,6 +145,83 @@ def test_the_page_states_the_real_size_of_the_vocabulary():
         "page.html says something other than {0!r}. The vocabulary is now {1} "
         "statuses, {2} of them 'cannot' -- update the comment in the evidence "
         "panel.".format(expected, total, cannot))
+
+
+#: Spelled-out numbers, so that "ten" cannot match inside "often" and "11"
+#: cannot match inside "110" -- the reason the existing page guard spells them
+#: out too.
+_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
+          7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven",
+          12: "twelve"}
+_COUNTED = r"(?i)(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+
+
+def _prose(source: str) -> str:
+    """One line, single-spaced, so a sentence that wraps still matches."""
+    return " ".join(source.split())
+
+
+def test_no_prose_copy_of_the_vocabulary_size_has_gone_stale():
+    """⚠ THE SIXTH STALE COUNT IS WHY THIS EXISTS, AND IT FOUND A SEVENTH.
+
+    `test_the_page_states_the_real_size_of_the_vocabulary` derives ONE sentence
+    in ONE file. The same numbers are written in prose in four more places, and
+    S17 arrived to find `core.py`'s "THREE FAMILIES FOR TEN STATUSES" stale for
+    the fifth time in this file family -- with no guard over that copy. Writing
+    this guard then turned up a sixth nobody had reported: `page.html` called
+    them "the eight the SDK computes", a number two vocabulary changes old.
+
+    TWO ASSERTIONS, AND THE SECOND IS THE ONE THAT SCALES. The pinned phrases
+    catch a copy that drifts; the sweep catches a copy somebody ADDS, because
+    every spelled-out number in front of "outcomes" or "statuses" in these three
+    files has to be one of the numbers this vocabulary actually produces.
+
+    ⚠ AND `four outcomes` IS NOT A STALE ELEVEN. `page.html` says it about
+    `EVIDENCE_STATES`, which is a different four-member tuple, so it is derived
+    here from that tuple rather than exempted by hand -- an exemption would have
+    to be re-argued every time the sweep goes red.
+    """
+    import re
+
+    from foxy_audit.introspect import STATUSES
+    from foxy_testbed.core import EVIDENCE_STATES, EXPLAIN_FAMILIES
+
+    total = _WORDS[len(STATUSES)]
+    cannot = _WORDS[sum(1 for f in EXPLAIN_FAMILIES.values()
+                        if f == FAMILY_CANNOT)]
+    states = _WORDS[len(EVIDENCE_STATES)]
+
+    pinned = [
+        (CORE_SOURCE, "core.py",
+         "THREE FAMILIES FOR {0} STATUSES".format(total.upper())),
+        (CORE_SOURCE, "core.py",
+         "{0} statuses sit under `cannot` here".format(cannot)),
+        (CORE_SOURCE, "core.py",
+         "because {0} outcomes rendered as".format(total)),
+        (CORE_SOURCE, "core.py",
+         "has {0} outcomes and {1} of them wear".format(total, cannot)),
+        (CLI_SOURCE, "cli.py",
+         "has {0} outcomes and {1} wear".format(total, cannot)),
+        (PAGE_SOURCE, "page.html",
+         "{0} outcomes, {1} of which wear".format(total.capitalize(), cannot)),
+        (PAGE_SOURCE, "page.html",
+         "put {0} outcomes on the same footing as the {1} the SDK "
+         "computes".format(states, total)),
+    ]
+    for source, name, phrase in pinned:
+        assert phrase in _prose(source), (
+            "{0} no longer says {1!r}. The vocabulary is {2} statuses, {3} of "
+            "them 'cannot', over {4} evidence states -- update the "
+            "sentence.".format(name, phrase, len(STATUSES), cannot, states))
+
+    allowed = {total, cannot, states}
+    for source, name in ((CORE_SOURCE, "core.py"), (CLI_SOURCE, "cli.py"),
+                         (PAGE_SOURCE, "page.html")):
+        for match in re.finditer(_COUNTED + r"[ ]+(outcomes|statuses)",
+                                 _prose(source)):
+            assert match.group(1).lower() in allowed, (
+                "{0} says {1!r}; the only counts this vocabulary produces are "
+                "{2}.".format(name, match.group(0), sorted(allowed)))
 
 
 def test_the_page_holds_no_second_copy_of_the_status_vocabulary():

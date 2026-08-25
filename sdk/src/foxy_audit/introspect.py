@@ -248,7 +248,7 @@ class Match:
         return out
 
 
-#: Every status :func:`explain` can return. FIVE of them are "I cannot", and
+#: Every status :func:`explain` can return. SIX of them are "I cannot", and
 #: ``no_rules_fired`` is the one answer that needs no replay — see the module
 #: docstring for both groups.
 #:
@@ -286,8 +286,9 @@ class ExplainResult:
     #: * ``None``  — THE CHECK DID NOT RUN. Either the row records no
     #:   ``ruleset_hash`` (no shipped SDK emits one without the other, so that is
     #:   a hand-edited export), or ``explain`` answered before reaching it —
-    #:   ``row_not_found``, ``hash_mismatch``, ``salt_unavailable``,
-    #:   ``ruleset_unrecorded``, ``no_rules_fired``, ``provenance_ambiguous``,
+    #:   ``row_not_found``, ``export_unreadable``, ``hash_mismatch``,
+    #:   ``salt_unavailable``, ``ruleset_unrecorded``, ``no_rules_fired``,
+    #:   ``provenance_ambiguous``,
     #:   an unknown version. The last three all sit on the no-version branch,
     #:   which returns before a definition is ever loaded, so there is nothing
     #:   to have hashed.
@@ -566,12 +567,25 @@ def _printable(value) -> str:
     what they expected — and ASCII is a subset of every encoding a terminal
     uses, so this is encodable on consoles cp1252 has never heard of.
 
+    ⚠ CONTROL CHARACTERS TOO, AND THAT IS WHY THE MESSAGES DROPPED ``!r``.
+    Every quoted site used to read ``{value!r}``, which escaped a newline and
+    a terminal escape sequence for free. Once the value arrives here already
+    escaped, ``!r`` escapes the escape — ``2026.08.İ`` rendered with a
+    DOUBLED backslash, and a reader cannot tell that from a value that really
+    contained one. So the sentences carry their own quotes and this pass does
+    the whole job: a value out of an export can otherwise smear a message
+    across three lines, or carry an ANSI escape and clear the console of the
+    person auditing it. ASCII IS NOT THE SAME PROMISE AS PRINTABLE.
+
     ⚠ IT IS APPLIED TO INTERPOLATED VALUES ONLY, NEVER TO A WHOLE MESSAGE. The
     sentences here contain em dashes on purpose; those are this module's own
     literals, already proven printable, and escaping them would mangle every
     message to fix a value.
     """
-    return str(value).encode("ascii", "backslashreplace").decode("ascii")
+    ascii_only = str(value).encode("ascii", "backslashreplace").decode("ascii")
+    return "".join(
+        char if char.isprintable() else
+        char.encode("unicode_escape").decode("ascii") for char in ascii_only)
 
 
 def _rule_ids(metadata: dict) -> list:
@@ -621,8 +635,15 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # cp1252 console from every reachable arm, including the three this phase
     # wrote. Doing it here rather than at each interpolation is deliberate: it
     # cannot be forgotten by the next sentence somebody adds, and it cannot
-    # break the lookup, which has already happened one line up against the
-    # caller's real value.
+    # break the ROW lookup, which has already happened one line up against
+    # the caller's real value.
+    #
+    # 🔴 IT DOES BREAK A DIFFERENT ONE. `_load_salt` is called with this
+    # rebound value further down, and the sidecar is keyed by the id the SDK
+    # wrote — so a salted row with a non-ASCII event_id reports
+    # `salt_unavailable` with the salt sitting in the file. Measured; see the
+    # block at that call. This sentence used to end "cannot break the lookup",
+    # singular, which was a claim about all of them.
     event_id = _printable(event_id)
     if row is None:
         # ⚠ TWO DIFFERENT PIECES OF NEWS, AND SENDING BOTH AS "check the id"
@@ -721,18 +742,48 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     if salted:
         salt = _load_salt(salt_sidecar_path, event_id) if salt_sidecar_path else None
         if not salt:
-            # ⚠ NORMALISED AFTER THE READ, NEVER BEFORE IT. `_load_salt` opened
-            # the path one line up against the caller's real value; what follows
-            # only prints it. A Windows home directory with a non-ASCII name is
-            # an ordinary thing to own, and it turned the ONE message whose job
-            # is to stop a reader taking "could not check" for "did not match"
-            # into a UnicodeEncodeError.
-            sidecar_shown = _printable(salt_sidecar_path)
+            # ⚠ THE PATH IS NORMALISED AFTER ITS READ, NEVER BEFORE IT.
+            # `_load_salt` opened it one line up against the caller's real
+            # value; what follows only prints it. A Windows home directory with
+            # a non-ASCII name is an ordinary thing to own, and it turned the
+            # ONE message whose job is to stop a reader taking "could not
+            # check" for "did not match" into a UnicodeEncodeError.
+            #
+            # 🔴 AND THE SAME IS NOT TRUE OF `event_id` ON THIS CALL — DO NOT
+            # READ THE PARAGRAPH ABOVE AS A CLAIM THAT THE ORDERING IS SAFE.
+            # `event_id` was rebound to its PRINTABLE form far above, so
+            # `_load_salt` is asked for the salt of `ev-` + an escape sequence,
+            # and the sidecar is keyed by the id the SDK actually wrote.
+            # MEASURED on this branch:
+            #
+            #   sidecar.read_salt(path, real_id)      -> the salt
+            #   sidecar.read_salt(path, printable_id) -> None
+            #   explain(...)                          -> salt_unavailable
+            #
+            # So a salted row whose event_id is non-ASCII is told its salt is
+            # missing while the salt sits in the file. It is a WRONG ANSWER,
+            # not a traceback, and the safe direction of wrong — "could not
+            # check", never "did not match". Filed rather than fixed here: the
+            # fix changes what the lookup is given, which is a behaviour change
+            # this phase was scoped out of. The comment above `event_id`'s own
+            # normalisation says the rebinding "cannot break the lookup"; that
+            # is true of the ROW lookup on the line above it and false of this
+            # one, fifty lines down.
+            sidecar_shown = _printable(salt_sidecar_path or "")
             return ExplainResult(
                 "salt_unavailable",
                 f"Row {event_id} was committed with a per-event salt "
                 f"({commitment_alg}), and no salt for it was found"
-                + (f" in {sidecar_shown}" if sidecar_shown
+                # ⚠ THE GUARD TESTS THE RAW VALUE, NEVER THE PRINTABLE ONE.
+                # It read `if sidecar_shown` for one round, and
+                # `_printable(None)` is the string "None" — TRUTHY. A caller
+                # passing `salt_sidecar_path=None`, which is the natural way to
+                # say "no sidecar" through the public `explain()`, was told the
+                # salt "was not found in None". `foxy explain` never saw it
+                # (the CLI guards with `is not None` and `cfg` defaults to ""),
+                # which is exactly why it had to be caught by reading the
+                # branch rather than by running the tool.
+                + (f" in {sidecar_shown}" if salt_sidecar_path
                    else " (no --sidecar given)")
                 + ". Its commitment CANNOT be recomputed without that salt, so "
                   "this is not a mismatch and not a pass — the check could not "
@@ -824,7 +875,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         if decision is not None:
             return ExplainResult(
                 "no_rules_fired",
-                f"Row {event_id} records decision={_printable(decision)!r} and no rule "
+                f"Row {event_id} records decision='{_printable(decision)}' and no rule "
                 f"ids: the guard ran on this prompt and nothing matched. A row "
                 f"that fired nothing carries no ruleset_version by design — "
                 f"provenance rides only with the rule ids it explains — so its "
@@ -852,7 +903,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     except KeyError:
         return ExplainResult(
             "unknown_ruleset",
-            f"Row {event_id} names ruleset {version!r}, which this SDK does not "
+            f"Row {event_id} names ruleset '{version}', which this SDK does not "
             f"carry (it has: "
             f"{', '.join(_printable(known) for known in ruleset.known_versions())}"
             f"). The row was "
@@ -884,8 +935,8 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     if recorded_hash and recorded_hash != loaded_hash:
         return ExplainResult(
             "ruleset_mismatch",
-            f"Row {event_id} names ruleset {version!r} and records the digest "
-            f"{recorded_hash[:12]}…, but this build's copy of {version!r} hashes "
+            f"Row {event_id} names ruleset '{version}' and records the digest "
+            f"{recorded_hash[:12]}…, but this build's copy of '{version}' hashes "
             f"to {loaded_hash[:12]}…. Same name, DIFFERENT RULES. A published "
             f"ruleset is immutable — rows in customers' chains name it — so one "
             f"of the two has been altered: either this install's registry (a "
@@ -920,7 +971,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     ruleset_verified = True if recorded_hash else None
     unverified_note = "" if ruleset_verified else (
         f" NOTE: the row records no ruleset_hash, so this SDK could not confirm "
-        f"that its copy of {version!r} is the definition that actually ran. "
+        f"that its copy of '{version}' is the definition that actually ran. "
         f"Every SDK from 1.7.0 records one; a row without it was not written by "
         f"a released foxy-audit, or was edited after export.")
 
@@ -937,9 +988,9 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         # a smaller version of replaying it; it is a different replay.
         return ExplainResult(
             "unknown_ruleset",
-            f"Row {event_id} names ruleset {version!r}, whose definition "
+            f"Row {event_id} names ruleset '{version}', whose definition "
             f"matches the injection rules against a view built by "
-            f"{_printable(unknown)!r} — this SDK does not implement it (it has: "
+            f"'{_printable(unknown)}' — this SDK does not implement it (it has: "
             f"{', '.join(sorted(normalise.TRANSFORMS))}). Upgrade foxy-audit to "
             f"replay this row. Replaying it against the raw prompt alone would "
             f"report no match where the SDK which wrote the row found one.",
@@ -960,8 +1011,8 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         # surfaces (the CLI, ExplainResult consumers) already switch on.
         return ExplainResult(
             "unknown_ruleset",
-            f"Row {event_id} names ruleset {version!r}, whose definition uses "
-            f"the validator {_printable(unknown)!r} — this SDK does not implement it "
+            f"Row {event_id} names ruleset '{version}', whose definition uses "
+            f"the validator '{_printable(unknown)}' — this SDK does not implement it "
             f"(it has: {', '.join(sorted(_VALIDATORS))}). Upgrade foxy-audit to "
             f"replay this row. Replaying it without that validator would report "
             f"matches the SDK which wrote the row had discarded.",
@@ -999,10 +1050,10 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         "explained",
         f"Commitment verified against row {event_id}, and ruleset {version} "
         f"— whose definition matches the digest the row recorded — matches "
-        f"{len(matches)} span(s) under policy {policy_tag!r}."
+        f"{len(matches)} span(s) under policy '{policy_tag}'."
         if ruleset_verified else
         f"Commitment verified against row {event_id}, and ruleset {version} "
-        f"matches {len(matches)} span(s) under policy {policy_tag!r}."
+        f"matches {len(matches)} span(s) under policy '{policy_tag}'."
         + unverified_note,
         event_id=event_id, policy_tag=policy_tag,
         ruleset_version=version, commitment_verified=True,

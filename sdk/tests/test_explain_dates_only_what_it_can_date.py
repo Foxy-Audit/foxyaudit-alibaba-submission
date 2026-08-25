@@ -632,13 +632,22 @@ def test_a_non_ascii_policy_tag_still_prints(tmp_path):
     assert result.status == "explained", result.message
     result.message.encode("cp1252")          # the assertion
     assert result.policy_tag == "hipa\\u0130", result.policy_tag
-    # ⚠ DOUBLED IN THE MESSAGE, and that is the `!r` doing its job on an escape
-    # that is now a real backslash: the field holds `hipaİ` and `{tag!r}`
-    # renders it `'hipa\\u0130'`. Noisier than ideal on a hostile tag, and the
-    # trade is deliberate — the quotes tell a reader where the tag ends, and a
-    # printable message beats a UnicodeEncodeError. Asserted as it ACTUALLY
-    # renders rather than as it would read nicer.
-    assert r"hipa\\u0130" in result.message
+    # ⚠ S17 REVERSED THE TRADE THIS NOTE USED TO RECORD, AND THE ASSERTION
+    # IS NOW EXACT. It read `assert r"hipa\\u0130" in result.message` — the tag
+    # DOUBLED, because `_printable` had already escaped it and `{tag!r}`
+    # then escaped the escape. The note called that deliberate on the
+    # grounds that `!r`'s quotes tell a reader where the tag ends.
+    # The quotes were the only part worth keeping, so the sentence carries
+    # them itself and the value is escaped exactly ONCE: a doubled
+    # backslash and a value that really contained one are
+    # indistinguishable, which is the opposite of what escaping is for.
+    #
+    # ⚠ AND THE ABSENCE IS ASSERTED, NOT ONLY THE PRESENCE. The single-
+    # escaped form is a SUBSTRING of the doubled one, so a containment
+    # check alone passes under BOTH renderings and proves nothing about
+    # which one shipped.
+    assert "'hipa\\u0130'" in result.message
+    assert r"hipa\\u0130" not in result.message
 
 
 def test_a_logs_entry_that_is_not_a_row_answers_instead_of_raising(tmp_path):

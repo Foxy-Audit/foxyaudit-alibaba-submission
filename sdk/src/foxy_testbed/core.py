@@ -480,7 +480,8 @@ EVIDENCE_STATES = (EVIDENCE_NO_RECEIPT, EVIDENCE_NO_LEDGER, EVIDENCE_NO_EXPORT,
                    EVIDENCE_EXPLAINED)
 
 # ── which family an explain status belongs to ─────────────────────────────────
-# ⚠ THREE FAMILIES FOR TEN STATUSES, AND THE SPLIT IS THE SDK'S OWN: a tool that
+# ⚠ THREE FAMILIES FOR ELEVEN STATUSES, AND THE SPLIT IS THE SDK'S OWN: a tool
+# that
 # cannot answer has not failed the row. `salt_unavailable`'s own message spells
 # the rule out — "this is not a mismatch and not a pass".
 #

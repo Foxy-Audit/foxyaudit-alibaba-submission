@@ -67,10 +67,26 @@ def _export(*rows) -> dict:
     return {"org_id": "o", "logs": list(rows)}
 
 
+#: A backslash-u that got escaped TWICE. Every message these tests produce is
+#: checked against it, because the single-escaped form is a substring of the
+#: doubled one and a containment check alone therefore passes under both
+#: renderings — the way the first cut of this file did.
+DOUBLED = chr(92) + chr(92) + "u"
+
+
 def _printable_message(result) -> str:
     """The assertion, and it is the ENCODE rather than an inspection of the
-    string: cp1252 is what a Windows console actually does to it."""
+    string: cp1252 is what a Windows console actually does to it.
+
+    ⚠ IT ALSO PINS ONE LAYER OF ESCAPING, centrally, because every test in
+    this file goes through it. `{_printable(x)!r}` renders a hostile value
+    with a DOUBLED backslash, which is printable and still wrong: a reader
+    cannot tell it from a value that really held one.
+    """
     result.message.encode("cp1252")
+    assert DOUBLED not in result.message, (
+        "escaped twice — a sentence is applying `!r` to a value "
+        "`_printable` has already handled: " + result.message)
     return result.message
 
 
@@ -164,7 +180,9 @@ def test_a_non_ascii_ruleset_version_prints():
     result = introspect.explain(PHI, EVENT, export, KEY)
 
     assert result.status == "unknown_ruleset"
-    assert ESC in _printable_message(result)
+    # EXACT, not "contains the escape": the quotes belong to the sentence now
+    # that `!r` is gone, and this is the rendering a reader actually gets.
+    assert "ruleset '2026.08." + ESC + "'," in _printable_message(result)
 
 
 def test_a_non_ascii_recorded_digest_prints():
@@ -343,3 +361,63 @@ def test_the_module_keeps_its_own_em_dashes():
                                 _export(_row(commitment_alg="a-salted")), KEY)
     assert "—" in salted.message, "a sentence was escaped, not just its values"
     _printable_message(salted)
+
+
+def test_printable_escapes_control_characters_too():
+    """⚠ ASCII IS NOT THE SAME PROMISE AS PRINTABLE, and dropping ``!r`` from
+    the quoted sites is what made the difference matter.
+
+    ``!r`` used to escape a newline and a terminal escape sequence for free at
+    the six sites that had it. Once the value arrives pre-escaped, ``!r``
+    escapes the escape, so the sentences carry their own quotes instead — and
+    this pass has to cover what ``!r`` was covering. A ``ruleset_version``
+    holding ``ESC[2J`` is a value out of a file the reader handed us, and it
+    would clear the console of the person auditing it.
+    """
+    assert introspect._printable("a" + chr(10) + "b") == "a" + chr(92) + "nb"
+    assert introspect._printable(chr(27) + "[2J") == chr(92) + "x1b[2J"
+    assert introspect._printable("a" + chr(9)) == "a" + chr(92) + "t"
+    # A SPACE IS PRINTABLE and must survive: escaping it would turn every
+    # multi-word value into an unreadable run.
+    assert introspect._printable("two words") == "two words"
+
+
+def test_a_message_stays_one_line_whatever_the_export_holds():
+    """The other half of the same rule, driven through the public function:
+    a version carrying a newline used to break the sentence across lines."""
+    export = _export(_row(event_metadata={
+        "ruleset_version": "2026.08" + chr(10) + "INJECTED",
+        "policy_rules": ["phi.ssn"]}))
+
+    result = introspect.explain(PHI, EVENT, export, KEY)
+
+    assert result.status == "unknown_ruleset"
+    assert chr(10) not in _printable_message(result)
+    assert chr(92) + "nINJECTED" in result.message
+
+
+# ══ 5 · the guard tests the RAW value, never the printable one ══════════════
+def test_no_sidecar_reads_the_same_whether_it_is_none_or_empty():
+    """🔴 A REGRESSION S17 ITSELF INTRODUCED, CAUGHT AT THE GATE.
+
+    The branch moved from ``if salt_sidecar_path`` to ``if sidecar_shown``, and
+    ``_printable(None)`` is the string ``"None"`` — TRUTHY. A caller passing
+    ``salt_sidecar_path=None``, which is the natural way to say "no sidecar"
+    through the public ``explain()``, was told the salt "was not found in None".
+
+    ⚠ `foxy explain` COULD NOT HAVE FOUND THIS. The CLI guards with
+    ``is not None`` and ``cfg.salt_sidecar_path`` defaults to ``""``, so the
+    None never reaches here from the tool — running it proves nothing about the
+    API, which is the surface the defect lived on. And this is the ONE message
+    whose whole job is stopping a reader read "could not check" as "did not
+    match"; a sentence naming a path the caller never gave is that message
+    losing the reader.
+    """
+    export = _export(_row(commitment_alg="hmac-sha256-salted"))
+
+    for absent in (None, ""):
+        result = introspect.explain(PHI, EVENT, export, KEY, absent)
+
+        assert result.status == "salt_unavailable"
+        assert "(no --sidecar given)" in _printable_message(result), absent
+        assert "in None" not in result.message, absent
