@@ -152,6 +152,23 @@ class LogIngest(BaseModel):
         A tag that cannot satisfy this is refused rather than trimmed: silently
         storing something other than what the caller typed would put a
         fabricated spelling in the evidence.
+
+        BOTH MESSAGES BEGIN WITH THE PHRASE THE SDK PROBES FOR, and that is
+        load-bearing rather than cosmetic. `payload: List[LogIngest]` validates
+        as ONE unit, so one bad typed tag 422s the whole request;
+        dispatch._rejects_unsupported_fields matches the substring "unsupported
+        fields" to decide whether to strip and retry. A message without it makes
+        the probe return False, no retry fires, raise_for_status raises, and
+        spool.retry re-queues the entire batch — forever. That is the evidence
+        outage the pop in logs.py and the warning at client.py:1169 exist to
+        prevent, arriving through the rejection door instead of the duplicate
+        one.
+
+        Reusing the existing phrase rather than minting a second one: the remedy
+        is identical (drop policy_tag_raw, resend), S13 already has to put the
+        key in ruleset.PROVENANCE_KEYS for the duplicate half, and a phrase only
+        the backend knows would be the worst of the three options. The specific
+        reason follows the colon so a human is not left guessing.
         """
         raw = (self.event_metadata or {}).get("policy_tag_raw")
         if raw is None:
@@ -160,10 +177,11 @@ class LogIngest(BaseModel):
         # can escape to — logs, proxies, a dashboard toast — and this key exists
         # precisely because callers put unexpected things in it.
         if not isinstance(raw, str) or not _RAW_TAG_PATTERN.fullmatch(raw):
-            raise ValueError("event_metadata.policy_tag_raw is not a tag spelling")
+            raise ValueError("event_metadata contains unsupported fields: "
+                             "policy_tag_raw is not a tag spelling")
         if canonical_policy_tag(raw) != self.policy_tag:
-            raise ValueError(
-                "event_metadata.policy_tag_raw is not a spelling of policy_tag")
+            raise ValueError("event_metadata contains unsupported fields: "
+                             "policy_tag_raw is not a spelling of policy_tag")
         return self
 
     @field_validator("prompt_hash", "response_hash")

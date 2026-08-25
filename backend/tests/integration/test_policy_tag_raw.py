@@ -439,3 +439,92 @@ def test_a_real_typed_spelling_is_still_accepted(make_org, client, raw, canonica
     # developer ever typed.
     assert rows[0]["event_metadata"]["policy_tag_raw"] == raw
     assert rows[0]["policy_tag"] == canonical
+
+
+# ── the rejection has to be one the SDK can survive ──────────────────────────
+def _sdk_probe():
+    """The REAL dispatch._rejects_unsupported_fields, not a copy of its rule.
+
+    Imported from sdk/src rather than reimplemented here: a copy would keep
+    agreeing with itself after the SDK changed, which is the exact failure this
+    guards. The SDK is stdlib-only, so it imports cleanly into the backend venv.
+    """
+    import pathlib
+    import sys
+
+    sdk_src = pathlib.Path(__file__).resolve().parents[3] / "sdk" / "src"
+    if str(sdk_src) not in sys.path:
+        sys.path.insert(0, str(sdk_src))
+    from foxy_audit.dispatch import _rejects_unsupported_fields
+
+    return _rejects_unsupported_fields
+
+
+def test_the_rejection_does_not_echo_the_typed_tag(make_org, client):
+    """THE LEAK. Asserted against the RESPONSE BODY, through the TestClient.
+
+    The earlier version of this file asserted a substring of the message and
+    stayed green while the whole request item — MRN included — came back in
+    `input`. A validator that rejects a value and then quotes it has moved the
+    value from the ledger into the error path, not stopped it.
+    """
+    org = make_org()
+    leaky = _event()
+    leaky["event_metadata"]["policy_tag_raw"] = "hipaa-MRN-4417829"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[leaky])
+    assert response.status_code == 422
+    assert "MRN-4417829" not in response.text, response.text
+
+
+def test_the_rejection_is_one_the_sdk_can_degrade_from(make_org, client):
+    """THE SPOOL. A 422 the probe does not recognise re-queues the batch forever.
+
+    `payload: List[LogIngest]` validates as ONE unit, so a single bad typed tag
+    422s the whole request. dispatch._rejects_unsupported_fields decides whether
+    to strip and retry by matching "unsupported fields" in the body; if it says
+    no, raise_for_status raises and spool.retry re-queues everything — the same
+    evidence outage the pop in logs.py exists to prevent, arriving through the
+    rejection door instead of the duplicate one.
+
+    Driven by handing the REAL response to the REAL probe. Note this also pins
+    the interaction between the two fixes in this commit: the redaction above
+    strips `input`, and the probe reads the body — had it stripped `msg` too,
+    this test goes red.
+    """
+    org = make_org()
+    for raw in ("hipaa-MRN-4417829", "PCI", "hipaa/oncology"):
+        bad = _event()
+        bad["event_metadata"]["policy_tag_raw"] = raw
+        response = client.post("/v1/logs/batch", headers=org["auth"], json=[bad])
+        assert response.status_code == 422, response.text
+        assert _sdk_probe()(response), f"the SDK would brick its spool on {raw!r}"
+
+
+def test_the_allowlist_rejection_is_still_recognised(make_org, client):
+    """CONTROL for the test above — the phrase was REUSED, not replaced.
+
+    If the new messages had been made to satisfy the probe by loosening the
+    probe's own match, this would be the test that stayed green while the
+    original case broke.
+    """
+    org = make_org()
+    bad = _event()
+    bad["event_metadata"]["patient_note"] = "the patient's SSN is 123-45-6789"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[bad])
+    assert response.status_code == 422
+    assert _sdk_probe()(response)
+
+
+def test_a_genuinely_malformed_payload_is_still_not_degradable(make_org, client):
+    """THE OTHER CONTROL, and the reason the probe is narrow.
+
+    A bad hash must NOT look like "strip some keys and retry" — retrying with
+    fewer fields is not a fix there, it is a second way to be wrong. If the new
+    messages had been written broadly enough to make every 422 degradable, this
+    is what would catch it.
+    """
+    org = make_org()
+    response = client.post("/v1/logs/batch", headers=org["auth"],
+                           json=[_event(prompt_hash="z" * 64)])
+    assert response.status_code == 422
+    assert not _sdk_probe()(response), response.text

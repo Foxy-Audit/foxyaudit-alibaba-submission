@@ -33,8 +33,9 @@ import subprocess
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
@@ -121,10 +122,38 @@ async def lifespan(app: FastAPI):
     yield
 
 
+async def _validation_error_handler(request, exc: RequestValidationError):
+    """422 without echoing the body back.
+
+    FastAPI's default handler puts the REJECTED VALUE in each error as `input`
+    — for a list body, the whole item — and that lands in the response body, the
+    proxy access log, and any dashboard toast that renders `detail`.
+
+    That echo is old and was harmless while every field it could reflect was
+    bounded: charset-locked tags, fixed-length hashes, an allowlisted metadata
+    dict. `policy_tag_raw` is the first field whose value can carry content at
+    the moment it is REJECTED — a validator only runs because something got that
+    far — so `policy=f"hipaa-{mrn}"` came back with the MRN in the 422.
+
+    Fixed generally rather than for that one field: the next validated field
+    added here inherits this instead of having to remember it. `loc` and `msg`
+    are kept, so a developer still learns which field failed and why — and the
+    SDK's degrade probe, which reads the message text, keeps working.
+
+    `ctx` goes too: pydantic puts the offending value there for several error
+    types, so keeping it would leave a second door open.
+    """
+    redacted = [{key: value for key, value in error.items()
+                 if key in ("type", "loc", "msg")}
+                for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": redacted})
+
+
 # ───────────────────────────── customer API (site 2) ─────────────────────────
 customer_api = FastAPI(title="Foxy Audit", version="0.1.0")
 customer_api.state.limiter = logs.limiter
 customer_api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+customer_api.add_exception_handler(RequestValidationError, _validation_error_handler)
 
 for _r in (auth_human, auth_google, health, logs, verify, passport, keys, billing, policies,
            analytics, coverage, anchors, leads, consent, account, badge, webhooks, sso):
@@ -185,6 +214,9 @@ customer_api.add_middleware(RequestIdMiddleware)   # outermost: assign/echo X-Re
 admin_api = FastAPI(title="Foxy Audit Admin", version="0.1.0")
 admin_api.state.limiter = auth_staff.limiter
 admin_api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# The admin API takes bodies too and the echo is the same mechanism. Staff input
+# is not safer input — an operator pastes a customer's identifier into a form.
+admin_api.add_exception_handler(RequestValidationError, _validation_error_handler)
 
 for _r in (auth_staff, admin_orgs, admin_staff, admin_stats, admin_data, admin_inbox,
            admin_health, admin_grading, admin_anchors, admin_alerts, admin_config,
