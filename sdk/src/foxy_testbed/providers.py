@@ -43,6 +43,13 @@ MOCK_NOTE = ("mock provider -- replies are fixtures, not model output. "
              "Enforcement is real: the same foxy_audit guard runs whichever "
              "provider is behind it.")
 
+#: How the no-fixture filler opens. ⚠ A PLACEHOLDER IS NOT AN ANSWER, and the
+#: fact that one was returned has to be CARRIED rather than recovered by a
+#: consumer matching this string -- see :attr:`Provider.answered_with_filler`.
+#: It is a module constant so the reply and the flag are built from one source
+#: and a guard can assert the literal instead of comparing a name to itself.
+NO_FIXTURE_PREFIX = "[no fixture for this prompt]"
+
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -87,6 +94,23 @@ class Provider:
         return True
 
     @property
+    def answered_with_filler(self) -> bool:
+        """Was the LAST reply this provider produced a placeholder, not an answer?
+
+        ⚠ CARRIED, NOT RE-DERIVED, and for the same reason :attr:`is_live` is.
+        ``Assistant`` accepts any ``Provider`` subclass, so a consumer sniffing
+        for :data:`NO_FIXTURE_PREFIX` in the reply text would be guessing at
+        another object's business -- and would misfire the day a real model
+        quotes the phrase back.
+
+        False here because every provider that answers for real answers for
+        real: a live model returning something unhelpful has still answered, and
+        nothing in this package reads a reply's content to judge it. Only the
+        mock knows it had no fixture, and only the mock overrides this.
+        """
+        return False
+
+    @property
     def note(self) -> str:
         """The disclaimer to render beside this provider's replies, if any."""
         return ""
@@ -109,14 +133,22 @@ class MockProvider(Provider):
         #: blocked prompt must never increment this, which is what makes
         #: "prevention" a measurement rather than a claim.
         self.calls = 0
+        #: Whether the LAST completion fell through to the filler. Per-call
+        #: state on the provider, alongside ``calls``, because ``Assistant``
+        #: holds one provider and reads it immediately after the call returns.
+        self._filler = False
 
     def complete(self, system: str, prompt: str) -> str:
         self.calls += 1
         canned = self.fixtures.get(prompt)
+        # Set from the SAME lookup that decides the reply, so the flag and the
+        # text cannot disagree. A second `prompt in self.fixtures` here would be
+        # a second reading of the dict and a second thing to get wrong.
+        self._filler = canned is None
         if canned is not None:
             return canned
         digest = hashlib.sha256(str(prompt).encode("utf-8")).hexdigest()[:12]
-        return ("[no fixture for this prompt] The mock provider has no written "
+        return (NO_FIXTURE_PREFIX + " The mock provider has no written "
                 "answer for it, so there is nothing to show you here -- and "
                 "inventing one would make this demo dishonest. The enforcement "
                 "result above is real and was produced by the same guard a live "
@@ -126,6 +158,10 @@ class MockProvider(Provider):
     @property
     def is_live(self) -> bool:
         return False
+
+    @property
+    def answered_with_filler(self) -> bool:
+        return self._filler
 
     @property
     def note(self) -> str:
@@ -292,5 +328,5 @@ def build_provider(name: str, sector=None, api_key: str = "", model: str = ""):
 
 
 __all__ = ["DEFAULT_GEMINI_MODEL", "DEFAULT_OPENAI_MODEL", "GeminiProvider",
-           "MOCK_NOTE", "MockProvider", "OpenAIProvider", "PROVIDER_NAMES",
-           "Provider", "ProviderError", "build_provider"]
+           "MOCK_NOTE", "MockProvider", "NO_FIXTURE_PREFIX", "OpenAIProvider",
+           "PROVIDER_NAMES", "Provider", "ProviderError", "build_provider"]

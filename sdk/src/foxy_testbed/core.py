@@ -193,6 +193,28 @@ class Turn:
     #: turned two known gaps into errors. ``_openai_text`` returns "" for a
     #: payload with no text, so this is a live path.
     empty_reply: bool = False
+    #: The call returned normally and what came back was the mock's no-fixture
+    #: FILLER rather than a written answer.
+    #:
+    #: ⚠ A PLACEHOLDER IS NOT AN ANSWER, AND THE SCOREBOARD USED TO SCORE IT AS
+    #: ONE. Under ``--mode redact`` the prompt reaches the provider SCRUBBED, so
+    #: it misses its exact-match fixture and comes back as filler — and the
+    #: assistance column read `answered`, saw a non-empty string, and printed
+    #: ``answered 6/6 | over-blocked 0`` over six probes the guard had just
+    #: mangled. Measured against the withdrawn 2026.08.5: `--mode redact` is its
+    #: own CI gate and it would have gone green on the day that ruleset shipped.
+    #:
+    #: A SEPARATE FACT FROM ``answered``, deliberately, and the same shape as
+    #: ``empty_reply`` above. The filler really did reach the caller and every
+    #: surface should render it — it is the honest thing to show — so `answered`
+    #: keeps meaning what it measures. What it must not do is decide a column on
+    #: its own.
+    #:
+    #: CARRIED FROM THE PROVIDER (``Provider.answered_with_filler``), never
+    #: recovered by matching the reply text: `Assistant` takes any `Provider`
+    #: subclass, and a live model quoting the phrase back would otherwise be
+    #: mistaken for one.
+    filler_reply: bool = False
     #: The rules that still fire against the text the provider ACTUALLY got —
     #: ``check()`` re-run on the delivered prompt under the same policy tag.
     #: Empty when nothing was delivered. This is the per-finding measurement
@@ -443,6 +465,10 @@ class Turn:
                 # being one.
                 "redaction_ineffective": self.redaction_ineffective,
                 "empty_reply": self.empty_reply,
+                # Rides along for the same reason `provider_is_live` does: a
+                # surface that had to re-derive "was that an answer?" from the
+                # reply text would be the fourth place to get it wrong.
+                "filler_reply": self.filler_reply,
                 "rules_delivered": list(self.rules_delivered),
                 "rules_removed": list(self.rules_removed),
                 "rules_surviving": list(self.rules_surviving),
@@ -991,6 +1017,7 @@ class Assistant:
         started = time.perf_counter()
         reply, error = "", ""
         empty_reply = False
+        filler_reply = False
         try:
             reply = self._guarded(
                 prompt=prompt,
@@ -1023,6 +1050,11 @@ class Assistant:
             # a separate, still-observable fact. See the note above DECISIONS.
             answered = bool(str(reply or "").strip())
             empty_reply = not answered
+            # ASKED OF THE PROVIDER, in the one branch where a call returned,
+            # and only there: a blocked turn never called anything, so whatever
+            # the provider last said is about some earlier prompt. Same
+            # discipline as `empty_reply` -- observed where it happens.
+            filler_reply = answered and bool(self.provider.answered_with_filler)
             if pre.triggered:
                 decision = (DECISION_REDACTED if self.mode == "redact"
                             else DECISION_FLAGGED)
@@ -1068,6 +1100,7 @@ class Assistant:
             reached_provider=self._reached,
             prompt_changed=prompt_changed,
             empty_reply=empty_reply,
+            filler_reply=filler_reply,
             rules_delivered=rules_delivered,
             reply=reply if answered else "",
             rules=tuple(pre.rules),

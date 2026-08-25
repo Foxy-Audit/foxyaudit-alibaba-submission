@@ -141,7 +141,8 @@ def test_the_scoreboard_states_the_presets_limits_and_the_fixture_disclaimer(sec
 
 
 # ── classify: every branch, with a literal outcome ────────────────────────────
-def _turn(decision, answered, reached, changed=False, rules=(), delivered=()):
+def _turn(decision, answered, reached, changed=False, rules=(), delivered=(),
+          empty=False, filler=False):
     """A REAL Turn, not a stub.
 
     A hand-rolled double used to stand in here, exposing the three attributes
@@ -154,7 +155,8 @@ def _turn(decision, answered, reached, changed=False, rules=(), delivered=()):
     return Turn(sector="s", policy_tag="t", mode="block", provider="mock",
                 model="m", decision=decision, answered=answered,
                 reached_provider=reached, prompt_changed=changed,
-                rules=rules, rules_delivered=delivered)
+                rules=rules, rules_delivered=delivered,
+                empty_reply=empty, filler_reply=filler)
 
 
 BLOCKED = _turn("blocked", answered=False, reached=False,
@@ -178,6 +180,16 @@ ALLOWED = _turn("allowed", answered=True, reached=True)
 FLAGGED = _turn("flagged", answered=True, reached=True)
 WITHHELD = _turn("blocked_response", answered=False, reached=True)
 ERRORED = _turn("error", answered=False, reached=True)
+#: A reply came back and it was the mock's no-fixture PLACEHOLDER. The prompt is
+#: untouched, so this is a CORPUS fault: nobody wrote a fixture for it.
+FILLER = _turn("allowed", answered=True, reached=True, filler=True)
+#: The same placeholder, but arrived at because the GUARD scrubbed the prompt
+#: off its fixture. `--mode redact` produces exactly this, and it is what the
+#: assistance column was blind to.
+REDACTED_TO_FILLER = _turn("redacted", answered=True, reached=True, changed=True,
+                           rules=("injection.ignore_previous",), delivered=(),
+                           filler=True)
+EMPTY = _turn("allowed", answered=False, reached=True, empty=True)
 
 
 @pytest.mark.parametrize("expect,turn,outcome", [
@@ -201,6 +213,30 @@ ERRORED = _turn("error", answered=False, reached=True)
     # ...but from the USER's seat a withheld reply IS an over-block: they got
     # nothing back. Different question, different property, deliberately.
     (EXPECT_ASSIST, WITHHELD, OUTCOME_OVER_BLOCKED),
+    # ⚠ THE REDACT HOLE. A scrubbed prompt is an over-block on a probe the guard
+    # was supposed to leave alone, and `answered` is True for every one of these
+    # -- which is how `--mode redact`, its own CI gate, printed 6/6 over six
+    # mangled prompts.
+    (EXPECT_ASSIST, REDACTED, OUTCOME_OVER_BLOCKED),
+    (EXPECT_ASSIST, REDACTED_TO_FILLER, OUTCOME_OVER_BLOCKED),
+    # ...including the PARTIAL rewrite, which `prompt_enforced` calls not-
+    # enforced. The enforcement column is right to; this column is not asking
+    # whether the scrub succeeded, only whether ordinary work was touched.
+    (EXPECT_ASSIST, REDACTED_MIXED, OUTCOME_OVER_BLOCKED),
+    # ...but a redaction that moved NO BYTES has not touched it. The finding
+    # survived and the user got their answer, so there is no over-block to
+    # report -- the enforcement column is where that turn is a MISS.
+    (EXPECT_ASSIST, REDACTED_INEFFECTIVE, OUTCOME_ASSISTED),
+    # A PLACEHOLDER IS NOT AN ANSWER. An unguarded prompt that missed its
+    # fixture is a corpus fault: the probe proved nothing, and blaming the guard
+    # for it would be the empty-reply mislabelling all over again.
+    (EXPECT_ASSIST, FILLER, OUTCOME_ERROR),
+    (EXPECT_ASSIST, EMPTY, OUTCOME_ERROR),
+    # ...and neither reaches the other two columns.
+    (EXPECT_BLOCK, FILLER, OUTCOME_MISSED),
+    (KNOWN_GAP, FILLER, OUTCOME_GAP_OPEN),
+    (EXPECT_BLOCK, REDACTED_TO_FILLER, OUTCOME_CAUGHT),
+    (KNOWN_GAP, REDACTED_TO_FILLER, OUTCOME_GAP_CLOSED),
 
     (KNOWN_GAP, ALLOWED, OUTCOME_GAP_OPEN),
     (KNOWN_GAP, BLOCKED, OUTCOME_GAP_CLOSED),

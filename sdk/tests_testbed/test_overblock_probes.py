@@ -33,6 +33,7 @@ would overstate what is measured here.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import re
 import sys
@@ -41,7 +42,10 @@ from pathlib import Path
 import pytest
 from foxy_audit import introspect, policy, ruleset
 
-from foxy_testbed.scoreboard import OUTCOME_OVER_BLOCKED, run_probes
+from foxy_testbed import providers
+from foxy_testbed.core import Assistant
+from foxy_testbed.scoreboard import (OUTCOME_ASSISTED, OUTCOME_ERROR,
+                                     OUTCOME_OVER_BLOCKED, run_probes)
 from foxy_testbed.sectors import EXPECT_ASSIST, SECTOR_NAMES, SECTORS
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -272,6 +276,161 @@ def test_the_scoreboard_fails_and_names_the_new_probes(sector_name,
     flat = " ".join(board.render().split())
     for probe_id in NEW_PROBE_IDS[sector_name]:
         assert "[{0}] {1}".format(OUTCOME_OVER_BLOCKED, probe_id) in flat
+
+
+@pytest.mark.parametrize("sector_name", SECTOR_NAMES)
+def test_the_redact_board_fails_too_and_is_not_blind_to_it(sector_name,
+                                                           reverted_engine):
+    """⚠ THE MIRROR, AND THE GATE THAT WAS GREEN WHEN THE BLOCK ONE WENT RED.
+
+    `ci.yml` runs `--probe all --mode redact` as a step of its own, and on the
+    day the withdrawn ruleset shipped that step would have passed. Under redact
+    nothing is refused: the prompt is delivered SCRUBBED, the provider answers,
+    `answered` is True, and the assistance column printed `answered 6/6 |
+    over-blocked 0` over six prompts the guard had just mangled. Measured on
+    this branch before the fix -- block `over_blocked=2 ok=False` beside redact
+    `over_blocked=0 ok=True`, all three sectors.
+
+    The two modes must now agree, because the same six probes were over-blocked
+    in both. They are asserted against each OTHER as well as against literals:
+    a mode-specific hole is exactly what this file exists to close, and equal
+    numbers is the shortest statement of "no hole".
+    """
+    block = run_probes(sector_name)
+    redact = run_probes(sector_name, mode="redact")
+
+    assert redact.over_blocked == 2
+    assert redact.ok is False
+    assert (redact.over_blocked, redact.assisted) == (block.over_blocked,
+                                                      block.assisted)
+
+    over_blocked = sorted(r.probe.id for r in redact.results
+                          if r.outcome == OUTCOME_OVER_BLOCKED)
+    assert over_blocked == sorted(NEW_PROBE_IDS[sector_name])
+
+    # ...and it really is the redact path: the prompts REACHED the provider,
+    # rewritten, rather than being refused. Without this the test would pass
+    # just as well if `--mode redact` had silently fallen back to block.
+    scrubbed = [r.turn for r in redact.results
+                if r.probe.id in NEW_PROBE_IDS[sector_name]]
+    assert all(t.decision == "redacted" for t in scrubbed), (
+        [t.decision for t in scrubbed])
+    assert all(t.reached_provider and t.prompt_changed for t in scrubbed)
+
+
+@pytest.mark.parametrize("sector_name", SECTOR_NAMES)
+def test_the_control_a_real_fixture_still_scores_assisted(sector_name,
+                                                          reverted_engine):
+    """THE BOUND. Four probes per sector still come back `answered`, in BOTH
+    modes, with the withdrawn ruleset bound.
+
+    Without this the file would pass just as well if the change had made every
+    assist probe fail -- which is a way of "detecting" an over-block that
+    detects nothing, and would have made the column useless in the opposite
+    direction. The four are the ones that predate T5: the withdrawn rules do
+    not touch them, so their prompts arrive intact, hit their written fixtures,
+    and are scored on a real reply.
+    """
+    for mode in ("block", "redact"):
+        board = run_probes(sector_name, mode=mode)
+        assisted = sorted(r.probe.id for r in board.results
+                          if r.outcome == OUTCOME_ASSISTED)
+        assert assisted == sorted(p.id for p in _older_probes(sector_name)), mode
+        assert board.assisted == 4, mode
+        assert board.errors == 0, (
+            "{0}: an ERROR here would mean a probe lost its fixture, which is a "
+            "corpus fault and not an over-block".format(mode))
+
+
+def test_a_placeholder_is_not_an_answer_and_the_board_says_which(monkeypatch):
+    """The other half of the same defect, and the one the gate found first.
+
+    `MockProvider.fixtures` is an EXACT-MATCH dict. Delete an assist probe's
+    written reply and the mock falls through to `[no fixture for this prompt]
+    ...`; `answered` is True for it, and the board used to print `[answered]`
+    and `PASS | assistance 6/6` over a placeholder. A hollow pass, in the
+    surface whose whole claim is that its numbers mean something.
+
+    ⚠ ERROR, NOT OVER-BLOCKED, and the distinction is the point. The guard did
+    not touch this prompt -- nothing is bound here, the shipped rules are
+    running -- so the probe proved nothing and the corpus is what needs fixing.
+    Calling it an over-block would blame the guard for a missing fixture, which
+    is the mislabelling that sent an empty completion to this column as
+    `allowed` and scored it OVER-BLOCKED.
+    """
+    sector = SECTORS["finance"]
+    stripped = dataclasses.replace(
+        sector,
+        probes=tuple(dataclasses.replace(p, reply="")
+                     if p.id == "finance.assist.rulemaking_docket" else p
+                     for p in sector.probes))
+
+    board = run_probes(stripped)
+
+    assert board.errors == 1
+    assert board.assisted == 5, "the other five still answer on real fixtures"
+    assert board.over_blocked == 0, "the guard did nothing to this prompt"
+    assert board.ok is False, "a hollow pass is not a pass"
+
+    flat = " ".join(board.render().split())
+    assert "[{0}] finance.assist.rulemaking_docket".format(OUTCOME_ERROR) in flat
+    assert "no fixture is written for this prompt" in flat, (
+        "the board has to SAY why, or a reader concludes the guard broke")
+    # The enforcement and gap columns are untouched by a missing assist fixture.
+    assert board.caught == 3 and board.gaps_open == 2
+
+
+def test_the_filler_flag_is_carried_by_the_provider_not_sniffed_from_the_text():
+    """`Turn.filler_reply` comes from the provider, and a live one never sets it.
+
+    Asserted against the LITERAL prefix rather than against
+    `providers.NO_FIXTURE_PREFIX`, which would be comparing the constant to
+    itself -- the trap this repo has already paid for once.
+    """
+    mock = providers.MockProvider({"answered": "a real written reply"})
+    assert mock.complete("s", "answered") == "a real written reply"
+    assert mock.answered_with_filler is False
+    assert mock.complete("s", "unanswered").startswith(
+        "[no fixture for this prompt]")
+    assert mock.answered_with_filler is True
+    # ...and it goes back down when the next prompt does hit a fixture, so a
+    # single filler cannot poison the rest of a run.
+    mock.complete("s", "answered")
+    assert mock.answered_with_filler is False
+
+    # A provider that answers for real never claims otherwise, whatever its
+    # reply happens to contain -- including this exact phrase.
+    class Echo(providers.Provider):
+        name = "echo"
+
+        def complete(self, system, prompt):
+            return "[no fixture for this prompt] but I am a live model"
+
+    live = Echo("m")
+    assert live.complete("s", "x").startswith("[no fixture for this prompt]")
+    assert live.answered_with_filler is False, (
+        "a live model quoting the phrase back must not be mistaken for the mock")
+
+    # ⚠ AND THE SAME CLAIM THROUGH `Assistant.ask`, WHICH IS WHERE THE FLAG IS
+    # ACTUALLY SET. This half was added after a mutation caught the guard short:
+    # replacing core's `self.provider.answered_with_filler` with a
+    # `reply.startswith(...)` sniff left every assertion above green, because
+    # they only ever exercised the provider objects. The property being honest
+    # is worth nothing if the one caller re-derives it anyway.
+    turn = Assistant(SECTORS["legal"], provider=Echo("m")).ask(
+        "What is attorney work product?")
+    assert turn.answered is True
+    assert turn.filler_reply is False, (
+        "core must ASK the provider, not read the reply text -- this turn's "
+        "reply opens with the phrase and came from a provider that answered")
+    assert turn.as_dict()["filler_reply"] is False
+
+    # ...and the mock's real filler still arrives as one through the same path,
+    # or the assertion above would pass by the flag never being set at all.
+    mock_turn = Assistant(SECTORS["legal"],
+                          provider=providers.MockProvider({})).ask(
+        "What is attorney work product?")
+    assert mock_turn.filler_reply is True
 
 
 def test_a_redact_run_cuts_an_ordinary_word_in_half(reverted_engine):

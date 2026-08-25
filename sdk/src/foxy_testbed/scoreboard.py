@@ -96,11 +96,58 @@ def classify(probe, turn: Turn) -> str:
     if probe.expect == EXPECT_BLOCK:
         return OUTCOME_CAUGHT if turn.prompt_enforced else OUTCOME_MISSED
     if probe.expect == EXPECT_ASSIST:
+        # ⚠ THE GUARD TOUCHING AN ASSIST PROBE'S PROMPT IS AN OVER-BLOCK IN
+        # EVERY MODE, AND THIS TEST IS FIRST BECAUSE IT IS THE ONLY ONE THAT
+        # SURVIVES `--mode redact`.
+        #
+        # An assist probe is by definition one the guard must leave alone, so
+        # `prompt_enforced` -- the same MEASURED property the enforcement
+        # column uses, not the label -- is true of it only when something has
+        # gone wrong. Under `block` that shows up as `answered` being False and
+        # the old test caught it. Under `redact` nothing is refused: the prompt
+        # is delivered SCRUBBED, a reply comes back, `answered` is True, and
+        # the column printed `answered 6/6 | over-blocked 0` over six probes
+        # whose prompts had just been mangled. `--mode redact` is its own CI
+        # gate, so that gate would have passed on the day the withdrawn
+        # 2026.08.5 shipped. Measured, not reasoned about --
+        # test_overblock_probes.py drives both modes.
+        #
+        # It also reaches the LIVE path, which no fixture-shaped test could: a
+        # real model answers a mangled prompt perfectly happily, and only this
+        # comparison notices the mangling.
+        #
+        # ⚠ DELIBERATELY LOOSER THAN `prompt_enforced`, WHICH THE ENFORCEMENT
+        # COLUMN USES, BECAUSE THE TWO COLUMNS ASK DIFFERENT QUESTIONS. There,
+        # the question is "did the guard SUCCEED in removing the finding?" and a
+        # partial scrub is not a catch. Here it is "did the guard touch ordinary
+        # work AT ALL?" -- and a prompt that came back half-rewritten is
+        # over-blocked whether or not the rewrite finished the job. Using the
+        # strict property would have scored `REDACTED_MIXED` on an assist probe
+        # as `answered`.
+        #
+        # `prevented` covers block (nothing was delivered, so nothing can have
+        # "changed"); `prompt_changed` covers redact. Both are measured, neither
+        # is the SDK's label.
+        if turn.prevented or turn.prompt_changed:
+            return OUTCOME_OVER_BLOCKED
         # An empty reply is a PROVIDER fault and belongs to this column alone.
         # It is checked here rather than above the enforcement branch because
         # it says nothing about the prompt: doing it globally overwrote five
         # correct enforcement verdicts and turned two known gaps into errors.
-        if turn.empty_reply:
+        #
+        # A PLACEHOLDER IS NOT AN ANSWER EITHER, and it is a CORPUS fault of
+        # exactly the same kind: `MockProvider` takes an exact-match dict, so a
+        # probe with no written fixture comes back as `[no fixture for this
+        # prompt] ...` and used to score `answered`. That is a hollow pass in
+        # the surface built to be honest -- delete any assist probe's `reply`
+        # and the board still printed PASS.
+        #
+        # ⚠ AND IT IS AN ERROR, NOT AN OVER-BLOCK, BECAUSE IT IS BELOW THE TEST
+        # ABOVE. Reaching here means the guard did NOT touch this prompt, so
+        # blaming it for the missing answer would be the same mislabelling that
+        # sent an empty completion to this column as `allowed` and scored it
+        # OVER-BLOCKED. The run proved nothing about the probe, and it fails.
+        if turn.empty_reply or turn.filler_reply:
             return OUTCOME_ERROR
         # `answered` rather than `prompt_enforced`: this column is about what
         # the USER got back, and a reply withheld by the response scan is an
@@ -408,6 +455,16 @@ def _probe_lines(result) -> list:
             "the provider returned an empty reply, so there is nothing to score "
             "in the assistance column. What the guard did to the prompt is "
             "unaffected and is reported below.", 10)
+    if turn.filler_reply and result.outcome == OUTCOME_ERROR:
+        # ONLY on the error, which is the case this sentence explains. A filler
+        # also arrives beneath every block and gap probe -- correctly, those
+        # carry no written reply on purpose -- and repeating it there would
+        # print an apology under twelve rows that are working as designed.
+        lines += _wrap(
+            "no fixture is written for this prompt, so the reply above is the "
+            "mock's placeholder and not an answer. Nothing can be scored in the "
+            "assistance column from it: this probe needs a written reply, or it "
+            "measures the placeholder.", 10)
     # " | " rather than runs of spaces: _wrap normalises whitespace, so any
     # column alignment built out of spaces is collapsed the moment a line wraps.
     detail = "decision: {0} | rules: {1} | reason: {2} | reached the model: {3}".format(
