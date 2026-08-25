@@ -203,6 +203,36 @@ def test_a_spelling_the_ledger_would_refuse_is_never_sent(bad):
         "%r would have been sent as policy_tag_raw" % (bad,))
 
 
+def test_an_identifier_smuggled_into_the_tag_never_leaves_the_process(tmp_path):
+    """CONTENT-BLINDNESS, DRIVEN END TO END — the shape #246 named.
+
+    `policy=f"hipaa-{mrn}"` is the one way a caller can put free text where a
+    bounded field is expected, and this phase is what makes such a tag reach a
+    NEW wire field at all. It must not: the fold leaves the hyphen in place,
+    `_POLICY_RE` refuses it, the decorator substitutes `default` as it always
+    has, and `_typed_tag` declines because the fold does not equal that tag.
+
+    Asserted on the PAYLOAD rather than on the helper. The helper returning None
+    proves the helper; only the payload proves that nothing else on the way to
+    the dispatcher picked the value up.
+    """
+    mrn = "4417829"
+    client, sent = _payloads(tmp_path, "observe", "mrn")
+    original = dispatch.submit
+    dispatch.submit = lambda cfg, payload, wait=False: sent.append(payload)
+    try:
+        @client.audit(policy="hipaa-" + mrn, mode="observe")
+        def call(prompt):
+            return "a response"
+        call("Summarise last quarter's revenue.")
+    finally:
+        dispatch.submit = original
+
+    assert sent, "the call recorded no event at all"
+    assert sent[-1]["policy_tag"] == "default"
+    assert mrn not in json.dumps(sent[-1]), sent[-1]
+
+
 def test_everything_we_send_satisfies_the_ledgers_own_rule():
     """The deployed validator, re-implemented from `backend/app/schemas.py` and
     run over a corpus.
@@ -225,6 +255,35 @@ def test_everything_we_send_satisfies_the_ledgers_own_rule():
         assert charset.fullmatch(typed), (value, typed)
         assert separators.sub("_", typed.strip().lower()) == tag, (value, typed, tag)
         assert client_module._POLICY_RE.match(tag), (value, tag)
+
+
+def test_the_fold_check_holds_when_the_tag_pattern_is_widened(monkeypatch):
+    """RE-AIMED AFTER A MISSED MUTATION, AND THE DIAGNOSIS IS THE POINT.
+
+    Deleting `_typed_tag`'s fold check left all 46 guards green. That is not a
+    guard lying — it is a branch today's `_POLICY_RE` makes unreachable: a tag
+    matching `^[a-z0-9_]{1,32}$` holds no space and no hyphen, so the ledger's
+    separator fold is a no-op on it and the equality is true by construction.
+
+    The check exists for the day `_POLICY_RE` widens, so THAT is what this
+    drives. Widen it to admit a space, and `policy="HIPAA BASIC"` folds on our
+    side to `hipaa basic` and on the ledger's to `hipaa_basic` — two different
+    tags. Sending the typed spelling then 422s the whole batch, because
+    `LogIngest._typed_tag_is_bounded_and_is_the_same_tag` refuses a raw tag that
+    does not fold to this row's `policy_tag`. Without the check, one widened
+    pattern would take ingest down for every miscased multi-word tag.
+    """
+    monkeypatch.setattr(client_module, "_POLICY_RE",
+                        re.compile(r"^[a-z0-9_ -]{1,32}$"))
+    tag, typed = client_module._wire_policy("HIPAA BASIC")
+    assert tag == "hipaa basic", tag
+    assert typed is None, (
+        "a spelling folding to %r was offered for a %r row"
+        % (re.sub(r"[ -]", "_", "hipaa basic"), tag))
+
+    # CONTROL, in the same widened world: a spelling that DOES fold back still
+    # rides, so the assertion above is not an always-skip wearing a new coat.
+    assert client_module._wire_policy("HIPAA") == ("hipaa", "HIPAA")
 
 
 def test_a_callers_own_policy_tag_raw_is_dropped(tmp_path):
