@@ -184,6 +184,15 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
     # digest — and `policy=` takes any runtime string, so
     # `policy=f"hipaa-{patient_id}"` would otherwise put a patient id in a
     # third party's request body.
+    #
+    # ⚠ THIS NARROWED GEMINI'S GRADING INPUT, DELIBERATELY. It no longer
+    # receives policy_rules or the ruleset provenance — openai never did. The
+    # alternative was to exclude policy_tag_raw alone, which would have left
+    # gemini structurally able to receive any key added to ingest LATER: the
+    # exact hole being closed. Verdicts for gemini tenants can move as a result,
+    # and the two providers now grade one event on IDENTICAL bytes, which they
+    # did not before. Pinned by test_judge_content_blindness.py so nobody has to
+    # rediscover it as a bug.
     meta = judge.content_blind_meta(meta)
     routing = judge_routing.resolve_judge_routing(db, org_id)
     verdicts = []

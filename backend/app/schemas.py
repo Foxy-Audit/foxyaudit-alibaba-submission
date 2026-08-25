@@ -6,11 +6,39 @@ the Bearer API key, so a client can never spoof another tenant's id.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+# The typed spelling of a policy tag, and nothing else.
+#
+# DELIBERATELY NARROWER THAN `agent`, which admits dot, colon and slash: those
+# are the punctuation of paths, URIs and namespaced identifiers — the shapes
+# real-world content travels in — and none of them can survive the fold below
+# anyway, so admitting them would only widen what a rejection message has to
+# quote. What is left is what a human actually types as a TAG: any case, and
+# the three separators they reach for.
+#
+# NO ANCHORS, AND MATCHED WITH fullmatch. In Python re, "$" also matches
+# just before a TRAILING NEWLINE, so an anchored pattern accepted
+# "hipaa" + newline — and the .strip() below then folded that to a clean
+# "hipaa" which equalled policy_tag. A log-injection carrier would have
+# chained. pydantic Field(pattern=...) does NOT share this: it compiles
+# with the Rust engine, where "$" is end of input, so policy_tag itself
+# was never exposed (checked). Caught by the charset test, not by review.
+_RAW_TAG_PATTERN = re.compile(r"[A-Za-z0-9 _-]{1,64}")
+# One separator in, one underscore out. NOT a run-collapsing `+`: policy_tag
+# permits a doubled underscore, so collapsing runs would reject a raw tag that
+# is character-for-character identical to the canonical one.
+_RAW_TAG_SEPARATORS = re.compile(r"[ -]")
+
+
+def canonical_policy_tag(raw: str) -> str:
+    """Fold a typed tag into the spelling `policy_tag` is charset-locked to."""
+    return _RAW_TAG_SEPARATORS.sub("_", raw.strip().lower())
 
 
 class LogIngest(BaseModel):
@@ -70,10 +98,15 @@ class LogIngest(BaseModel):
                    # here, so an auditor can see that the `hipaa` rules ran
                    # because a developer wrote `HIPAA`. Before this key the
                    # miscased call was chained as `default` and the typed
-                   # form was lost. Content-blind by construction: it is an
-                   # argument to a decorator, never anything derived from a
-                   # prompt, and the 256-char cap below bounds it like every
-                   # other label.
+                   # form was lost.
+                   #
+                   # "Content-blind by construction" was doing too much work
+                   # here on its own: it IS a decorator argument rather than
+                   # anything derived from a prompt, but `policy=` takes any
+                   # runtime string, and the 256-char cap this comment used to
+                   # lean on bounds a LENGTH, not a vocabulary. What bounds it
+                   # is _typed_tag_is_bounded_and_is_the_same_tag below: a tag
+                   # charset, and the fold back to this row's own policy_tag.
                    #
                    # SAME DEPLOY ORDER AS THE TWO KEYS ABOVE, for the same
                    # reason: the whole REQUEST is rejected, so an SDK sending
@@ -87,6 +120,51 @@ class LogIngest(BaseModel):
             if len(values) > 64 or any(len(str(v)) > 256 for v in values):
                 raise ValueError(f"event_metadata.{key} is too large")
         return value
+
+    @model_validator(mode="after")
+    def _typed_tag_is_bounded_and_is_the_same_tag(self):
+        """`policy_tag_raw` carries a SPELLING, never information of its own.
+
+        Two rules, and the ledger needs both. `policy_tag` and `agent` — the
+        only other caller-chosen fields — are pattern-locked; this key was 256
+        characters of anything, persisted and CHAIN-BOUND, so
+        `policy=f"hipaa-{mrn}"` wrote a patient identifier into a hash chain
+        that by design cannot be edited afterwards. Rejecting at ingest is the
+        only place it can be stopped: after the append there is no fix, only a
+        disclosure.
+
+        The equality is the part that actually bounds it. A charset alone still
+        admits `hipaa-MRN-4417829`; requiring the fold to equal the canonical
+        tag means the raw form can differ from `policy_tag` ONLY in case and in
+        which separator was typed. It therefore carries no information the
+        chain does not already hold — which is what "bounded metadata" has to
+        mean if the phrase is doing any work.
+
+        Second rule, second failure it closes: nothing checked that the typed
+        tag was a spelling of THIS row's tag. `policy_tag="hipaa"` with
+        `policy_tag_raw="PCI"` ingested and chained happily, and — because the
+        duplicate-content comparison in logs.py pops this key — a resend
+        carrying an entirely different typed tag was a 202 duplicate rather
+        than a 409. That comparison's comment claims only two SPELLINGS of one
+        canonical tag can compare equal. This validator is what makes the claim
+        true; without it, it was merely a hope.
+
+        A tag that cannot satisfy this is refused rather than trimmed: silently
+        storing something other than what the caller typed would put a
+        fabricated spelling in the evidence.
+        """
+        raw = (self.event_metadata or {}).get("policy_tag_raw")
+        if raw is None:
+            return self
+        # The value is never echoed back. An error body is a place caller text
+        # can escape to — logs, proxies, a dashboard toast — and this key exists
+        # precisely because callers put unexpected things in it.
+        if not isinstance(raw, str) or not _RAW_TAG_PATTERN.fullmatch(raw):
+            raise ValueError("event_metadata.policy_tag_raw is not a tag spelling")
+        if canonical_policy_tag(raw) != self.policy_tag:
+            raise ValueError(
+                "event_metadata.policy_tag_raw is not a spelling of policy_tag")
+        return self
 
     @field_validator("prompt_hash", "response_hash")
     @classmethod

@@ -206,3 +206,32 @@ def test_the_local_enforcement_path_still_sees_the_whole_record():
     verdict = policy_engine.evaluate_enforcement(meta)
     assert verdict.rules == ["phi.ssn_pattern"]
     assert verdict.reason == "host_blocked_egress:phi"
+
+
+def test_both_providers_now_receive_identical_metadata(sent, monkeypatch):
+    """THE GEMINI NARROWING, PINNED — it is deliberate and verdict-affecting.
+
+    Projecting at the boundary rather than excluding `policy_tag_raw` alone
+    means gemini no longer receives `policy_rules` or the ruleset provenance.
+    OpenAI never did. So this is not new behaviour invented here; it is gemini
+    being brought to the input openai already had — but verdicts for gemini
+    tenants CAN move because of it, and a behaviour change nobody wrote down is
+    one somebody rediscovers as a bug.
+
+    The narrowing was chosen over excluding the one key because that would have
+    left gemini structurally able to receive any key added to ingest LATER,
+    which is the hole being closed rather than a smaller version of it.
+
+    Asserted as EQUALITY rather than as two absence checks: "the two providers
+    grade one event on identical bytes" is the property, and it also fails if a
+    future change re-widens either side alone.
+    """
+    _drive_both(monkeypatch, _meta())
+
+    gemini_meta = json.loads(sent["gemini"])
+    openai_body = json.loads(sent["openai"])
+    openai_meta = json.loads(
+        openai_body["input"][1]["content"][0]["text"])["metadata"]
+
+    assert gemini_meta == openai_meta
+    assert gemini_meta["event_metadata"] == {"model": "gpt-5.6"}

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from sqlalchemy import text
 
 from app.db import engine
@@ -342,3 +343,99 @@ def test_a_stripped_resend_does_not_rewrite_the_stored_row(make_org, client):
     assert len(rows) == 1
     assert rows[0]["event_metadata"]["policy_tag_raw"] == RAW_TAG
     assert client.get("/v1/verify", headers=org["auth"]).json()["ok"] is True
+
+
+# ── the typed tag is a SPELLING, and the ledger is what makes that matter ─────
+# Ingest-side, deliberately: a bad tag must never reach the chain, because the
+# chain is append-only. There is no editing it out afterwards, only a disclosure.
+def test_a_typed_tag_that_carries_content_is_refused(make_org, client):
+    """THE LEDGER GUARD. `policy=f"hipaa-{mrn}"` must not chain an MRN.
+
+    The wire was defended first — the projection at the judge boundary stops
+    this reaching a provider — but that left the value persisted and
+    CHAIN-BOUND, which is the harder half: a request body is transient, and a
+    hash chain is forever.
+    """
+    org = make_org()
+    leaky = _event()
+    leaky["event_metadata"]["policy_tag_raw"] = "hipaa-MRN-4417829"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[leaky])
+    assert response.status_code == 422, response.text
+    assert "not a spelling of policy_tag" in response.text
+    # …and nothing was written on the way to the rejection.
+    assert client.get("/v1/logs", headers=org["auth"]).json()["items"] == []
+
+
+@pytest.mark.parametrize("raw", [
+    "hipaa: patient notes",       # colon — `agent` admits it, a tag must not
+    "hipaa/oncology",             # slash — path punctuation
+    "hipaa.v2",                   # dot — namespaced-identifier punctuation
+    "hipaa, dob 1979-02-11",      # comma, and free text behind it
+    "hip" + chr(228) + "a",       # non-ASCII
+    "hipaa" + chr(10),            # a newline, the classic log-injection carrier
+    "hipaa" + chr(9),             # a tab
+    "h" * 65,                     # over the length cap
+])
+def test_an_out_of_charset_or_over_long_typed_tag_is_refused(make_org, client, raw):
+    """CHARSET, one case per shape it excludes.
+
+    Parametrised rather than one string so a charset widened by accident fails
+    on the exact character that was let back in.
+    """
+    org = make_org()
+    bad = _event()
+    bad["event_metadata"]["policy_tag_raw"] = raw
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[bad])
+    assert response.status_code == 422, response.text
+    assert "not a tag spelling" in response.text
+
+
+def test_a_typed_tag_for_a_different_policy_is_refused(make_org, client):
+    """The second half of the rule — the one that repairs logs.py's comment.
+
+    `policy_tag="hipaa"` with `policy_tag_raw="PCI"` used to ingest and chain
+    fine. Worse: because the duplicate-content comparison pops this key, a
+    resend carrying an entirely different typed tag came back 202 duplicate
+    rather than 409 — so the comment claiming "only two SPELLINGS of one
+    canonical tag compare equal" was false on the day it was written.
+    """
+    org = make_org()
+    mismatched = _event()
+    mismatched["event_metadata"]["policy_tag_raw"] = "PCI"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[mismatched])
+    assert response.status_code == 422, response.text
+    assert "not a spelling of policy_tag" in response.text
+
+
+@pytest.mark.parametrize("raw,canonical", [
+    ("HIPAA", "hipaa"),                  # the case the feature exists for
+    ("Hipaa", "hipaa"),
+    ("  hipaa  ", "hipaa"),              # surrounding whitespace
+    ("hipaa", "hipaa"),                  # identical — must never be refused
+    ("HIPAA Basic", "hipaa_basic"),      # a typed space
+    ("HIPAA-Basic", "hipaa_basic"),      # a typed hyphen
+    ("hipaa__basic", "hipaa__basic"),    # a doubled underscore survives the fold
+])
+def test_a_real_typed_spelling_is_still_accepted(make_org, client, raw, canonical):
+    """THE CONTROL, and the whole point of bounding rather than removing.
+
+    Without it, "refuse everything" satisfies every guard above and the feature
+    is closed instead of bounded — an auditor could no longer see that the
+    `hipaa` rules ran because a developer wrote `HIPAA`.
+
+    `hipaa__basic` is here for the fold specifically: `policy_tag` permits a
+    doubled underscore, so a separator regex collapsing RUNS would reject a raw
+    tag character-for-character identical to the canonical one.
+    """
+    org = make_org()
+    accepted = _event(policy_tag=canonical)
+    accepted["event_metadata"]["policy_tag_raw"] = raw
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[accepted])
+    assert response.status_code == 202, response.text
+
+    rows = client.get("/v1/logs", headers=org["auth"]).json()["items"]
+    # Stored VERBATIM. The fold decides whether to ACCEPT and never rewrites:
+    # trimming to a canonical form would put a spelling in the evidence that no
+    # developer ever typed.
+    assert rows[0]["event_metadata"]["policy_tag_raw"] == raw
+    assert rows[0]["policy_tag"] == canonical

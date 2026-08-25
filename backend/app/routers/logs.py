@@ -133,6 +133,14 @@ def ingest_batch(
             # compare equal, and those are the same event. And a resend never
             # overwrites the stored row, so nothing already recorded as
             # evidence can change either way.
+            #
+            # That "only two spellings" is ENFORCED, not assumed:
+            # LogIngest._typed_tag_is_bounded_and_is_the_same_tag refuses a
+            # policy_tag_raw that does not fold to this row's policy_tag. Before
+            # it existed the sentence above was false — policy_tag="hipaa" with
+            # policy_tag_raw="PCI" ingested, and this pop then made a resend
+            # carrying a DIFFERENT typed tag a 202 duplicate. Relax that
+            # validator and this comment goes back to being a hope.
             for _excluded_key in ("ruleset_version", "ruleset_hash", "policy_tag_raw"):
                 stored_metadata.pop(_excluded_key, None)
                 requested_metadata.pop(_excluded_key, None)
