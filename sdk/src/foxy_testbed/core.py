@@ -486,15 +486,18 @@ EVIDENCE_STATES = (EVIDENCE_NO_RECEIPT, EVIDENCE_NO_LEDGER, EVIDENCE_NO_EXPORT,
 #
 # ⚠ THE SDK'S NARRATIVE GROUPING AND THIS MAP ARE NOT THE SAME PARTITION, and
 # pretending otherwise is how this comment was wrong before S14. `introspect`'s
-# docstring names FIVE answers that are "I cannot" and one — `no_rules_fired` —
-# that needs no replay; six statuses sit under `cannot` here. The two lists
+# docstring names SIX answers that are "I cannot" and one — `no_rules_fired` —
+# that needs no replay; seven statuses sit under `cannot` here. The two lists
 # differ in three places, each on purpose:
 #
 #   `ruleset_mismatch`   the SDK narrates it as "I cannot", this map files it
 #                        under DISAGREED. Kept after review — see the block
 #                        below, which is the argument in full.
 #   `row_not_found`      the SDK's narrative never lists it; there is no row to
-#                        say anything about, so `cannot` is the only honest mark.
+#                        say anything about, so `cannot` is the only honest
+#                        mark. `export_unreadable` -- S17's split of it, for a
+#                        file that is not a ledger at all -- is not listed there
+#                        either, and lands here for the same reason.
 #   `no_rules_fired`     the SDK calls it an ANSWER, and it is one: the row
 #                        records that nothing fired. It still wears `cannot`,
 #                        because no replay ran — what is reported is the row's
@@ -502,7 +505,7 @@ EVIDENCE_STATES = (EVIDENCE_NO_RECEIPT, EVIDENCE_NO_LEDGER, EVIDENCE_NO_EXPORT,
 #                        good news is the safe direction; overstating it is not.
 #
 # ⚠ THE FAMILY IS A COLOUR, NEVER THE ANSWER. Every surface prints
-# `Evidence.status` verbatim beside the mark, because ten outcomes rendered as
+# `Evidence.status` verbatim beside the mark, because eleven outcomes rendered as
 # three colours would be exactly the tick-and-cross collapse this phase exists to
 # refuse. The family only decides which of the page's four existing status tokens
 # the mark wears.
@@ -558,6 +561,13 @@ EXPLAIN_FAMILIES = {
     "ruleset_mismatch": FAMILY_DISAGREED,
     # the replay could not run
     "row_not_found": FAMILY_CANNOT,
+    # S17 (#245). `export_unreadable` is `row_not_found` split in two: the file
+    # is not a /v1/logs/export document, so there is no export to have found a
+    # row in. Same family — nothing could be checked either way — and a
+    # DIFFERENT WORD, because the remedy differs and the word is what a
+    # consumer switches on. The reasoning in full is in `introspect.explain`,
+    # at the arm that returns it.
+    "export_unreadable": FAMILY_CANNOT,
     "salt_unavailable": FAMILY_CANNOT,
     "unknown_ruleset": FAMILY_CANNOT,
     "ruleset_unrecorded": FAMILY_CANNOT,
@@ -592,8 +602,8 @@ class Evidence:
     """What tracing one turn to its ledger row found. The record all three
     surfaces render, exactly as :class:`Turn` is for the turn itself.
 
-    ⚠ ``status`` IS THE SDK's WORD AND IS NEVER TRANSLATED. `explain` has ten
-    outcomes and six of them wear the ``cannot`` mark; a surface that mapped them
+    ⚠ ``status`` IS THE SDK's WORD AND IS NEVER TRANSLATED. `explain` has eleven
+    outcomes and seven of them wear the ``cannot`` mark; a surface that mapped them
     onto a tick and a cross would report a salt it could not find in the same
     shape as a commitment that did not match. The mark is a colour; the word is
     the answer.

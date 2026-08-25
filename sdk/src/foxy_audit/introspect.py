@@ -48,11 +48,16 @@ So the loaded definition is re-hashed and compared. The frozen registry's
 this is the check that makes it observable at the point it matters. See
 ``ruleset.py``'s "THE REGISTRY IS FROZEN, NOT CURRENT".
 
-THE FIVE ANSWERS THAT ARE "I CANNOT"
-====================================
+THE SIX ANSWERS THAT ARE "I CANNOT"
+===================================
 Each is a real answer, reported plainly, never a traceback and never a silent
 fallback:
 
+* ``export_unreadable`` — the file handed to us is not a
+  ``/v1/logs/export`` document: its top level is not an object, or its ``logs``
+  is not a list, or that list holds entries none of which is a row. ⚠ IT IS NOT
+  ``row_not_found``, and the split is S17's decision — see :func:`explain`,
+  which carries the reasoning at the point the two part.
 * ``salt_unavailable`` — a salted row whose sidecar entry is missing. The
   commitment cannot be recomputed at all. Reporting "no match" would be a false
   negative on the exact question the tool exists to answer, and the reader would
@@ -252,8 +257,9 @@ class Match:
 #: adding a member here turns that completeness guard red until someone decides
 #: which family the new outcome belongs to. That failure is the handshake.
 STATUSES = ("explained", "no_matches", "hash_mismatch", "row_not_found",
-            "salt_unavailable", "unknown_ruleset", "ruleset_mismatch",
-            "ruleset_unrecorded", "no_rules_fired", "provenance_ambiguous")
+            "export_unreadable", "salt_unavailable", "unknown_ruleset",
+            "ruleset_mismatch", "ruleset_unrecorded", "no_rules_fired",
+            "provenance_ambiguous")
 
 
 @dataclass(frozen=True)
@@ -329,17 +335,56 @@ class ExplainResult:
                 "matches": [m.as_dict(include_text) for m in self.matches]}
 
 
-def _row_for(export: dict, event_id: str) -> dict | None:
+def _entries(export) -> list | None:
+    """The rows an export offers, or ``None`` when this is not an export.
+
+    ⚠ THE TWO ANSWERS ARE DIFFERENT NEWS AND THIS IS THE ONE PLACE THEY PART.
+    ``[]`` is a well-formed export that carries no rows — the reader's RANGE is
+    wrong. ``None`` is a file that is not a ``/v1/logs/export`` document at all
+    — the reader's FILE is wrong. Both callers read the distinction off this
+    return value rather than re-deriving it, because the second copy of this
+    shape test is how the two drifted apart in the first place: `_row_for`
+    tested one thing, the arm that reports the news tested another, and a
+    top-level-list export raised `AttributeError` out of `_row_for` before the
+    arm could answer at all.
+
+    ⚠ EVERY BRANCH HERE IS A SHAPE A READER'S FILE CAN LEGALLY HOLD. `explain`
+    parses arbitrary JSON, so ``export`` may be a list, a number or a string,
+    and ``logs`` may be anything at all — including an int, which the old
+    ``export.get("logs", []) or []`` handed straight to ``for`` as a TypeError.
+    """
+    if not isinstance(export, dict):
+        return None
+    logs = export.get("logs")
+    if not isinstance(logs, (list, tuple)):
+        return None
+    return list(logs)
+
+
+def _logs_kind(export) -> str:
+    """What the file offers under ``logs``, as a type name or ``"absent"``.
+
+    A TYPE NAME, NEVER THE VALUE. The point of the sentence this feeds is to
+    tell a reader what shape their file is, and printing the value would put
+    arbitrary file content into a message for no gain — the name is what
+    identifies the mistake. It also needs no `_printable` pass: these are
+    Python type names, produced here, ASCII by construction.
+    """
+    if not isinstance(export, dict) or "logs" not in export:
+        return "absent"
+    return type(export["logs"]).__name__
+
+
+def _row_for(export, event_id: str) -> dict | None:
     """The row with this event_id, or None. ARBITRARY JSON IN, no traceback out.
 
     ⚠ `logs` is whatever the reader's file contains. `{"logs": ["not-a-row"]}`
     reached `.get` on a string and raised AttributeError out of the public path
     — two lines above the non-dict `event_metadata` guard, and the same class as
-    it. A non-dict entry is not a row, so it is skipped: the answer becomes
-    `row_not_found`, which is a real answer and already the honest one for "your
-    export does not contain that event".
+    it. A non-dict entry is not a row, so it is skipped, and the caller turns
+    the absence into an answer.
     """
-    for row in export.get("logs", []) or []:
+    for row in _entries(export) or ():
         if isinstance(row, dict) and str(row.get("event_id")) == str(event_id):
             return row
     return None
@@ -581,21 +626,55 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     event_id = _printable(event_id)
     if row is None:
         # ⚠ TWO DIFFERENT PIECES OF NEWS, AND SENDING BOTH AS "check the id"
-        # STEERS THE READER AT THE WRONG THING. `logs` holding entries none of
-        # which is a row means the file is not a ledger export at all; telling
-        # someone to check their event_id when their FILE is the problem is the
-        # kind of confidently-unhelpful answer this module exists to avoid.
+        # STEERS THE READER AT THE WRONG THING. A file whose `logs` holds no
+        # rows — or which has no `logs` list at all — is not a ledger export;
+        # telling someone to check their event_id when their FILE is the
+        # problem is the kind of confidently-unhelpful answer this module
+        # exists to avoid.
         #
         # This distinction used to be carried by an AttributeError — `_row_for`
         # called `.get` on whatever it found — which the testbed caught broadly
         # and rendered as "THE EXPORT COULD NOT BE READ". That worked there and
         # nowhere else: `foxy explain` has no such catch, so the same file gave
         # a CLI user a traceback. The news is kept; the crash is not.
-        entries = export.get("logs", []) if isinstance(export, dict) else []
-        entries = entries if isinstance(entries, (list, tuple)) else []
+        #
+        # ⚠ S17 · IT IS A STATUS OF ITS OWN NOW, AND THAT WAS THE DECISION.
+        # S14d gave this arm the right SENTENCE under the token `row_not_found`,
+        # and left the two halves disagreeing: the message says "your file is
+        # not an export", the status says "this export has no such row". A
+        # reader gets the message; a CONSUMER gets the token, and a consumer
+        # switching on `row_not_found` retries with a different event_id —
+        # which can never succeed against a file that is not a ledger. The
+        # remedy differs (re-export, not re-check the id), so the token must.
+        #
+        # THE COUNTER-ARGUMENT IS REAL AND IS RECORDED HERE RATHER THAN WON:
+        # `row_not_found` is literally true of these files, and it already sits
+        # in the `cannot` family, so nothing renders wrongly today. Both hold.
+        # They are answers about the READER and the COLOUR; the objection above
+        # is about the CONSUMER, and #239 is the precedent — that phase changed
+        # a status NAME, not a behaviour, precisely because "a name is what
+        # every surface prints and every consumer switches on". This is the
+        # same defect one layer down, and fixing the sentence while leaving the
+        # token was fixing the half that was already least wrong.
+        #
+        # ⚠ AN EMPTY `logs` IS NOT THIS. `{"logs": []}` is a well-formed export
+        # that covers no rows: readable, honest, and the reader's RANGE is what
+        # is wrong. It keeps `row_not_found` and the "export a range that covers
+        # it" advice. `_entries` is where that line is drawn, once.
+        entries = _entries(export)
+        if entries is None:
+            return ExplainResult(
+                "export_unreadable",
+                f"THE EXPORT COULD NOT BE READ as a ledger: a /v1/logs/export "
+                f"document is a JSON object with a `logs` list, and this file "
+                f"is a {type(export).__name__} whose `logs` is "
+                f"{_logs_kind(export)}. Nothing here can be checked against "
+                f"event_id {event_id} — re-export rather than editing this "
+                f"file.",
+                event_id=event_id)
         if entries and not any(isinstance(entry, dict) for entry in entries):
             return ExplainResult(
-                "row_not_found",
+                "export_unreadable",
                 f"THE EXPORT COULD NOT BE READ as a ledger: its `logs` holds "
                 f"{len(entries)} entr{'y' if len(entries) == 1 else 'ies'} and "
                 f"none of them is a row. This is valid JSON but not a "
@@ -618,19 +697,42 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # as `_rule_ids` and two lines earlier than any of the arms that read it.
     metadata = row.get("event_metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
+    # ⚠ SAME MOVE AS `event_id` ABOVE, FOR THE VALUE THAT RIDES IN NINE
+    # SENTENCES. `version_key` keeps the row's own bytes, because the registry
+    # has to be asked for what the row actually says; `version` from here down
+    # is the PRINTABLE rendering, and every message below interpolates that.
+    # Normalising here rather than at each `{version!r}` is the whole of the
+    # trick — `!r` does NOT escape non-ASCII in Python 3, so five sentences
+    # looked guarded and were not, and the next sentence somebody adds cannot
+    # forget a step that has already happened. A falsy value stays falsy, so
+    # the no-version branch below still reads it unchanged.
     version = metadata.get("ruleset_version")
+    version_key = str(version) if version else ""
+    version = _printable(version) if version else ""
 
     # ── the commitment ───────────────────────────────────────────────────────
-    salted = str(row.get("commitment_alg") or "").endswith("-salted")
+    # ⚠ READ AND NORMALISED ONCE, and the suffix test is unaffected by it:
+    # `_printable` only ever rewrites a non-ASCII character into an ASCII
+    # backslash-u escape, which can neither create nor destroy a `-salted`
+    # ending.
+    commitment_alg = _printable(row.get("commitment_alg") or "")
+    salted = commitment_alg.endswith("-salted")
     salt = None
     if salted:
         salt = _load_salt(salt_sidecar_path, event_id) if salt_sidecar_path else None
         if not salt:
+            # ⚠ NORMALISED AFTER THE READ, NEVER BEFORE IT. `_load_salt` opened
+            # the path one line up against the caller's real value; what follows
+            # only prints it. A Windows home directory with a non-ASCII name is
+            # an ordinary thing to own, and it turned the ONE message whose job
+            # is to stop a reader taking "could not check" for "did not match"
+            # into a UnicodeEncodeError.
+            sidecar_shown = _printable(salt_sidecar_path)
             return ExplainResult(
                 "salt_unavailable",
                 f"Row {event_id} was committed with a per-event salt "
-                f"({row.get('commitment_alg')}), and no salt for it was found"
-                + (f" in {salt_sidecar_path}" if salt_sidecar_path
+                f"({commitment_alg}), and no salt for it was found"
+                + (f" in {sidecar_shown}" if sidecar_shown
                    else " (no --sidecar given)")
                 + ". Its commitment CANNOT be recomputed without that salt, so "
                   "this is not a mismatch and not a pass — the check could not "
@@ -638,7 +740,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
                   "Point --sidecar at the file the SDK wrote (config "
                   "salt_sidecar_path / FOXY_SALT_SIDECAR).",
                 event_id=event_id, policy_tag=policy_tag,
-                ruleset_version=str(version or ""))
+                ruleset_version=version)
 
     recomputed = hashing.commitment_hex(prompt, commitment_key, salt)
     if recomputed != row.get("prompt_hash"):
@@ -648,7 +750,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             f"committed. The row is intact; this is simply not the prompt it "
             f"covers. (If you expected a match, check the commitment key.)",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version or ""))
+            ruleset_version=version)
 
     # ── the ruleset ──────────────────────────────────────────────────────────
     #
@@ -746,17 +848,19 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             event_id=event_id, policy_tag=policy_tag, commitment_verified=True)
 
     try:
-        definition = ruleset.load(str(version))
+        definition = ruleset.load(version_key)
     except KeyError:
         return ExplainResult(
             "unknown_ruleset",
             f"Row {event_id} names ruleset {version!r}, which this SDK does not "
-            f"carry (it has: {', '.join(ruleset.known_versions())}). The row was "
+            f"carry (it has: "
+            f"{', '.join(_printable(known) for known in ruleset.known_versions())}"
+            f"). The row was "
             f"minted by a NEWER release. Upgrade foxy-audit to replay it — "
             f"replaying the rules this build happens to have would describe a "
             f"different policy than the one that actually ran.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True)
+            ruleset_version=version, commitment_verified=True)
 
     # ── is the definition we loaded the one the row was written against? ─────
     #
@@ -769,7 +873,13 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # Not hypothetical: 2026.08.3 was regenerated in place three times during
     # 1.9.0's review. That was safe only because it was unpublished, and the
     # rule that makes it unsafe afterwards was a comment in a docstring.
-    recorded_hash = str(metadata.get("ruleset_hash") or "")
+    # The RECORDED digest is a row value and is normalised like every other
+    # one; escaping cannot change the comparison below, because a non-ASCII
+    # value was never going to equal a hexdigest either way. `loaded_hash`
+    # needs no such pass and deliberately does not get one: `ruleset.hash_of`
+    # is a SHA-256 hexdigest computed here, ASCII by construction, and wrapping
+    # it would assert a risk that does not exist.
+    recorded_hash = _printable(str(metadata.get("ruleset_hash") or ""))
     loaded_hash = ruleset.hash_of(definition)
     if recorded_hash and recorded_hash != loaded_hash:
         return ExplainResult(
@@ -785,7 +895,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             f"the row do belong together; it is the rules that cannot be "
             f"trusted.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True,
+            ruleset_version=version, commitment_verified=True,
             ruleset_verified=False)
 
     # A row can name a version and record no hash. No shipped SDK emits one
@@ -829,12 +939,12 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             "unknown_ruleset",
             f"Row {event_id} names ruleset {version!r}, whose definition "
             f"matches the injection rules against a view built by "
-            f"{str(unknown)!r} — this SDK does not implement it (it has: "
+            f"{_printable(unknown)!r} — this SDK does not implement it (it has: "
             f"{', '.join(sorted(normalise.TRANSFORMS))}). Upgrade foxy-audit to "
             f"replay this row. Replaying it against the raw prompt alone would "
             f"report no match where the SDK which wrote the row found one.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True,
+            ruleset_version=version, commitment_verified=True,
             ruleset_verified=ruleset_verified)
     except UnknownValidator as unknown:
         # ⚠ THE PUBLIC PATH ANSWERS; IT DOES NOT RAISE. A row can name a ruleset
@@ -851,12 +961,12 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         return ExplainResult(
             "unknown_ruleset",
             f"Row {event_id} names ruleset {version!r}, whose definition uses "
-            f"the validator {str(unknown)!r} — this SDK does not implement it "
+            f"the validator {_printable(unknown)!r} — this SDK does not implement it "
             f"(it has: {', '.join(sorted(_VALIDATORS))}). Upgrade foxy-audit to "
             f"replay this row. Replaying it without that validator would report "
             f"matches the SDK which wrote the row had discarded.",
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True,
+            ruleset_version=version, commitment_verified=True,
             # ⚠ THIS PATH IS PAST THE DIGEST CHECK, so it carries the verdict
             # rather than dropping back to the default. The distinction is the
             # whole diagnosis here: a VERIFIED definition naming a validator
@@ -865,7 +975,12 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             # is not what it claims. Defaulting would have thrown away an
             # answer already computed three lines up.
             ruleset_verified=ruleset_verified)
-    recorded = list((metadata.get("policy_rules") or []))
+    # ⚠ `_rule_ids`, NOT THE IDIOM IT WAS WRITTEN TO REPLACE. This line was
+    # the last `list(metadata.get("policy_rules") or [])` in the module, and it
+    # feeds a `', '.join(...)` four lines down: `policy_rules: [1, 2]` raised
+    # TypeError, and a dict there silently yielded its KEYS as rule ids nobody
+    # recorded. Same file, same defect, two arms apart.
+    recorded = _rule_ids(metadata)
     if not matches:
         return ExplainResult(
             "no_matches",
@@ -877,7 +992,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
                                 "agree.")
             + unverified_note,
             event_id=event_id, policy_tag=policy_tag,
-            ruleset_version=str(version), commitment_verified=True,
+            ruleset_version=version, commitment_verified=True,
             ruleset_verified=ruleset_verified)
 
     return ExplainResult(
@@ -890,7 +1005,7 @@ def explain(prompt, event_id: str, export, commitment_key: str,
         f"matches {len(matches)} span(s) under policy {policy_tag!r}."
         + unverified_note,
         event_id=event_id, policy_tag=policy_tag,
-        ruleset_version=str(version), commitment_verified=True,
+        ruleset_version=version, commitment_verified=True,
         ruleset_verified=ruleset_verified, matches=matches)
 
 

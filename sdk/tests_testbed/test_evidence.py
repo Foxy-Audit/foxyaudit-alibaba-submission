@@ -397,9 +397,14 @@ def test_each_family_holds_exactly_the_statuses_it_is_meant_to():
     disagreed = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_DISAGREED}
     assert disagreed == {"hash_mismatch", "ruleset_mismatch"}
     cannot = {s for s, f in EXPLAIN_FAMILIES.items() if f == FAMILY_CANNOT}
-    assert cannot == {"row_not_found", "salt_unavailable", "unknown_ruleset",
-                      "ruleset_unrecorded", "no_rules_fired",
-                      "provenance_ambiguous"}
+    # `export_unreadable` (S17, #245) is `row_not_found` split in two: the file
+    # is not a /v1/logs/export document, so there was no export to have found a
+    # row in. Same family -- nothing could be checked either way -- and a
+    # different word, because the remedy differs and the word is what a
+    # consumer switches on.
+    assert cannot == {"row_not_found", "export_unreadable", "salt_unavailable",
+                      "unknown_ruleset", "ruleset_unrecorded",
+                      "no_rules_fired", "provenance_ambiguous"}
 
 
 def test_an_unmapped_status_falls_to_cannot_and_never_to_answered():

@@ -651,13 +651,24 @@ def test_a_logs_entry_that_is_not_a_row_answers_instead_of_raising(tmp_path):
     their id when their FILE is wrong, which is the confidently-unhelpful answer
     this module exists to avoid. That distinction used to be carried by the
     exception the testbed caught; the exception is gone and the news is not.
+
+    ⚠ THE STATUS CHANGED AT S17, AND THIS ASSERTION IS WHY IT HAD TO. S14d gave
+    this arm the right SENTENCE under the token `row_not_found`, and the test it
+    wrote had to assert the message and then assert the ABSENCE of the other
+    message — two string checks standing in for a distinction the status itself
+    refused to make. A reader gets the sentence; a consumer gets the token, and
+    one switching on `row_not_found` retries with a different event_id, which
+    can never succeed against a file that is not a ledger. `export_unreadable`
+    is that distinction, said once. See `introspect.explain`'s arm for the
+    reasoning in full, and `test_explain_never_tracebacks.py` for the control
+    that an EMPTY `logs` keeps `row_not_found`.
     """
     path = tmp_path / "junk.json"
     path.write_text(json.dumps({"org_id": "o", "logs": ["not-a-row", 7, None]}),
                     encoding="utf-8")
 
     result = introspect.explain(PHI, EVENT, str(path), KEY)
-    assert result.status == "row_not_found"
+    assert result.status == "export_unreadable"
     assert "COULD NOT BE READ" in result.message
     assert "Check the id" not in result.message
     result.message.encode("cp1252")
