@@ -234,6 +234,16 @@ what was passed**.
   backend that rejects the key — production is exactly that backend.
 - **Prove the unaffected path is byte-identical.** A `policy="hipaa"` event must
   produce the same payload it produces today, key for key.
+- ⚠ **STRIP IT ON THE 422 PATH, or S12's pop is dead weight.** `dispatch.
+  _strip_provenance` walks `ruleset.PROVENANCE_KEYS`; if `policy_tag_raw` is not
+  in the tuple it walks, a lagging or frozen backend keeps 422ing and the retry
+  is byte-identical to the request that just failed — which `_strip_provenance`
+  correctly refuses to send. S12 forgives the stripped resend; **only S13 can
+  produce one.** Decide deliberately whether it joins `PROVENANCE_KEYS` (whose
+  name then covers a key that is not provenance) or gets its own tuple that
+  `_strip_provenance` also walks. S14 set the precedent with `_ENFORCEMENT_KEYS`
+  beside it rather than inside it. *(Surfaced by the S12b executor's comment,
+  which asserts this as already-true of S13.)*
 - ⚠ **Reserve the key.** `_reserve_provenance` / `ruleset.PROVENANCE_KEYS`
   (`client.py:1116`) must cover `policy_tag_raw`, or a customer's own
   `event_metadata["policy_tag_raw"]` silently overwrites the SDK's and nothing
