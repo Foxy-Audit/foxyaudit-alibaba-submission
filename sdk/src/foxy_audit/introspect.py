@@ -769,22 +769,32 @@ def explain(prompt, event_id: str, export, commitment_key: str,
             # normalisation says the rebinding "cannot break the lookup"; that
             # is true of the ROW lookup on the line above it and false of this
             # one, fifty lines down.
-            sidecar_shown = _printable(salt_sidecar_path or "")
+            # ⚠ ONE DECISION, TAKEN ON THE RAW VALUE, AND THE PRINTABLE FORM
+            # CANNOT EXIST WITHOUT IT. This shipped for one round as
+            # `if sidecar_shown`, where `sidecar_shown` was already through
+            # `_printable` — and `_printable(None)` is the string "None",
+            # TRUTHY. A caller passing `salt_sidecar_path=None`, which is the
+            # natural way to say "no sidecar" through the public `explain()`,
+            # was told the salt "was not found in None".
+            #
+            # ⚠ AND THE FIRST FIX FOR IT WAS TWO FIXES, WHICH IS WHY IT LOOKS
+            # LIKE THIS NOW. That round both tested the raw value AND wrote
+            # `_printable(path or "")`, so either change alone was enough and
+            # neither was load-bearing: reverting the guard changed nothing a
+            # test could see. A mutation SURVIVED and said so. Computing the
+            # rendering inside the branch that uses it leaves exactly one
+            # place the question is asked.
+            #
+            # `foxy explain` could not have found any of this: the CLI guards
+            # with `is not None` and `cfg.salt_sidecar_path` defaults to "",
+            # so the None never reaches here from the tool. The defect lived
+            # on the API, and only reading the branch reaches the API.
+            where = (f" in {_printable(salt_sidecar_path)}"
+                     if salt_sidecar_path else " (no --sidecar given)")
             return ExplainResult(
                 "salt_unavailable",
                 f"Row {event_id} was committed with a per-event salt "
-                f"({commitment_alg}), and no salt for it was found"
-                # ⚠ THE GUARD TESTS THE RAW VALUE, NEVER THE PRINTABLE ONE.
-                # It read `if sidecar_shown` for one round, and
-                # `_printable(None)` is the string "None" — TRUTHY. A caller
-                # passing `salt_sidecar_path=None`, which is the natural way to
-                # say "no sidecar" through the public `explain()`, was told the
-                # salt "was not found in None". `foxy explain` never saw it
-                # (the CLI guards with `is not None` and `cfg` defaults to ""),
-                # which is exactly why it had to be caught by reading the
-                # branch rather than by running the tool.
-                + (f" in {sidecar_shown}" if salt_sidecar_path
-                   else " (no --sidecar given)")
+                f"({commitment_alg}), and no salt for it was found" + where
                 + ". Its commitment CANNOT be recomputed without that salt, so "
                   "this is not a mismatch and not a pass — the check could not "
                   "run. The salt lives only on your machine; Foxy never had it. "
