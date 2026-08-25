@@ -238,7 +238,7 @@ def test_a_current_sdk_degraded_by_the_backend_is_not_called_old(tmp_path):
     """🔴 CAUSE 1, DRIVEN THROUGH THE REAL DEGRADE PATH.
 
     ``dispatch._strip_provenance`` is what the SDK runs when a backend 422s the
-    provenance keys, and it pops ONLY ``ruleset.PROVENANCE_KEYS`` — ``decision``
+    provenance keys, and it never pops ``decision``
     and ``policy_rules`` survive. So a 1.12.0 SDK talking to a lagging or frozen
     backend stores rule ids with no version, and until this commit ``explain``
     told the reader that row "was written before SDK 1.7.0".
@@ -462,8 +462,9 @@ def test_the_reserved_warning_does_not_advise_a_rename(tmp_path, caplog):
     validates ``event_metadata`` against a 16-key ALLOWLIST and answers a key it
     does not know with 422 "unsupported fields" — for the whole request, since
     ``payload: List[LogIngest]`` is validated as one unit. The SDK's degrade
-    path does not rescue it either: ``dispatch._strip_provenance`` removes only
-    ``ruleset.PROVENANCE_KEYS``, so a renamed field strips nothing, the ``and``
+    path does not rescue it either: ``dispatch._strip_provenance`` removes just
+    the key sets it knows by name — ``ruleset.PROVENANCE_KEYS`` and
+    ``dispatch.TYPED_TAG_KEYS`` — so a renamed field strips nothing, the ``and``
     short-circuits, no retry fires, and every event in that batch re-queues
     forever. Following our own advice converted a dropped field into an evidence
     outage.

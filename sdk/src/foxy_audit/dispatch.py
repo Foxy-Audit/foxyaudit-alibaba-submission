@@ -129,7 +129,7 @@ class AsyncDispatcher:
                     # `foxy_degraded` onto clean observe rows that never carried
                     # provenance in the first place — and a marker that appears
                     # on rows it cannot be true of means nothing at all.
-                    carried = [bool(_provenance_in(event)) for event in body]
+                    carried = [_degraded_marker(event) for event in body]
                     # Already known to be an old backend: strip up front rather
                     # than spend a doomed request per batch for the rest of the
                     # process's life.
@@ -182,11 +182,15 @@ class AsyncDispatcher:
                         # backend that just rejected an unknown key, so telling
                         # the ledger about the degradation would re-trigger the
                         # failure it describes.
-                        stripped_rows = [row for row, had in zip(batch, carried) if had]
-                        intact_rows = [row for row, had in zip(batch, carried) if not had]
-                        spool.ack(stripped_rows,
-                                  dict(response, foxy_degraded=_DEGRADED_PROVENANCE))
-                        spool.ack(intact_rows, response)
+                        by_marker = defaultdict(list)
+                        for row, marker in zip(batch, carried):
+                            by_marker[marker].append(row)
+                        for marker, rows_for in by_marker.items():
+                            # A row that carried nothing of ours lost nothing,
+                            # even though the batch it rode in was retried.
+                            spool.ack(rows_for,
+                                      dict(response, foxy_degraded=marker)
+                                      if marker else response)
                     else:
                         spool.ack(batch, response)
                 except Exception as exc:
@@ -236,6 +240,30 @@ def _skips_provenance(endpoint: str) -> bool:
     return True
 
 _DEGRADED_PROVENANCE = "ruleset_provenance_stripped"
+_DEGRADED_TYPED_TAG = "policy_tag_raw_stripped"
+
+#: The OTHER client-supplied ``event_metadata`` key a lagging backend can reject,
+#: and therefore the other one this module has to be able to strip.
+#:
+#: ⚠ A SECOND TUPLE RATHER THAN A WIDER ``ruleset.PROVENANCE_KEYS``, decided
+#: rather than defaulted. ``policy_tag_raw`` is the spelling the CALLER TYPED; it
+#: describes neither the rules nor the interaction, so putting it in a tuple
+#: named for ruleset provenance would make that name false everywhere it is read
+#: — and ``test_explain_verifies_the_ruleset`` asserts, correctly, that
+#: ``set(ruleset.provenance()) == set(ruleset.PROVENANCE_KEYS)``, which a third
+#: member would break for a reason that has nothing to do with what it guards.
+#: S14 set the precedent with ``client._ENFORCEMENT_KEYS`` beside
+#: ``PROVENANCE_KEYS`` rather than inside it. Here rather than in ``ruleset``
+#: because stripping is THIS module's job and ``client`` already imports it,
+#: while ``dispatch`` importing ``client`` would be a cycle.
+#:
+#: ⚠ WITHOUT THIS, S13 IS AN EVIDENCE OUTAGE, NOT A FIX. Production is frozen
+#: and will never allowlist the key: it answers "unsupported fields", the
+#: degrade path fires, and a strip that removes nothing makes the resend
+#: BYTE-IDENTICAL to the request that just failed — which
+#: :func:`_strip_provenance` correctly refuses to send. No retry, then
+#: ``raise_for_status``, then ``spool.retry`` re-queues the whole batch, forever.
+TYPED_TAG_KEYS = ("policy_tag_raw",)
 
 
 def _rejects_unsupported_fields(resp) -> bool:
@@ -255,16 +283,28 @@ def _rejects_unsupported_fields(resp) -> bool:
         return False
 
 
-def _provenance_in(event) -> bool:
-    """Does this ONE event carry ruleset provenance?
+def _degraded_marker(event) -> str:
+    """What a strip would actually have removed from this ONE event, as a label.
 
-    Separate from :func:`_strip_provenance`, which answers the same question for
-    a whole batch. The receipt marker is per-row, so it needs the per-row answer.
+    Separate from :func:`_strip_provenance`, which answers for a whole batch.
+    The receipt marker is per-row, so it needs the per-row answer.
+
+    TWO LABELS, NOT ONE, because the two sets travel independently. A miscased
+    tag under ``observe`` builds ``event_metadata`` carrying ONLY
+    ``policy_tag_raw`` — no rule fired, so no ruleset provenance rides with it —
+    and stamping ``ruleset_provenance_stripped`` on that row would name a key it
+    never held. The empty string means nothing of ours was there to lose; a row
+    that carried both says both, joined, in this fixed order.
     """
     metadata = event.get("event_metadata")
     if not isinstance(metadata, dict):
-        return False
-    return any(key in metadata for key in ruleset.PROVENANCE_KEYS)
+        return ""
+    marks = []
+    if any(key in metadata for key in ruleset.PROVENANCE_KEYS):
+        marks.append(_DEGRADED_PROVENANCE)
+    if any(key in metadata for key in TYPED_TAG_KEYS):
+        marks.append(_DEGRADED_TYPED_TAG)
+    return ",".join(marks)
 
 
 def _strip_provenance(body: list) -> bool:
@@ -280,7 +320,7 @@ def _strip_provenance(body: list) -> bool:
         metadata = event.get("event_metadata")
         if not isinstance(metadata, dict):
             continue
-        for key in ruleset.PROVENANCE_KEYS:
+        for key in tuple(ruleset.PROVENANCE_KEYS) + TYPED_TAG_KEYS:
             if metadata.pop(key, None) is not None:
                 removed = True
     return removed

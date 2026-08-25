@@ -76,9 +76,9 @@ fallback:
   rather than for a cause, because the tool cannot read one. Three live paths
   produce it and a CURRENT SDK walks two of them:
 
-  1. ``dispatch._strip_provenance`` removes only ``ruleset.PROVENANCE_KEYS``
-     and leaves ``policy_rules`` standing, so any backend that 422s the
-     provenance keys — a lagging deploy, a self-hosted install, the frozen
+  1. ``dispatch._strip_provenance`` removes ``ruleset.PROVENANCE_KEYS`` and
+     ``dispatch.TYPED_TAG_KEYS``, and leaves ``policy_rules`` standing, so any
+     backend that 422s the provenance keys — a lagging deploy, a self-hosted install, the frozen
      production one — takes a resend in exactly this shape.
   2. ``ruleset.provenance()`` returns ``{}`` when the registry cannot answer,
      deliberately: "provenance is an ENRICHMENT of the record. It must never be
@@ -842,8 +842,10 @@ def explain(prompt, event_id: str, export, commitment_key: str,
     # a name is what every surface prints and every consumer switches on. Three
     # CURRENT paths write rule ids with no version:
     #
-    #   1. `dispatch._strip_provenance` pops ONLY `ruleset.PROVENANCE_KEYS` and
-    #      leaves `policy_rules` standing. A current SDK talking to a backend
+    #   1. `dispatch._strip_provenance` pops `ruleset.PROVENANCE_KEYS` and
+    #      `dispatch.TYPED_TAG_KEYS`, and leaves `policy_rules` standing — the
+    #      rule ids survive with nothing naming the ruleset that explains them.
+    #      A current SDK talking to a backend
     #      that 422s the provenance keys — a lagging deploy, a self-hosted
     #      install, the frozen production backend — stores exactly this shape.
     #   2. `ruleset.provenance()` returns `{}` on a degraded registry, on

@@ -120,6 +120,17 @@ from .spool import EventSpool
 log = logging.getLogger("foxy_audit")
 
 _POLICY_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+#: The ledger's charset for ``event_metadata["policy_tag_raw"]`` — the backend's
+#: `schemas._RAW_TAG_PATTERN`, mirrored here so an ineligible spelling is never
+#: SENT rather than 422'd. MATCHED WITH ``fullmatch``: Python's ``$`` matches
+#: before a trailing newline, so ``re.match(..., "hipaa" + chr(10))`` is True and
+#: ``.strip()`` then folds it to a clean tag that compares equal — a
+#: log-injection carrier that would have chained.
+_RAW_TAG_RE = re.compile(r"[A-Za-z0-9 _-]{1,64}")
+#: The ledger's fold: ONE separator in, ONE underscore out. Not run-collapsing —
+#: `policy_tag` permits a doubled underscore, so collapsing runs would reject a
+#: raw tag character-for-character identical to the canonical one.
+_RAW_TAG_SEPARATORS = re.compile(r"[ -]")
 _MODES = ("observe", "block", "redact")
 _PROMPT_KWARGS = ("prompt", "user_prompt", "message", "messages", "contents",
                   "text", "input", "query")
@@ -612,7 +623,20 @@ class FoxyClient:
         function, so it should be a deployment decision, not something scattered
         across decorators. See this module's docstring for what it promises on a
         streamed call — which is less than it promises on a normal one."""
-        if not _POLICY_RE.match(policy):
+        # ⚠ FOLD FIRST, THEN VALIDATE — #232, AND THE ORDER IS THE WHOLE FIX.
+        # This matched the tag AS TYPED, so `policy="HIPAA"` missed
+        # `^[a-z0-9_]{1,32}$` and became `default`: no PHI check ran, the PHI
+        # reached the model, and the row chained as `default`. `evaluate()` and
+        # `check()` had folded all along, so the guard's two entry points
+        # disagreed about what tag the caller had asked for — which is this
+        # defect's entire biography, and why the fold now lives in ONE function
+        # both of them call.
+        #
+        # `policy` KEEPS THE CALLER'S SPELLING when the fold is a legal tag.
+        # `log_interaction` is the single place `policy_tag` reaches the wire, so
+        # it is the single place that can also record what was typed; threading a
+        # second argument through ten call sites could only make them disagree.
+        if not _POLICY_RE.match(policy_engine.normalise_policy_tag(policy)):
             log.warning("foxy-audit: invalid policy tag %r; falling back to 'default'", policy)
             policy = "default"
         # The decorator argument is validated ONCE, at import, where a typo should
@@ -814,6 +838,13 @@ class FoxyClient:
         :meth:`_labels` for why that field is load-bearing on the backend.
         """
         try:
+            # THE ONE PLACE `policy_tag` REACHES THE WIRE, so the one place the
+            # fold and the typed spelling can be decided together. Rebinding
+            # `policy` here also carries the canonical tag into both desktop
+            # pings, which describe this same event and must not name a
+            # different tag than the row does. An already-canonical tag returns
+            # itself and `None`, and the payload is byte-for-byte unchanged.
+            policy, typed_tag = _wire_policy(policy)
             prompt_s = hashing.canonical_json(prompt)
             response_s = hashing.canonical_json(response)
             event_id = str(uuid.uuid4())
@@ -897,6 +928,15 @@ class FoxyClient:
                 payload["event_metadata"] = meta
             elif metadata:
                 payload["event_metadata"] = _reserve_provenance(metadata)
+            if typed_tag is not None:
+                # A THIRD WAY INTO `event_metadata`, and it has to be one: a
+                # miscased tag on the CLEAN OBSERVE path fires no rule and
+                # carries no caller metadata, so neither branch above runs — and
+                # without this the row would record a tag nobody typed with
+                # nothing saying so. That is the fabrication this phase exists to
+                # remove, and `policy="hipaa"` still takes neither branch nor
+                # this one, which is what keeps the unaffected payload identical.
+                payload.setdefault("event_metadata", {})["policy_tag_raw"] = typed_tag
             # raw text goes out of scope here — never stored or transmitted
 
             if self.cfg.desktop_ping:
@@ -1127,6 +1167,62 @@ _warned_reserved: set = set()
 #: remove, arriving through the one door left open.
 _ENFORCEMENT_KEYS = ("decision", "policy_rules", "blocked_reason")
 
+#: ⚠ AND `dispatch.TYPED_TAG_KEYS` — `policy_tag_raw` — FOR A THIRD REASON.
+#: The ledger enforces that it folds to THIS row's `policy_tag`, so a caller's
+#: own copy cannot say `PCI` on a `hipaa` row; what it CAN do is say a different
+#: legal spelling of the same tag, overwrite the one the SDK computed, and leave
+#: nothing downstream able to tell which it is reading. The set is named in
+#: `dispatch` because stripping it on the 422 path is that module's job.
+
+
+def _typed_tag(policy: str, tag: str):
+    """The caller's spelling, but ONLY when the ledger will actually accept it.
+
+    Both of the deployed validator's rules, mirrored — charset by ``fullmatch``,
+    then the fold back to this row's own ``policy_tag``. Anything else returns
+    ``None`` and the row simply does not carry a typed tag.
+
+    ⚠ REFUSED, NOT TRIMMED. A 300-character `policy=` argument, or one carrying a
+    newline, could be cut down to something that passes; storing a spelling
+    nobody typed would put fabricated evidence in a hash chain that by design
+    cannot be edited afterwards. The 64-character charset is also the cap on this
+    field, which is the one allowlisted key whose length a caller controls —
+    ``policy=`` takes any string and only the FOLDED form is pattern-checked.
+
+    The separator fold is implied by ``_POLICY_RE`` today (a tag that passes it
+    holds no space and no hyphen, so the substitution is a no-op) and is checked
+    anyway: it is the ledger's rule, not this module's, and `_POLICY_RE` is not
+    ours to promise will never widen.
+    """
+    if not _RAW_TAG_RE.fullmatch(policy):
+        return None
+    if _RAW_TAG_SEPARATORS.sub("_", policy.strip().lower()) != tag:
+        return None
+    return policy
+
+
+def _wire_policy(policy):
+    """``(policy_tag, policy_tag_raw)`` for a caller-supplied ``policy``.
+
+    Three outcomes, and the first is the one that must not move:
+
+    * the tag is already canonical -> ``(policy, None)``, and every byte of the
+      payload is what it was before this phase existed;
+    * it folds to a legal tag -> the FOLDED tag on the wire, with the typed
+      spelling beside it when :func:`_typed_tag` says the ledger accepts it;
+    * it folds to something ``_POLICY_RE`` refuses -> ``(policy, None)``,
+      untouched. The decorator never reaches this (it substituted ``default``
+      already); a direct ``log_interaction`` caller does, and quietly rewriting
+      their tag to ``default`` here would be this phase inventing a second silent
+      substitution while removing the first.
+    """
+    if not isinstance(policy, str):
+        return policy, None
+    tag = policy_engine.normalise_policy_tag(policy)
+    if tag == policy or not _POLICY_RE.match(tag):
+        return policy, None
+    return tag, _typed_tag(policy, tag)
+
 
 def _reserve_provenance(metadata) -> dict:
     """A copy of ``metadata`` with the keys only the SDK may set removed.
@@ -1158,7 +1254,8 @@ def _reserve_provenance(metadata) -> dict:
     ``-W error`` — turning a metadata collision into an application crash.
     """
     clean = dict(metadata)
-    for key in tuple(ruleset.PROVENANCE_KEYS) + _ENFORCEMENT_KEYS:
+    for key in (tuple(ruleset.PROVENANCE_KEYS) + _ENFORCEMENT_KEYS
+                + dispatch.TYPED_TAG_KEYS):
         if key in clean:
             del clean[key]
             if key not in _warned_reserved:
@@ -1169,8 +1266,9 @@ def _reserve_provenance(metadata) -> dict:
                 # key it does not know with 422 "unsupported fields" — for the
                 # WHOLE request, because `payload: List[LogIngest]` is validated
                 # as one unit. The SDK's degrade path does not save you either:
-                # `dispatch._strip_provenance` removes only
-                # `ruleset.PROVENANCE_KEYS`, so a renamed field strips nothing,
+                # `dispatch._strip_provenance` removes only the two key sets
+                # it knows — `ruleset.PROVENANCE_KEYS` and
+                # `dispatch.TYPED_TAG_KEYS` — so a renamed field strips nothing,
                 # the `and` short-circuits, no retry fires, and every event in
                 # that batch re-queues forever. Following the advice turned one
                 # dropped field into an evidence outage.
@@ -1185,8 +1283,9 @@ def _reserve_provenance(metadata) -> dict:
                     "itself. Your value was dropped. DO NOT simply rename the "
                     "field: the backend allowlists event_metadata keys and 422s "
                     "the ENTIRE batch for one it does not know, and the SDK's "
-                    "degrade path strips only the ruleset keys — so a renamed "
-                    "field re-queues every event beside it, indefinitely. Drop "
+                    "degrade path strips only the keys it knows by name — so a "
+                    "renamed field re-queues every event beside it, "
+                    "indefinitely. Drop "
                     "it, or pass it through log_interaction's own decision / "
                     "policy_rules / blocked_reason arguments. Reported once per "
                     "process.", key)

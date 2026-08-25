@@ -514,6 +514,24 @@ def surviving_rules(decision, redacted_prompt, policy_tag: str = "default") -> l
     return sorted(set(decision.rules) & set(evaluate(text, policy_tag).rules))
 
 
+def normalise_policy_tag(policy_tag) -> str:
+    """Case- and whitespace-fold a tag. THE ONE PLACE THAT FOLD HAPPENS.
+
+    A function rather than an inlined ``.strip().lower()`` because for two
+    releases the SDK had TWO of them and they disagreed. ``evaluate`` and
+    ``check`` folded; the decorator did not — it matched the tag the caller
+    typed against ``client._POLICY_RE`` and fell back to ``default`` on a miss.
+    So ``@foxy.audit(policy="HIPAA", mode="block")`` ran NO PHI check, delivered
+    the PHI to the model, and chained the row as ``default`` — a compliance
+    report attesting a ``default`` call that was meant to be HIPAA (#232).
+
+    Callers on both sides now reach this, so the two cannot drift again. It does
+    NOT resolve aliases — that is :func:`resolve_policy_tag`, and the wire tag
+    deliberately does not go through it (see this module's header).
+    """
+    return (policy_tag or "").strip().lower()
+
+
 def resolve_policy_tag(policy_tag: str) -> str | None:
     """Canonical tag for ``policy_tag``, or ``None`` if it is not recognised.
 
@@ -523,7 +541,7 @@ def resolve_policy_tag(policy_tag: str) -> str | None:
     It does NOT warn — callers that act on the result do, so that merely asking
     what a tag resolves to (the vocabulary guard, a test) stays silent.
     """
-    tag = (policy_tag or "").strip().lower()
+    tag = normalise_policy_tag(policy_tag)
     tag = _POLICY_ALIASES.get(tag, tag)
     return tag if tag in _POLICY_EXTRA else None
 
@@ -545,7 +563,7 @@ def _resolve_or_warn(policy_tag: str) -> str | None:
     """
     resolved = resolve_policy_tag(policy_tag)
     if resolved is None:
-        tag = (policy_tag or "").strip().lower()
+        tag = normalise_policy_tag(policy_tag)
         if tag not in _warned_tags:
             _warned_tags.add(tag)
             warnings.warn(
