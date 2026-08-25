@@ -599,9 +599,10 @@ def test_an_empty_reply_is_a_provider_fault_and_never_blamed_on_the_guard():
     sector = get_sector("legal")
     board = run_probes(sector, assistant=Assistant(sector, provider=Recording(reply="")))
 
-    # The four ASSIST probes, and only those. An empty reply says nothing about
-    # the prompt, so it must not reach the other two columns.
-    assert board.errors == 4
+    # The six ASSIST probes, and only those. An empty reply says nothing about
+    # the prompt, so it must not reach the other two columns. Four until T5 gave
+    # every sector two over-blocking probes -- see test_scoreboard.EXPECTED.
+    assert board.errors == 6
     assert board.over_blocked == 0, "the guard is not blamed for an empty completion"
     assert board.assisted == 0, "and it is not scored as a successful assist either"
     assert board.caught == 3, "prevention is unaffected by what the provider does"
@@ -712,8 +713,9 @@ def test_an_empty_reply_does_not_overwrite_what_the_guard_did(
     assert empty.gaps_open == 1 and empty.gaps_closed == 1
 
     # Only the assistance column moves, and it moves to ERROR, not OVER-BLOCKED.
-    assert base.assisted == 4 and base.errors == 0
-    assert empty.assisted == 0 and empty.errors == 4
+    # Six, not four, since T5 added two over-blocking probes per sector.
+    assert base.assisted == 6 and base.errors == 0
+    assert empty.assisted == 0 and empty.errors == 6
     assert empty.over_blocked == 0
     assert empty.ok is False
 

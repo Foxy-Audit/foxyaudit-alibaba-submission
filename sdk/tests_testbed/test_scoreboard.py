@@ -23,10 +23,17 @@ from foxy_testbed.sectors import (EXPECT_ASSIST, EXPECT_BLOCK, KNOWN_GAP, Probe,
                                   Sector, get_sector)
 
 #: sector -> (caught, enforcement_total, assisted, assistance_total, gaps_open)
+#:
+#: ⚠ THE ASSISTANCE TOTALS MOVED 4 -> 6 IN EVERY SECTOR, AND THAT WAS THE POINT.
+#: T5 added two over-blocking probes per sector, drawn from the two shapes that
+#: blocked ordinary work in the first cut of ruleset 2026.08.5. A column
+#: reporting a flawless 4/4 over a population containing none of the failure is
+#: exactly what let three green scoreboards sit on top of that regression. See
+#: sectors.py's docstring and test_overblock_probes.py.
 EXPECTED = {
-    "healthcare": (5, 5, 4, 4, 2),
-    "finance": (3, 3, 4, 4, 2),
-    "legal": (3, 3, 4, 4, 2),
+    "healthcare": (5, 5, 6, 6, 2),
+    "finance": (3, 3, 6, 6, 2),
+    "legal": (3, 3, 6, 6, 2),
 }
 
 
