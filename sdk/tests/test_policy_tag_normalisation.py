@@ -405,6 +405,195 @@ def test_a_frozen_backend_gets_the_events_without_the_typed_tag(monkeypatch,
     assert len(_receipts(path)) == 1
 
 
+def _typed_tag_only_backend(seen):
+    """The FROZEN PRODUCTION backend: refuses `policy_tag_raw`, accepts ruleset
+    provenance. That asymmetry is the whole point — it is the shape that made a
+    single-dimension latch strip keys this backend was happy to take.
+    """
+    def post(endpoint, api_key, body):
+        seen.append(json.loads(json.dumps(body)))
+        for event in body:
+            if "policy_tag_raw" in (event.get("event_metadata") or {}):
+                return _Response(
+                    422,
+                    text='{"detail":"event_metadata contains unsupported fields"}')
+        return _Response(202, payload={"status": "accepted", "receipts": []})
+    return post
+
+
+def test_a_typed_tag_rejection_does_not_cost_the_next_batch_its_provenance(
+        monkeypatch, tmp_path):
+    """🔴 THE LATCH IS PER (ENDPOINT, RUNG), AND THIS IS WHY.
+
+    `_no_provenance` was keyed by ENDPOINT ALONE while the strip removed one key
+    set. When the strip grew to two, a backend refusing ONLY `policy_tag_raw` —
+    exactly the frozen production one — latched on the first miscased-tag row,
+    and every later batch went out with `ruleset_version`/`ruleset_hash`
+    pre-stripped from a backend that accepts them. For 900 seconds, silently,
+    re-armed by the next miscased tag.
+
+    ⚠ AND IT WOULD HAVE CORRUPTED `explain`. A row with rule ids and no version
+    reads as `ruleset_unrecorded` cause 1 — "the backend rejected the provenance
+    keys" — which is FALSE for such a row. S14 and S17 spent four rounds making
+    that sentence honest.
+
+    ⚠ DRIVEN THROUGH `_flush_spool`, IN TWO SEPARATE FLUSHES, NOT ASSERTED ON
+    THE LATCH. A unit test on `_latched_rungs` passes on the broken code: the
+    defect is not that the latch stores the wrong thing, it is that the STRIP
+    consults it without the rung. Only a second batch can see that.
+    """
+    seen = []
+    monkeypatch.setattr(dispatch.AsyncDispatcher, "_post",
+                        staticmethod(_typed_tag_only_backend(seen)))
+    monkeypatch.setattr(dispatch, "_no_provenance", {})
+    endpoint = "https://frozen.example.test/v1/logs/batch"
+    path = str(tmp_path / "spool.sqlite3")
+
+    # Batch 1: a miscased tag. Rejected, stripped, accepted — and it latches.
+    _enqueue(path, endpoint, _row(1, {"policy_tag_raw": "HIPAA"}))
+    dispatch._DISPATCHER._flush_spool({path})
+    assert dispatch._no_provenance, "the rejection did not latch at all"
+    assert list(dispatch._no_provenance) == [(endpoint, "policy_tag_raw_stripped")], (
+        "the latch does not name WHICH key set was refused: %r"
+        % (dispatch._no_provenance,))
+
+    # Batch 2: an ordinary blocked row, no typed tag, carrying provenance this
+    # backend has never once objected to.
+    seen.clear()
+    _enqueue(path, endpoint, _row(2, dict({"decision": "blocked",
+                                           "policy_rules": ["phi.ssn_pattern"]},
+                                          **ruleset.provenance())))
+    dispatch._DISPATCHER._flush_spool({path})
+
+    assert len(seen) == 1, "a batch carrying no refused key was retried anyway"
+    sent = seen[0][0]["event_metadata"]
+    assert "ruleset_version" in sent and "ruleset_hash" in sent, (
+        "a typed-tag rejection stripped provenance from a backend that accepts "
+        "it — and `explain` would then read this row as cause 1: %r" % (sent,))
+
+    # The receipt must not claim a loss either.
+    assert all(not r.get("foxy_degraded") for r in _receipts(path)[1:])
+
+
+def test_the_escalation_stops_at_the_rung_that_was_actually_refused(
+        monkeypatch, tmp_path):
+    """One rung at a time, newest first, and no further than it has to go.
+
+    A blanket strip would answer "policy_tag_raw is unknown here" by also
+    dropping provenance the backend accepts. Two POSTs is the bound for this
+    shape: the original, and one retry without the typed tag.
+    """
+    seen = []
+    monkeypatch.setattr(dispatch.AsyncDispatcher, "_post",
+                        staticmethod(_typed_tag_only_backend(seen)))
+    monkeypatch.setattr(dispatch, "_no_provenance", {})
+    path = str(tmp_path / "spool.sqlite3")
+    _enqueue(path, "https://frozen.example.test/v1/logs/batch",
+             _row(1, dict({"decision": "blocked",
+                           "policy_rules": ["phi.ssn_pattern"],
+                           "policy_tag_raw": "HIPAA"}, **ruleset.provenance())))
+
+    dispatch._DISPATCHER._flush_spool({path})
+
+    assert len(seen) == 2, "expected the original POST and exactly one retry"
+    kept = seen[1][0]["event_metadata"]
+    assert "policy_tag_raw" not in kept, "the refused key survived the retry"
+    assert "ruleset_version" in kept, (
+        "the escalation over-stripped: provenance went with a typed-tag "
+        "rejection: %r" % (kept,))
+    assert _receipts(path)[0]["foxy_degraded"] == ["policy_tag_raw_stripped"]
+
+
+def test_an_older_backend_still_gets_both_rungs_dropped(monkeypatch, tmp_path):
+    """CONTROL for the escalation. "One rung at a time" must not have become
+    "never reaches the second rung" — that would be the pre-1.7.0 evidence
+    outage the degrade path was built for, reintroduced as a fix for this one.
+
+    Two retries here, not one, and that is the stated cost: the ladder finds the
+    true boundary in at most one POST beyond it.
+    """
+    seen = []
+
+    def ancient(endpoint, api_key, body):
+        seen.append(json.loads(json.dumps(body)))
+        for event in body:
+            meta = event.get("event_metadata") or {}
+            if any(k in meta for k in ("policy_tag_raw", "ruleset_version",
+                                       "ruleset_hash")):
+                return _Response(
+                    422,
+                    text='{"detail":"event_metadata contains unsupported fields"}')
+        return _Response(202, payload={"status": "accepted", "receipts": []})
+
+    monkeypatch.setattr(dispatch.AsyncDispatcher, "_post", staticmethod(ancient))
+    monkeypatch.setattr(dispatch, "_no_provenance", {})
+    endpoint = "https://ancient.example.test/v1/logs/batch"
+    path = str(tmp_path / "spool.sqlite3")
+    _enqueue(path, endpoint, _row(1, dict({"decision": "blocked",
+                                           "policy_rules": ["phi.ssn_pattern"],
+                                           "policy_tag_raw": "HIPAA"},
+                                          **ruleset.provenance())))
+
+    dispatch._DISPATCHER._flush_spool({path})
+
+    assert len(seen) == 3, "expected the original POST and two escalating retries"
+    assert seen[2][0]["event_metadata"] == {"decision": "blocked",
+                                            "policy_rules": ["phi.ssn_pattern"]}
+    assert sorted(dispatch._no_provenance) == sorted([
+        (endpoint, "policy_tag_raw_stripped"),
+        (endpoint, "ruleset_provenance_stripped")]), dispatch._no_provenance
+    assert _receipts(path)[0]["foxy_degraded"] == ["policy_tag_raw_stripped",
+                                                   "ruleset_provenance_stripped"]
+
+
+def test_the_warning_names_the_key_that_was_actually_refused(
+        monkeypatch, tmp_path, caplog):
+    """The ONLY operator-facing signal on this path.
+
+    It said "rejected ruleset provenance ... upgrade the backend to restore it"
+    whatever had been dropped — so a typed-tag rejection sent an operator to
+    upgrade a backend over a key it had never been asked about, while the row
+    that actually lost something went unmentioned.
+    """
+    seen = []
+    monkeypatch.setattr(dispatch.AsyncDispatcher, "_post",
+                        staticmethod(_typed_tag_only_backend(seen)))
+    monkeypatch.setattr(dispatch, "_no_provenance", {})
+    path = str(tmp_path / "spool.sqlite3")
+    _enqueue(path, "https://frozen.example.test/v1/logs/batch",
+             _row(1, {"policy_tag_raw": "HIPAA"}))
+
+    with caplog.at_level("WARNING", logger="foxy_audit"):
+        dispatch._DISPATCHER._flush_spool({path})
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("policy_tag_raw" in m for m in messages), messages
+    assert not any("upgrade the backend" in m for m in messages), (
+        "a typed-tag rejection told the operator to upgrade the backend: %r"
+        % (messages,))
+
+
+def test_a_refused_spelling_is_warned_rather_than_chained_in_silence(caplog):
+    """FINDING 4. The fold still happens — it must, or #232 walks back in — but
+    a row where the typed spelling could not be recorded chains
+    indistinguishably from one where the caller typed the tag exactly.
+
+    A tag nobody typed with nothing saying so is what the third `event_metadata`
+    branch exists to prevent; where the ledger will not hold the spelling, the
+    log is the honest limit. Once per canonical tag, so a hot loop is not noise.
+    """
+    client_module._warned_untypable.discard("gdpr")
+    with caplog.at_level("WARNING", logger="foxy_audit"):
+        tag, typed = client_module._wire_policy("gdpr\t")
+        assert (tag, typed) == ("gdpr", None)
+        first = len([r for r in caplog.records if "gdpr" in r.getMessage()])
+        client_module._wire_policy("GDPR\n")
+        again = len([r for r in caplog.records if "gdpr" in r.getMessage()])
+
+    assert first == 1, "the dropped spelling was never reported"
+    assert again == 1, "reported more than once for one tag"
+
+
 def test_the_receipt_names_what_this_row_actually_lost(monkeypatch, tmp_path):
     """A miscased tag under `observe` fires no rule, so its `event_metadata`
     carries ONLY `policy_tag_raw` — no ruleset provenance rides with it.
@@ -429,7 +618,24 @@ def test_the_receipt_names_what_this_row_actually_lost(monkeypatch, tmp_path):
 
     dispatch._DISPATCHER._flush_spool({path})
 
-    marks = sorted((r.get("foxy_degraded") or "") for r in _receipts(path))
-    assert marks == ["",
-                     "policy_tag_raw_stripped",
-                     "ruleset_provenance_stripped,policy_tag_raw_stripped"], marks
+    marks = sorted(str(r.get("foxy_degraded")) for r in _receipts(path))
+    assert marks == ["None",
+                     "['policy_tag_raw_stripped']",
+                     "['policy_tag_raw_stripped']"], marks
+
+    # ⚠ A LIST, ALWAYS, EVEN FOR ONE RUNG — decided, not fallen into.
+    # `foxy_degraded` is user-visible: `submit(wait=True)` returns the receipt
+    # under `audit_required`. It was a bare constant while only one key set could
+    # be stripped; two made it a set of things, and the two shapes that keep it a
+    # string — a comma-joined value, or the first rung only — are a parsing trap
+    # and a lie respectively. Order is LADDER order, not sort order, so it stays
+    # stable as rungs are added.
+    for receipt in _receipts(path):
+        assert receipt.get("foxy_degraded") is None or isinstance(
+            receipt["foxy_degraded"], list), receipt
+
+    # And the ROW THAT KEPT ITS PROVENANCE says so. Only the typed-tag rung was
+    # refused here, so row 2 lost its spelling and NOT its ruleset version — a
+    # receipt claiming otherwise would send a reader to the wrong cause.
+    assert all("ruleset_provenance_stripped" not in (r.get("foxy_degraded") or [])
+               for r in _receipts(path))

@@ -846,7 +846,15 @@ def test_the_degradation_is_recorded(monkeypatch, tmp_path):
     # the record of the degradation lives in spool_receipts.
     recorded = _receipts(path)
     assert recorded, "the batch was never acked"
-    assert all(r.get("foxy_degraded") == "ruleset_provenance_stripped"
+    # ⚠ A LIST OF RUNG NAMES, AND THAT SHAPE IS DECIDED RATHER THAN INCIDENTAL.
+    # This compared with `==` against a bare constant, and passed only because
+    # the fixture's tag is already canonical, so no second rung could ever
+    # appear. `foxy_degraded` is user-visible — `submit(wait=True)` returns the
+    # receipt under `audit_required` — and once two key sets can be stripped it
+    # is a SET of things: a comma-joined string is a parsing trap and naming only
+    # the first rung is a lie. Order is LADDER order, so it stays stable as rungs
+    # are added.
+    assert all(r.get("foxy_degraded") == ["ruleset_provenance_stripped"]
                for r in recorded), recorded
 
 
@@ -947,22 +955,44 @@ def test_the_no_provenance_latch_expires(monkeypatch):
     strip provenance for its entire lifetime — with the backend upgraded
     minutes later — which is the very outcome the "deliberately not persisted"
     comment claimed to avoid.
+
+    ⚠ KEYED BY (ENDPOINT, RUNG) SINCE S13, and expiring per rung. A backend can
+    stop refusing the typed tag without dragging a provenance latch along, and
+    an endpoint refusing one key set must not be recorded as refusing both.
     """
     monkeypatch.setattr(dispatch, "_no_provenance", {})
     endpoint = "https://rolling.example.test/v1/logs/batch"
+    rung = "ruleset_provenance_stripped"
 
-    dispatch._no_provenance[endpoint] = time.time()
-    assert dispatch._skips_provenance(endpoint) is True
+    dispatch._no_provenance[(endpoint, rung)] = time.time()
+    assert dispatch._latched_rungs(endpoint) == (rung,)
 
-    dispatch._no_provenance[endpoint] = time.time() - dispatch.PROVENANCE_RETRY_AFTER - 1
-    assert dispatch._skips_provenance(endpoint) is False
-    assert endpoint not in dispatch._no_provenance, "the stale entry was not cleared"
+    dispatch._no_provenance[(endpoint, rung)] = (
+        time.time() - dispatch.PROVENANCE_RETRY_AFTER - 1)
+    assert dispatch._latched_rungs(endpoint) == ()
+    assert (endpoint, rung) not in dispatch._no_provenance, \
+        "the stale entry was not cleared"
+
+
+def test_the_latch_expires_one_rung_at_a_time(monkeypatch):
+    """The rungs are independent, including in how they age out.
+
+    Sharing one expiry would mean a typed-tag rejection re-arming a provenance
+    latch every time it fired — the shared-latch defect wearing a clock.
+    """
+    monkeypatch.setattr(dispatch, "_no_provenance", {})
+    endpoint = "https://mixed.example.test/v1/logs/batch"
+    dispatch._no_provenance[(endpoint, "policy_tag_raw_stripped")] = time.time()
+    dispatch._no_provenance[(endpoint, "ruleset_provenance_stripped")] = (
+        time.time() - dispatch.PROVENANCE_RETRY_AFTER - 1)
+
+    assert dispatch._latched_rungs(endpoint) == ("policy_tag_raw_stripped",)
 
 
 def test_an_unmarked_endpoint_is_never_skipped(monkeypatch):
     """CONTROL. "Expires" must not have become "always re-probe"."""
     monkeypatch.setattr(dispatch, "_no_provenance", {})
-    assert dispatch._skips_provenance("https://fresh.example.test") is False
+    assert dispatch._latched_rungs("https://fresh.example.test") == ()
 
 
 def test_after_expiry_provenance_is_actually_sent_again(monkeypatch, tmp_path):
@@ -976,7 +1006,8 @@ def test_after_expiry_provenance_is_actually_sent_again(monkeypatch, tmp_path):
     monkeypatch.setattr(dispatch.AsyncDispatcher, "_post", staticmethod(modern))
     endpoint = "https://upgraded.example.test/v1/logs/batch"
     monkeypatch.setattr(dispatch, "_no_provenance",
-                        {endpoint: time.time() - dispatch.PROVENANCE_RETRY_AFTER - 1})
+                        {(endpoint, "ruleset_provenance_stripped"):
+                         time.time() - dispatch.PROVENANCE_RETRY_AFTER - 1})
     path = str(tmp_path / "spool.sqlite3")
     _enqueue(path, endpoint, _row(True, 1))
 

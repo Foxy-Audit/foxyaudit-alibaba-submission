@@ -122,44 +122,57 @@ class AsyncDispatcher:
             for (endpoint, api_key), batch in grouped.items():
                 try:
                     body = [json.loads(row["payload"]) for row in batch]
-                    # WHICH ROWS actually carried provenance, captured before
-                    # anything is stripped. `degraded` is a property of a ROW,
-                    # not of the batch: `spool.ack` writes one receipt to every
-                    # row it is given, so a single batch-wide flag stamped
-                    # `foxy_degraded` onto clean observe rows that never carried
-                    # provenance in the first place — and a marker that appears
-                    # on rows it cannot be true of means nothing at all.
-                    carried = [_degraded_marker(event) for event in body]
-                    # Already known to be an old backend: strip up front rather
-                    # than spend a doomed request per batch for the rest of the
-                    # process's life.
-                    degraded = (_strip_provenance(body)
-                                if _skips_provenance(endpoint) else False)
+                    # WHICH RUNGS EACH ROW CARRIES, captured before anything
+                    # is stripped. Intersected at ack time with what the batch
+                    # actually lost, because both halves are per-something-else:
+                    # what a row HELD is per row, what was DROPPED is per batch.
+                    carried = [_rungs_in(event) for event in body]
+                    # Already known to be refused here: strip those rungs up
+                    # front rather than spend a doomed request per batch for the
+                    # rest of the retry window. ONLY those rungs — stripping a
+                    # rung this endpoint never refused is how a typed-tag
+                    # rejection came to cost unrelated rows their provenance.
+                    stripped = [name for name, keys, _why in _DEGRADE_LADDER
+                                if name in _latched_rungs(endpoint)
+                                and _strip_provenance(body, keys)]
                     resp = self._post(endpoint, api_key, body)
-                    if _rejects_unsupported_fields(resp) and _strip_provenance(body):
-                        # A backend older than the release that learned these
-                        # keys. Retry ONCE without them rather than lose the
-                        # batch: ingest validates `payload: List[LogIngest]` as
-                        # ONE unit, so this 422 rejects every event in the
-                        # request, not just the guarded one. A provenance nicety
-                        # must never cost a customer their audit trail, and a
-                        # self-hosted or lagging deployment is not ours to
-                        # sequence.
-                        log.warning(
-                            "foxy-audit: %s rejected ruleset provenance; resending "
-                            "without it. Events are intact but carry no ruleset "
-                            "version — upgrade the backend to restore it.", endpoint)
+                    # ESCALATE ONE RUNG AT A TIME, newest key set first. A
+                    # blanket strip would answer "policy_tag_raw is unknown here"
+                    # by also dropping ruleset provenance the backend accepts,
+                    # and then latch that lie for 900 seconds. The ladder's
+                    # nesting (see _DEGRADE_LADDER) makes this terminate in at
+                    # most one extra POST beyond the true boundary.
+                    #
+                    # Each retry is bounded by _strip_provenance's return value:
+                    # a rung this batch does not carry is skipped rather than
+                    # re-POSTed byte-identically to the request that just failed.
+                    #
+                    # Ingest validates `payload: List[LogIngest]` as ONE unit, so
+                    # a 422 rejects every event in the request, not just the
+                    # guarded one. A provenance nicety must never cost a customer
+                    # their audit trail, and a self-hosted, lagging or frozen
+                    # deployment is not ours to sequence.
+                    escalated = []
+                    for name, keys, why in _DEGRADE_LADDER:
+                        if not _rejects_unsupported_fields(resp):
+                            break
+                        if name in stripped or not _strip_provenance(body, keys):
+                            continue
+                        log.warning("foxy-audit: %s rejected %s; resending "
+                                    "without %s.", endpoint, _keys_phrase(keys), why)
+                        escalated.append(name)
                         resp = self._post(endpoint, api_key, body)
-                        # Only NOW, and only if dropping the keys is what fixed
-                        # it. "unsupported fields" is the validator's message for
-                        # ANY unknown key, so a backend rejecting something else
-                        # entirely — one older than `policy_rules`, say — would
-                        # otherwise disable provenance for the whole process
-                        # while the actual offender went untouched and the batch
-                        # kept failing.
-                        if resp.status_code < 400:
-                            degraded = True
-                            _no_provenance[endpoint] = time.time()
+                    # Only NOW, and only if dropping those keys is what fixed it.
+                    # "unsupported fields" is the validator's message for ANY
+                    # unknown key, so a backend rejecting something else entirely
+                    # — one older than `policy_rules`, say — would otherwise
+                    # disable these keys for the whole retry window while the
+                    # actual offender went untouched and the batch kept failing.
+                    if escalated and resp.status_code < 400:
+                        marked_at = time.time()
+                        for name in escalated:
+                            _no_provenance[(endpoint, name)] = marked_at
+                        stripped.extend(escalated)
                     resp.raise_for_status()
                     try:
                         response = resp.json()
@@ -175,7 +188,7 @@ class AsyncDispatcher:
                         response = {"status": "accepted",
                                     "http_status": resp.status_code,
                                     "body": str(response)[:256]}
-                    if degraded:
+                    if stripped:
                         # RECORDED, not merely logged — and recorded LOCALLY, in
                         # the spool receipt, because it cannot ride on the wire:
                         # a marker key would itself be unknown to the very
@@ -183,14 +196,17 @@ class AsyncDispatcher:
                         # the ledger about the degradation would re-trigger the
                         # failure it describes.
                         by_marker = defaultdict(list)
-                        for row, marker in zip(batch, carried):
-                            by_marker[marker].append(row)
-                        for marker, rows_for in by_marker.items():
-                            # A row that carried nothing of ours lost nothing,
-                            # even though the batch it rode in was retried.
+                        for row, held in zip(batch, carried):
+                            # What this row actually LOST: what it held, kept to
+                            # what the batch dropped. A row carrying provenance
+                            # in a batch where only the typed tag was stripped
+                            # lost nothing and must not say it did.
+                            by_marker[tuple(n for n in held
+                                            if n in stripped)].append(row)
+                        for markers, rows_for in by_marker.items():
                             spool.ack(rows_for,
-                                      dict(response, foxy_degraded=marker)
-                                      if marker else response)
+                                      dict(response, foxy_degraded=list(markers))
+                                      if markers else response)
                     else:
                         spool.ack(batch, response)
                 except Exception as exc:
@@ -212,8 +228,22 @@ class AsyncDispatcher:
             log.debug("foxy-audit: final spool flush failed (%s)", type(exc).__name__)
 
 
-#: Endpoints observed to reject ruleset provenance, mapped to WHEN. Not
+#: ``(endpoint, rung)`` pairs observed to be rejected, mapped to WHEN. Not
 #: persisted, and not permanent either.
+#:
+#: ⚠ THE RUNG IN THAT KEY IS LOAD-BEARING AND WAS ADDED AT S13. This was
+#: keyed by ENDPOINT ALONE while the strip removed ONE key set, and stayed that
+#: way for a moment when the strip grew to two — so a backend that refuses only
+#: ``policy_tag_raw``, which is exactly the FROZEN PRODUCTION one, latched on the
+#: first miscased-tag row and every later batch went out with
+#: ``ruleset_version``/``ruleset_hash`` pre-stripped from a backend that accepts
+#: them. Silently, for 900 seconds, re-armed by the next miscased tag.
+#:
+#: That is worse than losing provenance. ``introspect.explain`` reads a row with
+#: rule ids and no version as ``ruleset_unrecorded`` cause 1 — "the backend
+#: rejected the provenance keys" — which would have been FALSE for those rows.
+#: S14 and S17 spent four rounds making that sentence honest; a single-dimension
+#: latch makes it lie again through a side door.
 #:
 #: The reasoning for not persisting was "a backend gets upgraded, and a cache
 #: that outlived the process would keep stripping provenance long after the
@@ -225,24 +255,13 @@ class AsyncDispatcher:
 #: window; never re-probing costs every guarded row its provenance.
 _no_provenance: dict[str, float] = {}
 
-#: How long a rejection is trusted before the endpoint is probed again.
+#: How long a rejection is trusted before that rung is probed again.
 PROVENANCE_RETRY_AFTER = 900.0
-
-
-def _skips_provenance(endpoint: str) -> bool:
-    """Is this endpoint still within its "does not understand provenance" window?"""
-    marked = _no_provenance.get(endpoint)
-    if marked is None:
-        return False
-    if time.time() - marked >= PROVENANCE_RETRY_AFTER:
-        _no_provenance.pop(endpoint, None)
-        return False
-    return True
 
 _DEGRADED_PROVENANCE = "ruleset_provenance_stripped"
 _DEGRADED_TYPED_TAG = "policy_tag_raw_stripped"
 
-#: The OTHER client-supplied ``event_metadata`` key a lagging backend can reject,
+#: The other client-supplied ``event_metadata`` key a lagging backend can reject,
 #: and therefore the other one this module has to be able to strip.
 #:
 #: ⚠ A SECOND TUPLE RATHER THAN A WIDER ``ruleset.PROVENANCE_KEYS``, decided
@@ -265,6 +284,56 @@ _DEGRADED_TYPED_TAG = "policy_tag_raw_stripped"
 #: ``raise_for_status``, then ``spool.retry`` re-queues the whole batch, forever.
 TYPED_TAG_KEYS = ("policy_tag_raw",)
 
+#: The client-supplied key sets a backend can refuse, as RUNGS: a name, the keys,
+#: and the remedy to tell an operator. NEWEST FIRST, which is also
+#: OLDEST-BACKEND-LAST, and that ordering is the whole reason escalating one rung
+#: at a time terminates cheaply.
+#:
+#: ⚠ THE INGEST ALLOWLIST HAS ONLY EVER GROWN, so the sets a backend refuses
+#: are NESTED: {} ⊂ {policy_tag_raw} ⊂ {policy_tag_raw, ruleset_*}. A backend
+#: that knows ``policy_tag_raw`` (S12) necessarily knows the provenance keys
+#: (1.7.0-era), because the second was allowlisted first. So stripping the newest
+#: rung and re-probing finds the true boundary in at most one extra POST, and a
+#: backend refusing nothing still pays exactly one.
+#:
+#: If that nesting were ever violated — a backend refusing the ruleset keys but
+#: not the typed tag — this over-strips the typed tag for one retry window
+#: rather than failing: rung 1 is applied, the 422 persists, rung 2 is applied,
+#: the POST succeeds, and BOTH latch. Degraded and recorded, not broken. Stated
+#: because it is the assumption the cheapness rests on, not a proof.
+_DEGRADE_LADDER = (
+    (_DEGRADED_TYPED_TAG, TYPED_TAG_KEYS,
+     "the caller's typed policy-tag spelling. The canonical policy_tag is "
+     "unaffected and the events are intact; a backend that allowlists "
+     "event_metadata['policy_tag_raw'] restores the spelling"),
+    (_DEGRADED_PROVENANCE, tuple(ruleset.PROVENANCE_KEYS),
+     "ruleset provenance. The events are intact and keep their rule ids, but "
+     "those ids no longer name the ruleset that explains them; upgrade the "
+     "backend to restore it"),
+)
+
+#: Every key this module is able to remove — the default for
+#: :func:`_strip_provenance`, i.e. "everything we could possibly drop".
+_ALL_DEGRADE_KEYS = tuple(k for _name, keys, _why in _DEGRADE_LADDER for k in keys)
+
+
+def _latched_rungs(endpoint: str) -> tuple:
+    """Which rungs this endpoint is still known to refuse, in ladder order.
+
+    Expiry is per rung, so an endpoint that refuses the typed tag can stop
+    refusing it without dragging a provenance latch along, and vice versa.
+    """
+    live = []
+    for name, _keys, _why in _DEGRADE_LADDER:
+        marked = _no_provenance.get((endpoint, name))
+        if marked is None:
+            continue
+        if time.time() - marked >= PROVENANCE_RETRY_AFTER:
+            _no_provenance.pop((endpoint, name), None)
+            continue
+        live.append(name)
+    return tuple(live)
+
 
 def _rejects_unsupported_fields(resp) -> bool:
     """Is this the specific 422 that means "I do not know those keys"?
@@ -283,44 +352,56 @@ def _rejects_unsupported_fields(resp) -> bool:
         return False
 
 
-def _degraded_marker(event) -> str:
-    """What a strip would actually have removed from this ONE event, as a label.
+def _keys_phrase(keys) -> str:
+    """``event_metadata['a'] / event_metadata['b']`` — the keys, for a human.
 
-    Separate from :func:`_strip_provenance`, which answers for a whole batch.
-    The receipt marker is per-row, so it needs the per-row answer.
+    The warning is the ONLY operator-facing signal on this path, so it names the
+    field that was actually refused. It used to say "rejected ruleset
+    provenance" whatever had been dropped, which sent an operator to upgrade a
+    backend over a key that backend had never been asked about.
+    """
+    return " / ".join("event_metadata[%r]" % k for k in keys)
 
-    TWO LABELS, NOT ONE, because the two sets travel independently. A miscased
-    tag under ``observe`` builds ``event_metadata`` carrying ONLY
-    ``policy_tag_raw`` — no rule fired, so no ruleset provenance rides with it —
-    and stamping ``ruleset_provenance_stripped`` on that row would name a key it
-    never held. The empty string means nothing of ours was there to lose; a row
-    that carried both says both, joined, in this fixed order.
+
+def _rungs_in(event) -> tuple:
+    """Which rungs this ONE event is carrying, in ladder order.
+
+    Captured BEFORE anything is stripped, and intersected at ack time with what
+    the batch actually lost. Both halves are needed: a row can carry a rung the
+    batch never had to drop, and a batch can drop a rung this row never held.
+
+    Per row rather than per batch because ``spool.ack`` writes one receipt to
+    every row it is handed. A batch-wide flag stamped ``foxy_degraded`` onto
+    clean observe rows that carried nothing — and a marker appearing on rows it
+    cannot be true of means nothing at all.
     """
     metadata = event.get("event_metadata")
     if not isinstance(metadata, dict):
-        return ""
-    marks = []
-    if any(key in metadata for key in ruleset.PROVENANCE_KEYS):
-        marks.append(_DEGRADED_PROVENANCE)
-    if any(key in metadata for key in TYPED_TAG_KEYS):
-        marks.append(_DEGRADED_TYPED_TAG)
-    return ",".join(marks)
+        return ()
+    return tuple(name for name, keys, _why in _DEGRADE_LADDER
+                 if any(key in metadata for key in keys))
 
 
-def _strip_provenance(body: list) -> bool:
-    """Remove the ruleset keys in place; True if anything was actually removed.
+def _strip_provenance(body: list, keys=_ALL_DEGRADE_KEYS) -> bool:
+    """Remove ``keys`` in place; True if anything was actually removed.
 
-    The return value is what makes the retry safe: if nothing was stripped, the
+    The return value is what makes each retry safe: if nothing was stripped, the
     resend would be byte-identical to the request that just failed, so the
-    caller must not make it. That turns "retry once" into a real bound rather
-    than a comment.
+    caller must not make it. That turns "retry" into a real bound rather than a
+    comment, and it is what stops the escalation below spending a POST per rung
+    on a batch that carries none of them.
+
+    ``keys`` defaults to every key this module can drop, which is the question
+    "what could we possibly remove?" rather than any one rung. The flush loop
+    passes a single rung, because stripping more than the backend refused is how
+    a typed-tag rejection came to cost unrelated rows their provenance.
     """
     removed = False
     for event in body:
         metadata = event.get("event_metadata")
         if not isinstance(metadata, dict):
             continue
-        for key in tuple(ruleset.PROVENANCE_KEYS) + TYPED_TAG_KEYS:
+        for key in keys:
             if metadata.pop(key, None) is not None:
                 removed = True
     return removed

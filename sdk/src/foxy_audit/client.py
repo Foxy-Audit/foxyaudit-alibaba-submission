@@ -1194,6 +1194,15 @@ def _typed_tag(policy: str, tag: str):
     return policy
 
 
+#: Canonical tags whose typed spelling the ledger refused, warned once each.
+#: Keyed by the CANONICAL tag, not the spelling: a spelling differs from its tag
+#: only in case and surrounding whitespace, of which there are unboundedly many,
+#: and a set that grows with a caller's typos is a leak. One warning per tag per
+#: process is the granularity that matters anyway — "your `hipaa` calls are
+#: typing something we cannot record" is the whole message.
+_warned_untypable: set = set()
+
+
 def _wire_policy(policy):
     """``(policy_tag, policy_tag_raw)`` for a caller-supplied ``policy``.
 
@@ -1208,13 +1217,46 @@ def _wire_policy(policy):
       already); a direct ``log_interaction`` caller does, and quietly rewriting
       their tag to ``default`` here would be this phase inventing a second silent
       substitution while removing the first.
+
+    ⚠ THE FOLD STILL HAPPENS WHEN THE SPELLING IS REFUSED, AND IT MUST. The
+    two questions are separate: "which policy did the caller ask for?" is
+    answered by the fold and decides whether a PHI check runs, while "can the
+    ledger hold what they typed?" only decides whether a spelling is recorded
+    beside it. ``policy="hipaa"`` followed by a tab folds to ``hipaa``, and
+    refusing THAT fold would either 422 the batch on an illegal ``policy_tag`` or
+    fall back to ``default`` — which is #232, the defect this phase exists to
+    remove, re-entering through the door built to close it.
+
+    What was missing is the SAYING SO. Such a row chains indistinguishably from
+    one where the caller typed ``hipaa`` exactly: a tag nobody typed, with
+    nothing anywhere recording that. So the drop is WARNED, once per canonical
+    tag per process. ``log.warning`` rather than ``warnings.warn`` for the reason
+    :func:`_reserve_provenance` gives — this runs inside ``log_interaction``,
+    whose contract is that SDK bookkeeping never disturbs the host application,
+    and ``warnings.warn`` can be configured to raise under ``-W error``.
+
+    ⚠ AND THE ROW ITSELF STILL CANNOT SAY IT. Recording "a spelling was
+    dropped" in the evidence would need a new allowlisted ``event_metadata`` key,
+    which needs a backend deploy ahead of any SDK that sends it — the ordering
+    S12 exists to respect. The log is the honest limit today, and it is a limit,
+    not a fix.
     """
     if not isinstance(policy, str):
         return policy, None
     tag = policy_engine.normalise_policy_tag(policy)
     if tag == policy or not _POLICY_RE.match(tag):
         return policy, None
-    return tag, _typed_tag(policy, tag)
+    typed = _typed_tag(policy, tag)
+    if typed is None and tag not in _warned_untypable:
+        _warned_untypable.add(tag)
+        log.warning(
+            "foxy-audit: policy=%r runs as %r, but that spelling cannot be "
+            "recorded beside it — the ledger accepts a typed tag only as 1-64 "
+            "characters of [A-Za-z0-9 _-] folding back to the canonical tag. "
+            "The policy check and the audit trail are unaffected; what is lost "
+            "is that the row can no longer show the tag was typed differently. "
+            "Reported once per policy tag per process.", policy, tag)
+    return tag, typed
 
 
 def _reserve_provenance(metadata) -> dict:
