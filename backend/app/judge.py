@@ -16,6 +16,43 @@ _JUDGE_DECISIONS = {"clean", "breach"}
 # from an affirmative judge is low-confidence noise, not audit evidence.
 _MIN_REASON_LEN = 3
 
+# ── the content-blind projection, applied to everything leaving for a provider ─
+# It lives HERE, not in a provider module, because it was in one: openai_judge
+# projected and gemini did not, so the default provider received the whole
+# event_metadata dict verbatim while a test asserting content-blindness against
+# the openai helper stayed green. One list, one function, both judges.
+#
+# The allowlist is CUSTOMER OBSERVABILITY KEYS ONLY. Everything a judge needs to
+# grade is above it in the projection; everything else in event_metadata is
+# ledger bookkeeping that a third party has no reason to hold.
+SAFE_EVENT_METADATA = {
+    "request_id", "trace_id", "session_id", "provider", "model", "id",
+    "choice_count", "tool_names", "retrieval_refs", "client_seq_gap",
+}
+
+
+def content_blind_meta(meta: dict) -> dict:
+    """Project metadata so accidental future fields cannot leak raw content.
+
+    An ALLOWLIST rather than a denylist, and that is the whole point: a key
+    added to the wire contract later is excluded until someone names it here,
+    so widening ingest can never silently widen what reaches a provider.
+    """
+    safe_keys = (
+        "prompt_hash", "response_hash", "token_count", "policy_tag",
+        "pii_signals", "event_id", "event_type", "commitment_alg",
+        "client_id", "client_seq",
+    )
+    projected = {key: meta.get(key) for key in safe_keys if key in meta}
+    event_metadata = meta.get("event_metadata")
+    if isinstance(event_metadata, dict):
+        projected["event_metadata"] = {
+            key: event_metadata[key]
+            for key in SAFE_EVENT_METADATA
+            if key in event_metadata
+        }
+    return projected
+
 
 def _quarantine(problems: list[str], source: Verdict | None = None) -> Verdict:
     """An honest 'we could not determine this' — never a clean pass, never a breach."""

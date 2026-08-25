@@ -163,6 +163,28 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
 
     Decrypted keys live only in this frame, for the duration of the call.
     """
+    # THE OUTWARD BOUNDARY. Every provider call in this function hands `meta` to
+    # a third party, so the content-blind projection happens ONCE, here, rather
+    # than inside each provider module. It WAS inside one: openai_judge
+    # projected, gemini.evaluate did not — it json.dumps(meta) verbatim — so the
+    # DEFAULT provider received the whole event_metadata dict while a test
+    # asserting content-blindness against the openai helper stayed green.
+    # Projecting at the boundary closes it for both, and for the next provider
+    # added below, which is the failure mode that produced this one.
+    #
+    # NOT where `meta` is built: policy_engine.evaluate_enforcement reads
+    # decision / policy_rules / blocked_reason straight out of event_metadata
+    # and none are safe-listed, so projecting there would silently empty the
+    # rule ids and the reason label out of every host-enforcement verdict. The
+    # in-process readers need the whole record; only the WIRE has to be narrow.
+    #
+    # This is also what keeps policy_tag_raw (S12) off the wire. It is the first
+    # CALLER-CONTROLLED FREE-TEXT value in event_metadata — every other key is
+    # bounded vocabulary: rule ids, signal labels, a version string, a hex
+    # digest — and `policy=` takes any runtime string, so
+    # `policy=f"hipaa-{patient_id}"` would otherwise put a patient id in a
+    # third party's request body.
+    meta = judge.content_blind_meta(meta)
     routing = judge_routing.resolve_judge_routing(db, org_id)
     verdicts = []
     if routing.uses_gemini:

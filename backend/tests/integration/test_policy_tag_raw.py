@@ -139,14 +139,18 @@ def test_the_typed_tag_is_size_bounded_like_every_other_label(make_org, client):
     assert "too large" in response.text
 
 
-def test_the_typed_tag_never_reaches_a_judge_provider(make_org, client):
-    """CONTENT-BLINDNESS, second layer. `openai_judge._content_blind_meta`
-    re-projects metadata through its OWN narrower allowlist before anything
-    leaves for a provider, so a new ingest key cannot leak by being added here.
+def test_the_typed_tag_is_not_in_the_outbound_projection(make_org, client):
+    """The PROJECTION HELPER, pinned at unit level — and only that.
 
-    A decorator argument is not sensitive, but the property that matters is that
-    widening ingest does NOT widen what is sent outward, and it is only true
-    while the two lists stay separate.
+    This test used to be named ..._never_reaches_a_judge_provider and claimed
+    the property outright. It could not: it calls the helper directly, and
+    `gemini.evaluate` did not call the helper at all. It was green while the
+    whole event_metadata dict went to Google verbatim.
+
+    The property itself is now asserted in test_judge_content_blindness.py,
+    against the bytes each provider is actually handed. What survives here is
+    the narrower claim this test can honestly make: widening the INGEST
+    allowlist does not widen the OUTBOUND one, because they are separate lists.
     """
     from app.openai_judge import _content_blind_meta
 

@@ -14,34 +14,21 @@ from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from . import judge as judge_contract
 from .config import get_settings
 from .schemas import Verdict
 
 log = logging.getLogger("foxy.openai")
 
 _RESPONSES_URL = "https://api.openai.com/v1/responses"
-_SAFE_EVENT_METADATA = {
-    "request_id", "trace_id", "session_id", "provider", "model", "id",
-    "choice_count", "tool_names", "retrieval_refs", "client_seq_gap",
-}
 
-
-def _content_blind_meta(meta: dict[str, Any]) -> dict[str, Any]:
-    """Project metadata so accidental future fields cannot leak raw content."""
-    safe_keys = (
-        "prompt_hash", "response_hash", "token_count", "policy_tag",
-        "pii_signals", "event_id", "event_type", "commitment_alg",
-        "client_id", "client_seq",
-    )
-    projected = {key: meta.get(key) for key in safe_keys if key in meta}
-    event_metadata = meta.get("event_metadata")
-    if isinstance(event_metadata, dict):
-        projected["event_metadata"] = {
-            key: event_metadata[key]
-            for key in _SAFE_EVENT_METADATA
-            if key in event_metadata
-        }
-    return projected
+# The projection now lives in `judge`, shared with the gemini path — these are
+# the same objects under this module's older names. The worker already projects
+# before it calls either judge, so this call is belt-and-braces: it keeps the
+# guarantee true for anything that reaches this module by another route, and it
+# cannot drift from the gemini path because there is only one list left.
+_SAFE_EVENT_METADATA = judge_contract.SAFE_EVENT_METADATA
+_content_blind_meta = judge_contract.content_blind_meta
 
 
 # Same contract as gemini._CONFIDENCE_RULES, in this judge's terser voice (P4 §A).
