@@ -1090,7 +1090,7 @@ def _enqueue(path, endpoint, *payloads):
     Driving this through the decorator does not work: the background dispatcher
     flushes between the two calls, so each event lands in a batch of its own and
     every per-batch-vs-per-row distinction is invisible. Measured — two
-    mutations (a batch-wide degrade marker, and _provenance_in always returning
+    mutations (a batch-wide degrade marker, and _rungs_in always returning
     True) both survived a version of this test that used the decorator.
     """
     from foxy_audit.spool import EventSpool
@@ -1116,7 +1116,7 @@ def _row(with_provenance: bool, seq: int) -> dict:
             **ruleset.provenance())
     else:
         # A clean row still carries metadata — provider/model is the ordinary
-        # observe payload. Giving it NONE would make `_provenance_in` exit at
+        # observe payload. Giving it NONE would make `_rungs_in` exit at
         # its isinstance guard, so the "does this row carry provenance?" branch
         # would never actually run for the clean row and a mutation of it could
         # not be observed. Measured: with an empty clean row, breaking that
