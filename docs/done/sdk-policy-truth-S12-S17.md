@@ -1,7 +1,9 @@
 # SDK — Policy Truth II: the tag you typed, the rules that ran, the limits we admit
 
-**Plan of record** · original written 2026-08-12 · **re-cut 2026-08-24 against `676a908`**
-MAIN chat is the committer; executors build per this file.
+**COMPLETE — 2026-08-26 at `12ca888`.** Original written 2026-08-12, re-cut
+2026-08-24. All five phases shipped: S12 `eeed428` (deployed) · S13 `ef40322` ·
+S14 `7b027eb` · S15 `df23565` · S17 `05de4ee` · S16 `12ca888`, plus T5 `6cfc179`
+in the testbed.
 
 Phases **S12 → S16**, continuing the `S` series. S11 (`ce491e1`) was the last.
 
@@ -421,3 +423,46 @@ single Alembic head if S12 grows one (it should not — an allowlist is code) ·
 ⚠ Merge to **`foxyaudit-devtool`** with a normal push. Never
 `git push origin <sha>:refs/heads/main` on the frozen repo — that is what the
 judges see, and it deploys production.
+
+---
+
+## 12 · Closed — 2026-08-26
+
+Every phase merged, and the backend half was **deployed** before the SDK half
+shipped — the one hard ordering in this plan, verified inside the running
+container rather than by a status code.
+
+**What it cost:** six phases, nineteen gate rounds. S12 took five, S13 two,
+S14 four, S15 two, S17 three, T5 two.
+
+**What every round had in common:** each one found something real, and several
+were created by the previous round's fix. That is the signature of a phase whose
+surface keeps widening — accepting one caller-controlled field showed us four
+places that had been safe only because every field before it was bounded.
+
+### Open, filed, not scheduled
+
+| | |
+|---|---|
+| 🟡 #230 | injection detection: 8 of 11 evasions caught; indirect-via-document and keyword-free exfiltration ADMITTED as semantic, base64-split-across-blobs given up deliberately |
+| 🟡 #247 | `explain`'s I/O layer — an unreadable FILE still tracebacks, the matched span is printed raw, the sidecar gets the escaped id |
+| 🟡 #248 | three surfaces label the mock's placeholder as a written fixture |
+| 🟡 #241 | the testbed suite POSTs 61 real events and leaks dispatcher paths |
+| 🟡 #243 | the desktop egress guard is urllib-only; `settle()` can return on a live worker |
+| 🔴 #244 | **the product-side QSettings race — a real user on a slow link closing the console mid-request** |
+| 🟡 #235 · #236 · #240 | a guard skipped in CI, a hardcoded UDP port, a socket race |
+
+**#244 is the only open red that can crash a customer rather than a test.**
+
+### Two things this plan proved about the process
+
+**A number in a brief is a claim about a moving tree.** Three times MAIN handed
+an executor a stale baseline — sdk 765-vs-752, desktop "2 pre-existing failures"
+that were local-only, testbed 414-vs-415 — and three times the executor caught it
+by measuring `origin/main` themselves.
+
+**`APPLIED` is necessary and not sufficient.** A mutation must apply, parse,
+*and execute the code the claim is about*. MAIN banked false results five times
+in one session — a `$` anchor that became a backspace, a patch that hit the wrong
+`raise`, a `NameError` mistaken for a caught mutant — and every one was caught by
+printing the check rather than trusting it.
