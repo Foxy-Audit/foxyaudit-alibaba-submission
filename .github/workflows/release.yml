@@ -9,12 +9,24 @@ name: Release
 # same trigger would run a second three-platform PyInstaller matrix per tag,
 # double the artefact volume, and race this one for the release assets.
 #
-# ONE tag namespace therefore means ONE version: `VERSION` (repo root, read at
-# runtime by `foxy_tokens.APP_VERSION`) and `sdk/pyproject.toml` must both equal
-# the tag. `check-version` fails the run in seconds when they don't — a binary
-# whose Settings card contradicts its own filename, or a wheel labelled 1.1.1
-# published under a v1.1.2 tag, is exactly what that check exists to stop.
-# **Bump both files in the commit you tag.**
+# ONE tag namespace therefore means ONE version, and it is written down in THREE
+# places: `VERSION` (repo root, read at runtime by `foxy_tokens.APP_VERSION`),
+# `sdk/pyproject.toml` (what the wheel is labelled) and
+# `sdk/src/foxy_audit/__init__.py`'s `__version__` (what an installed package
+# reports about itself at the REPL). `check-version` fails the run in seconds
+# when they don't agree — a binary whose Settings card contradicts its own
+# filename, or a wheel labelled 1.1.1 published under a v1.1.2 tag, is exactly
+# what that check exists to stop.
+# **Bump all three in the commit you tag.**
+#
+# ⚠ THE THIRD STAMP WAS MISSING UNTIL 1.13.0 and this job validated two of
+# three, so a package whose `__version__` disagreed with its own wheel would
+# have published. There is a fourth string besides — the changelog block in that
+# same `__init__.py` — which no workflow can sensibly parse; a pytest checks all
+# four together
+# (`sdk/tests/test_explain_verifies_the_ruleset.py::test_the_shipped_version_
+# strings_agree_and_are_not_the_published_1_9_0`), and that is the guard that
+# runs on every push rather than only on a tag.
 on:
   # ⛔ TAG TRIGGER REMOVED 2026-08-23 — hackathon freeze.
   #
@@ -55,19 +67,30 @@ jobs:
             echo "::error::could not read a version from sdk/pyproject.toml"
             exit 1
           fi
+          INIT="$(awk -F'"' '/^__version__ = /{print $2; exit}' sdk/src/foxy_audit/__init__.py)"
+          if [ -z "$INIT" ]; then
+            echo "::error::could not read __version__ from sdk/src/foxy_audit/__init__.py"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "VERSION says $VERSION · sdk/pyproject.toml says $SDK"
+          echo "VERSION says $VERSION · sdk/pyproject.toml says $SDK · __init__.__version__ says $INIT"
+          # ⚠ UNCONDITIONAL, and that is the fix. Every comparison below used to
+          # sit inside the `ref_type == tag` branch — and the tag trigger was
+          # removed for the freeze, so the job read three numbers and compared
+          # none of them. The three stamps must agree on a manual run too: that
+          # is a property of the commit, not of how the run was started.
+          if [ "$VERSION" != "$SDK" ] || [ "$VERSION" != "$INIT" ]; then
+            echo "::error::the three version stamps disagree — VERSION=$VERSION, sdk/pyproject.toml=$SDK, __init__.__version__=$INIT. Bump all three in one commit."
+            exit 1
+          fi
+          echo "all three stamps agree: $VERSION"
           if [ "${{ github.ref_type }}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME#v}"
             if [ "$TAG" != "$VERSION" ]; then
               echo "::error::tag v$TAG does not match VERSION ($VERSION). Update VERSION in the same commit as the tag."
               exit 1
             fi
-            if [ "$TAG" != "$SDK" ]; then
-              echo "::error::tag v$TAG does not match sdk/pyproject.toml ($SDK). One tag releases both artefacts, so both must carry the tag's number."
-              exit 1
-            fi
-            echo "tag, VERSION and the SDK all agree: $VERSION"
+            echo "tag, VERSION, the SDK and __version__ all agree: $VERSION"
           fi
 
   # Build the SDK sdist + wheel. Always runs (tag or manual) so a bad build is

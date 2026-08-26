@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foxy-audit"
-version = "1.12.0"
+version = "1.13.0"
 description = "Governance-as-Code SDK for AI compliance: local customer-keyed commitments, durable capture, and tamper-evident audit telemetry without raw-text exfiltration."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -52,9 +52,25 @@ dependencies = ["requests>=2.31,<3"]
 # live index. This matters beyond tidiness — the Privacy Policy §16 invites
 # readers to review this SDK's source to check its data-minimisation claims for
 # themselves, and until now that invitation had nowhere to land.
+#
+# Changelog -> the PyPI release history. There is no separate changelog file and
+#   no changelog page on the site, because README.md IS the changelog: it opens
+#   with a section per version and PyPI renders each release's own copy of it.
+#   The history tab is the public index into those, so the field points at a
+#   real route rather than at a page someone still has to write.
+#
+# ⚠ SECURITY.md CANNOT BE LINKED HERE, and Security is not an oversight. The
+#   repository is private, so any URL into it 404s for the strangers who click
+#   these — the exact failure the note above records, and one
+#   foxy-sale-page/test_security_txt.py already asserts against this very file.
+#   SECURITY.md itself names https://foxyaudit.tech/report-abuse.html as the
+#   AUTHORITATIVE policy and exists only as its contributor-facing companion, so
+#   the published page is not a substitute for the file — it is the file's own
+#   designated public form, and it is what Security already points at.
 [project.urls]
 Homepage = "https://foxyaudit.tech"
 Source = "https://pypi.org/project/foxy-audit/#files"
+Changelog = "https://pypi.org/project/foxy-audit/#history"
 Security = "https://foxyaudit.tech/report-abuse.html"
 
 [project.scripts]

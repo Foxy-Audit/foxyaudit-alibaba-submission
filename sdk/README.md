@@ -6,7 +6,99 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
-## Ruleset 2026.08.5 — injection detection that survives a shift key and a space bar
+## 1.13.0 — the tag you typed, the rules that ran, the limits we admit
+
+**Upgrading from 1.11.0**, which is the version on PyPI. 1.12.0 was built and
+never published, so its `on_event` receipt — additive, documented below — arrives
+with this release too.
+
+**Three things change what your code sees, and one of them is a REMOVAL the
+version number will not warn you about.** It is a minor release rather than a
+major one because what was removed is a diagnostic token returned by `explain()`
+rather than a function, an argument or a wire field. That is only a safe call if
+these notes name it, so it is named first.
+
+### 1. `predates_provenance` is gone from `STATUSES`
+
+`explain()` returned `predates_provenance` — *"this row was written before SDK
+1.7.0"* — about rows written today. The status shipped in 1.8.0 and it is in
+1.11.0, so this comparison exists in consumer code now:
+
+```python
+if result.status == "predates_provenance":     # never true from 1.13.0 on
+    ...
+```
+
+It does not raise. It stops matching, silently, and the branch behind it becomes
+dead code. Grep for the string before you upgrade.
+
+**Why it was removed rather than corrected in place: the name asserted a date
+the row does not record.** A row that names no ruleset says only that the
+definition behind its rule ids was not written down. It does not say why, and
+three live causes produce it — your backend rejected the provenance keys and the
+SDK resent without them, the local registry could not answer, or the row really
+was written by an SDK older than 1.7.0. Nothing on the row separates them. The
+token is what every surface prints and every consumer switches on, so a date
+inside it was the same false statement as the sentence beside it, one layer down
+and harder to see.
+
+**What replaced it:**
+
+| Instead of `predates_provenance` | The row |
+|---|---|
+| `ruleset_unrecorded` | records rule ids and names no ruleset. Named for what is missing, because the cause cannot be read off the row — your delivery logs and SDK version are what separate the three. |
+| `no_rules_fired` | records a decision and no rule ids. Nothing fired, so no ruleset was recorded and there is nothing to replay. Still not `no_matches`: that means a replay ran and matched nothing. |
+| `provenance_ambiguous` | records no decision at all. A clean `observe` row (which builds no `event_metadata`, by design) and a genuinely pre-1.7.0 row are indistinguishable, and guessing between "nothing was checked" and "something may have fired and was not written down" is the one thing this tool must not do. |
+
+`export_unreadable` is new beside them: the file handed to `explain()` is not a
+`/v1/logs/export` document at all. Deliberately not `row_not_found` — *"your
+export is not an export"* and *"that event is not in this export"* send a reader
+to different places.
+
+`STATUSES` is the vocabulary and it is public. Test membership against it rather
+than hard-coding a token:
+
+```python
+from foxy_audit.introspect import STATUSES
+```
+
+### 2. `policy="HIPAA"` now means HIPAA
+
+**Read this before upgrading if you run `mode="block"` or `mode="redact"` and
+any call site spells its policy tag with a capital letter or a stray space.**
+
+`@foxy.audit(policy="HIPAA")` ran **no PHI check**, delivered the PHI to the
+model, and chained the row as `default`. So did `"Hipaa"` and a tag with leading
+whitespace. `evaluate()` and `check()` folded the tag; the decorator did not — it
+matched what you typed against a lowercase-only pattern and fell back to
+`default` on a miss. The two paths disagreed, and the disagreement was silent on
+both the enforcement side and the ledger side. Folding now happens in one
+function that both paths reach.
+
+| Call | Before | Now |
+|---|---|---|
+| `policy="hipaa"` | blocked | blocked — unchanged |
+| `policy="HIPAA"`, `mode="block"` | **allowed, the model was called** | **raises `FoxyPolicyBlocked`** |
+| `policy="HIPAA"`, `mode="redact"` | prompt untouched | PHI spans scrubbed — **the model receives different text** |
+| any miscased or padded tag, any mode | chained as `default` | chained as the canonical tag |
+| `mode="observe"` *(default)* | no preflight | no preflight — unchanged |
+
+**Your compliance grouping shifts on the day you upgrade.** A workspace that has
+been recording HIPAA traffic as `default` sees those events change tag, and
+dashboards, exports and Compliance Passport statistics grouped by `policy_tag`
+move with them. That is a correction — the rows were mislabelled, in the
+direction that hid a missing check — but it is visible, and you deserved to be
+told before it happened rather than after.
+
+**What you typed is preserved, not discarded.** When folding changes the tag, the
+spelling you passed rides beside it in `event_metadata.policy_tag_raw`. When the
+tag was already canonical, nothing is added and the payload is byte-for-byte what
+it was, so no unaffected row's chain hash moves. A backend that does not
+allowlist that key rejects the batch, so the SDK strips it, resends once and
+records that it degraded — losing an audit trail over a metadata key would be far
+the worse failure.
+
+### 3. Ruleset 2026.08.5 — injection detection that survives a shift key and a space bar
 
 **Read this before upgrading if you run `mode="block"` or `mode="redact"`.**
 Prompts that used to pass will now be blocked or rewritten. That is the fix, not
@@ -551,10 +643,16 @@ system knows.
 ## Install
 
 ```bash
-pip install -e .            # from this sdk/ folder, for local development
+pip install foxy-audit
 ```
 
-Runtime dependency: `requests` only.
+Runtime dependency: `requests` only. Deep NLP PII detection is opt-in and pulls
+in Presidio and spaCy:
+
+```bash
+pip install "foxy-audit[pii]"
+python -m spacy download en_core_web_lg
+```
 
 ## Use
 
@@ -606,8 +704,14 @@ only (prompt-injection + secrets); NO PHI/PII check will run. Known tags: defaul
 gdpr, gdpr_basic, hipaa, hipaa_basic, soc2.
 ```
 
-The warning fires once per distinct tag per process. Whatever you pass is recorded on
-the wire verbatim, recognised or not.
+The warning fires once per distinct tag per process. **A tag is case- and
+whitespace-folded**, so `"HIPAA"`, `"Hipaa"` and `" hipaa "` all select the HIPAA
+checks and all chain as `hipaa`; the folded tag is what goes on the wire, and the
+spelling you passed rides beside it in `event_metadata.policy_tag_raw` whenever
+folding changed it. A tag that was already canonical is sent exactly as it always
+was, with nothing added. Aliases are resolved for the CHECKS only — a row logged
+under `hipaa_basic` is chained as `hipaa_basic`, so no historical row changes
+meaning.
 
 ### Attributing the model (`agent`)
 
@@ -728,6 +832,15 @@ raises when durable delivery cannot be confirmed.
 - **Retries do not discard events** — failed uploads remain in the SQLite/WAL spool.
 - **Content-blind by design** — commitments, token counts, policy tags, and bounded identifiers leave the host; raw text is not sent by the SDK. The response scan is no exception: it emits rule ids such as `response_markup.script_tag`, never the matched text, never an offset, never a length.
 - Works with **sync, async, sync-generator and async-generator** functions. Host return values are passed through unchanged — the one exception is `response_scan="block"`, which raises `FoxyResponseBlocked` instead of returning a flagged response, and which is off unless you turn it on.
+
+## Reporting a security issue
+
+Email **security@foxyaudit.tech**. The published policy —
+<https://foxyaudit.tech/report-abuse.html> — carries the safe-harbour
+undertaking, the scope, and the reporting route, and it is what
+`https://foxyaudit.tech/.well-known/security.txt` cites. There is no bug bounty
+and no guaranteed response time; saying otherwise would be a promise this
+project cannot keep.
 
 ## What gets sent
 

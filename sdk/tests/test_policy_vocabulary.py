@@ -496,13 +496,27 @@ def test_every_documented_policy_tag_is_a_real_tag():
     `hipaa_basic` was in our PyPI long description, our package docstring and
     our demo, ran no HIPAA check, and nothing anywhere noticed. Fixing that one
     string fixes one string; this fixes the class.
+
+    ⚠ THE TAG IS FOLDED BEFORE IT IS LOOKED UP, from 1.13.0. `policy="HIPAA"`
+    used to select no HIPAA check and chain as `default` (#232); it now folds,
+    so it IS a real tag and the README documents it as one — in the release note
+    that exists to tell customers their tags stopped being ignored. Comparing
+    the raw spelling here would have failed the SDK's own account of the fix.
+
+    THIS DOES NOT WIDEN WHAT PASSES BEYOND THE FOLD. `normalise_policy_tag` is
+    the exact function the decorator and `evaluate()` both call, so a tag is
+    accepted here on precisely the condition that makes it work in production. A
+    typo (`hipa`) and a plausible invention (`hipaa_strict`) both still fail —
+    re-broken in the README to prove it, not assumed. `hipaa_basic` passes, and
+    that is the guard working rather than a hole in it: 1.6.0 made it a real
+    alias, so documenting it is no longer the defect this test was born from.
     """
     documented = _documented_tags()
     assert documented, "extraction found nothing — the guard has stopped looking"
 
     unknown = {
         tag: sites for tag, sites in documented.items()
-        if tag not in policy.KNOWN_POLICY_TAGS
+        if policy.normalise_policy_tag(tag) not in policy.KNOWN_POLICY_TAGS
         and tag not in _DELIBERATE_FREE_STRING_TAGS
     }
     assert not unknown, (
