@@ -630,7 +630,7 @@ def test_a_check_violation_is_not_reported_as_a_name_conflict():
 
     # the duplicate name -> the 409 the pre-check would have given
     dup = _Session('duplicate key value violates unique constraint '
-                   '"uq_ai_system_org_name"')
+                   '"uq_ai_system_org_name_active"')   # 0069's partial index
     with pytest.raises(HTTPException) as caught:
         systems._flush_or_conflict(dup)
     assert caught.value.status_code == 409
@@ -742,3 +742,240 @@ def test_trimming_applies_to_an_update_too(admin):
     r = client.put(f"/v1/systems/{created['id']}", json={"model_name": "  gpt-5.6  "})
     assert r.status_code == 200, r.text
     assert r.json()["model_name"] == "gpt-5.6"
+
+
+# ───── gate round 2 · the remedy the un-retire message names must WORK ──────
+#
+# Retirement is terminal and the 409 says "Declare a new system". Until 0069 the
+# API then refused that: `uq_ai_system_org_name` was a total unique constraint,
+# so the row just taken out of service went on reserving its name forever, and
+# the only escape was to PUT-rename the retired row — rewriting a historical
+# declaration to work around a present-day constraint.
+
+def test_the_documented_way_out_of_retirement_actually_works(admin):
+    """The whole point. Retire, then declare it again under the same name."""
+    _, client = admin
+    first = client.post("/v1/systems", json=_payload("mortgage-bot")).json()
+    assert client.post(f"/v1/systems/{first['id']}/retire").status_code == 200
+
+    again = client.post("/v1/systems", json=_payload("mortgage-bot"))
+    assert again.status_code == 201, (
+        f"the remedy the un-retire 409 names was refused: {again.text}")
+    assert again.json()["id"] != first["id"], "it reused the retired row"
+    assert again.json()["retired"] is False
+
+
+def test_the_un_retire_message_and_the_api_agree(admin):
+    """Reads the refusal, then does what it says. If the two ever drift apart
+    again this is what notices — the previous round's message promised a remedy
+    the constraint refused, and every other guard stayed green."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload("drift-bot")).json()
+    client.post(f"/v1/systems/{created['id']}/retire")
+
+    refusal = client.put(f"/v1/systems/{created['id']}",
+                         json={"lifecycle_status": "active"})
+    assert refusal.status_code == 409
+    assert "Declare a new system" in refusal.json()["detail"]
+
+    assert client.post("/v1/systems", json=_payload("drift-bot")).status_code == 201
+
+
+def test_both_declarations_survive_and_are_told_apart_by_id(admin):
+    """Two rows may share a name, and that is the correct shape: the inventory
+    has to say what was running when. They differ by id and lifecycle."""
+    _, client = admin
+    old = client.post("/v1/systems", json=_payload("support-bot")).json()
+    client.post(f"/v1/systems/{old['id']}/retire")
+    new = client.post("/v1/systems", json=_payload("support-bot")).json()
+
+    listed = client.get("/v1/systems").json()
+    assert len(listed) == 2, listed
+    assert {s["name"] for s in listed} == {"support-bot"}
+    assert {s["id"] for s in listed} == {old["id"], new["id"]}
+    assert sorted(s["retired"] for s in listed) == [False, True]
+
+
+def test_two_live_systems_still_cannot_share_a_name(admin):
+    """0069 loosens exactly one thing. The constraint that was protecting
+    something — two LIVE systems with one name — is untouched."""
+    _, client = admin
+    client.post("/v1/systems", json=_payload("live-bot"))
+    dup = client.post("/v1/systems", json=_payload("live-bot"))
+    assert dup.status_code == 409, dup.text
+
+
+def test_a_name_may_be_retired_more_than_once(admin):
+    """Retiring removes a row from the partial index, so it can never collide.
+    Declared, retired, re-declared, retired again leaves N rows with one name and
+    N distinct operating periods."""
+    _, client = admin
+    ids = []
+    for _ in range(3):
+        row = client.post("/v1/systems", json=_payload("cyclic-bot")).json()
+        assert client.post(f"/v1/systems/{row['id']}/retire").status_code == 200
+        ids.append(row["id"])
+
+    listed = client.get("/v1/systems").json()
+    assert len(listed) == 3 and all(s["retired"] for s in listed)
+    assert {s["id"] for s in listed} == set(ids)
+
+
+def test_the_partial_index_is_the_authority_not_the_pre_check(admin, monkeypatch):
+    """Fixing `_ensure_unique_name` alone would have changed nothing — the
+    CONSTRAINT was the refusal. Neutering the pre-check puts the request through
+    the index itself, which is what had to change."""
+    from app.routers import systems
+
+    _, client = admin
+    first = client.post("/v1/systems", json=_payload("index-bot")).json()
+    client.post(f"/v1/systems/{first['id']}/retire")
+
+    monkeypatch.setattr(systems, "_ensure_unique_name", lambda *a, **k: None)
+    reused = client.post("/v1/systems", json=_payload("index-bot"))
+    assert reused.status_code == 201, (
+        f"the INDEX still reserved a retired name: {reused.text}")
+
+    # and it still refuses two live ones, through the index alone
+    clash = client.post("/v1/systems", json=_payload("index-bot"))
+    assert clash.status_code == 409, clash.text
+
+
+def test_a_rename_onto_a_retired_name_is_allowed(admin):
+    _, client = admin
+    old = client.post("/v1/systems", json=_payload("freed-name")).json()
+    client.post(f"/v1/systems/{old['id']}/retire")
+    other = client.post("/v1/systems", json=_payload("other-bot")).json()
+
+    r = client.put(f"/v1/systems/{other['id']}", json={"name": "freed-name"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "freed-name"
+
+
+def test_a_rename_is_recorded_with_the_name_it_had(admin):
+    """`name` joined the governance fields this round. A reader asking "what was
+    this system called when it produced that event" needs the old value, and a
+    rename is also the move that used to be the workaround for a stuck name."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload("before-name")).json()
+    client.put(f"/v1/systems/{created['id']}", json={"name": "after-name"})
+
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.update")
+    assert entry["detail"]["previous"] == {"name": "before-name"}, entry["detail"]
+
+
+# ───────── gate round 2 · a system cannot be born retired ────────────────────
+
+def test_post_cannot_create_a_born_retired_system(admin):
+    """Driven through the POST, not asserted against the type: a Literal narrowed
+    in one model and not the other is exactly what a schema test misses.
+
+    A born-retired row is unreachable in every direction — no `system.retire`
+    ever recorded it, PUT 409s both edges, and there is no DELETE. It and its
+    name would be stuck from the moment of creation.
+    """
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload("born-dead",
+                                                 lifecycle_status="retired"))
+    assert r.status_code == 422, f"a born-retired system was created: {r.text}"
+    assert client.get("/v1/systems").json() == [], "the row was written anyway"
+
+
+def test_the_name_of_a_refused_born_retired_system_is_not_consumed(admin):
+    """The second-order damage the refusal prevents."""
+    _, client = admin
+    client.post("/v1/systems", json=_payload("born-dead", lifecycle_status="retired"))
+    assert client.post("/v1/systems", json=_payload("born-dead")).status_code == 201
+
+
+@pytest.mark.parametrize("declared", ["draft", "active"])
+def test_the_two_declarable_lifecycles_still_work(admin, declared):
+    """The narrowing must not take the legitimate values with it."""
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload(f"{declared}-bot",
+                                                 lifecycle_status=declared))
+    assert r.status_code == 201, r.text
+    assert r.json()["lifecycle_status"] == declared
+
+
+# ───────── gate round 2 · the accountability anchor must be reachable ────────
+
+@pytest.mark.parametrize("bad", ["risk-team", "nobody", "a@b", "two words@x.com",
+                                 "@bank.example", "owner@"])
+def test_an_unreachable_owner_is_refused(admin, bad):
+    """On this column an unreachable value is worse than a blank one: it looks
+    answered. "Who is responsible for this system" cannot be "risk-team"."""
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload(owner_email=bad))
+    assert r.status_code == 422, f"{bad!r} was accepted: {r.text}"
+
+
+@pytest.mark.parametrize("good", ["risk@bank.example", "a.b+c@sub.domain.co.uk",
+                                  "  Owner@Bank.Example  "])
+def test_a_real_address_is_accepted_and_normalised(admin, good):
+    """Deliberately not RFC 5322 — on an accountability field, rejecting a real
+    address is the more expensive error."""
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload(f"ok-{abs(hash(good)) % 9999}",
+                                                 owner_email=good))
+    assert r.status_code == 201, f"{good!r} was rejected: {r.text}"
+    assert r.json()["owner_email"] == good.strip().lower()
+
+
+def test_an_update_cannot_break_the_owner_either(admin):
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    assert client.put(f"/v1/systems/{created['id']}",
+                      json={"owner_email": "risk-team"}).status_code == 422
+    assert client.get(f"/v1/systems/{created['id']}").json()["owner_email"] \
+        == created["owner_email"]
+
+
+# ───────── gate round 2 · a machine credential reads less ────────────────────
+
+def test_a_machine_credential_cannot_read_the_org_chart(admin):
+    """An API key lives in application config, gets baked into container images
+    and CI, and is the credential here most likely to leak. The full record is
+    the customer's AI governance chart plus a list of named staff; R3 needs an
+    id and a lifecycle, so that is what a key gets."""
+    org, admin_client = admin
+    created = admin_client.post("/v1/systems", json=_payload()).json()
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    sdk = TestClient(app)
+
+    for body in (sdk.get("/v1/systems", headers=org["auth"]).json()[0],
+                 sdk.get(f"/v1/systems/{created['id']}", headers=org["auth"]).json()):
+        assert set(body) == {"id", "name", "lifecycle_status", "retired"}, body
+        for leaked in ("owner_email", "purpose", "risk_tier", "data_classification",
+                       "provider", "model_name", "environment"):
+            assert leaked not in body, f"a machine credential read {leaked}"
+        assert body["id"] == created["id"]
+
+
+def test_the_dashboard_still_reads_the_whole_declaration(admin):
+    """The narrowing is per-credential, not a general truncation — the people
+    who own the inventory still see it."""
+    org, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    for body in (client.get("/v1/systems").json()[0],
+                 client.get(f"/v1/systems/{created['id']}").json()):
+        assert body["owner_email"] == org["admin_email"].lower()
+        assert body["risk_tier"] == "high"
+        assert body["data_classification"] == "regulated"
+        assert body["purpose"].startswith("Answers mortgage")
+
+
+def test_a_member_reads_the_whole_declaration_too(admin, add_user, login):
+    """The split is machine-vs-human, not admin-vs-member: a member is a person
+    who works there and can already see this in the dashboard."""
+    org, admin_client = admin
+    admin_client.post("/v1/systems", json=_payload())
+    add_user(org["org_id"], "reader@test.dev", "readerpass123", role="member")
+    member = login("reader@test.dev", "readerpass123")
+
+    body = member.get("/v1/systems").json()[0]
+    assert "owner_email" in body and "risk_tier" in body, body

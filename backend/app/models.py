@@ -6,8 +6,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, SmallInteger, String,
-    Text, UniqueConstraint, func,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, SmallInteger,
+    String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -353,7 +353,17 @@ class AiSystem(Base):
 
     __tablename__ = "ai_systems"
     # Unique PER ORG, never globally — two customers may both run a "support-bot".
-    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_ai_system_org_name"),)
+    #
+    # ⚠ And PARTIAL: retired rows are outside it (migration 0069). Retirement is
+    # terminal and the documented way back is to declare a new system under the
+    # same name, which a total constraint made impossible — the remedy the API's
+    # own error message names was refused by the API. A name identifies a system
+    # that is CURRENTLY declared; evidence is attributed by id, so two rows
+    # sharing a name with only one of them live is never ambiguous downstream.
+    __table_args__ = (
+        Index("uq_ai_system_org_name_active", "org_id", "name", unique=True,
+              postgresql_where=text("lifecycle_status <> 'retired'")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

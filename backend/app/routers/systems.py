@@ -7,15 +7,17 @@ R3 (the SDK sends it), and nothing here sends or stores an attribution yet.
 
 Five endpoints, two permission levels:
 
-    GET  /v1/systems              list    · resolve_org      — members AND the SDK
-    GET  /v1/systems/{id}         get     · resolve_org      — members AND the SDK
+    GET  /v1/systems              list    · _reader          — members AND the SDK
+    GET  /v1/systems/{id}         get     · _reader          — members AND the SDK
     POST /v1/systems              create  · require_role('admin')  — dashboard only
     PUT  /v1/systems/{id}         update  · require_role('admin')  — dashboard only
     POST /v1/systems/{id}/retire  retire  · require_role('admin')  — dashboard only
 
-Reads use ``resolve_org`` because both audiences need them: a member browsing
-the dashboard, and the SDK, which in R3 will want to check the id it is about to
-send. Writes use ``require_role('admin')`` — a cookie session, never a Bearer
+Reads use ``_reader`` (which delegates to ``resolve_org``) because both
+audiences need them: a member browsing the dashboard, and the SDK, which in R3
+will want to check the id it is about to send. ⚠ The two do NOT see the same
+thing — a machine credential gets ``AiSystemSummary`` and a dashboard session
+gets the whole declaration. See ``list_systems`` for why. Writes use ``require_role('admin')`` — a cookie session, never a Bearer
 key — because declaring an accountable system is a governance act by a named
 human, and ``created_by`` has to name someone. ``keys.py`` splits the same way:
 the machine key may rotate itself (``require_org``), while managing the named
@@ -38,7 +40,11 @@ DELETE.
 --------------------------------------------------------------
 Nothing returns a retired system to service: not ``PUT`` (409 on both edges of
 'retired'), and there is no un-retire endpoint. A customer who runs the thing
-again declares a NEW system.
+again declares a NEW system — and can reuse the retired system's name, because
+``uq_ai_system_org_name_active`` (migration 0069) is scoped to LIVE rows. That
+part is load-bearing: without it the API refused the very remedy this message
+names, and the only way out was to PUT-rename the retired row, rewriting a
+historical declaration to work around a present-day constraint.
 
 That is a decision about what evidence means, not a missing feature. From R2 a
 retired system accepts no new events, so reviving an id would make it name two
@@ -60,17 +66,25 @@ system from traffic. An inventory Foxy guessed would be Foxy's opinion about a
 customer's AI estate rather than the customer's own declaration — and this
 product's claim is that it does not invent what it reports.
 
+⚠ 'retired' IS NOT DECLARABLE
+-----------------------------
+``POST`` takes ``DeclarableLifecycle`` ('draft' | 'active'), not the full
+vocabulary. A born-retired row would be a system no governance action ever
+retired, that ``PUT`` cannot revive (409 on both edges) and no ``DELETE`` can
+remove — stuck, along with its name, from the moment of creation.
+
 Content-blind like everything else: this accepts ownership and operating
 context, never a prompt, a response or a credential.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -93,15 +107,39 @@ Environment = Literal["development", "staging", "production"]
 DataClassification = Literal["public", "internal", "confidential", "regulated"]
 RiskTier = Literal["low", "medium", "high", "critical"]
 LifecycleStatus = Literal["draft", "active", "retired"]
+# ⚠ What a DECLARATION may say. 'retired' is reachable only through /retire, so
+# it is absent here: a born-retired row could never be created by any governance
+# action, could never be un-retired (PUT 409s both edges), and could never be
+# deleted — it and its name would be stuck from the moment of creation.
+DeclarableLifecycle = Literal["draft", "active"]
 
 RETIRED = "retired"
+
+# Pragmatic, not RFC 5322. The job is to reject a value that cannot be reached —
+# "risk-team" — because on this column an unreachable value is worse than a
+# blank one: it looks answered. Nothing in this repo validates an email today
+# and `email-validator` is not a dependency; adding one for a single field would
+# be disproportionate, and a stricter regex would start rejecting real
+# addresses, which on an accountability field is the more expensive error.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # The fields whose OLD value an update must record. "Someone lowered the risk
 # tier on the mortgage bot — from what, and when" is the question this registry
 # exists to answer, and a trail listing only the field NAMES cannot answer it.
 # Deliberately NOT every field: owner_email churn is noise, and this is an audit
 # surface rather than a diff log.
-_GOVERNANCE_FIELDS = ("risk_tier", "data_classification", "lifecycle_status")
+_GOVERNANCE_FIELDS = ("name", "risk_tier", "data_classification",
+                      "lifecycle_status")
+
+
+def _validated_email(value: str | None) -> str | None:
+    """`owner_email` answers "who is responsible for this system". A value that
+    cannot be reached is worse than no value, because it looks answered."""
+    if value is None:
+        return None
+    if not _EMAIL_RE.match(value):
+        raise ValueError("owner_email must be an email address")
+    return value
 
 
 class AiSystemCreate(BaseModel):
@@ -114,7 +152,10 @@ class AiSystemCreate(BaseModel):
     environment: Environment = "production"
     data_classification: DataClassification = "internal"
     risk_tier: RiskTier = "medium"
-    lifecycle_status: LifecycleStatus = "active"
+    # ⚠ NOT LifecycleStatus — see DeclarableLifecycle.
+    lifecycle_status: DeclarableLifecycle = "active"
+
+    _check_owner_email = field_validator("owner_email")(_validated_email)
 
     @field_validator("name", "purpose", "owner_email", "model_name", mode="before")
     @classmethod
@@ -156,6 +197,8 @@ class AiSystemUpdate(BaseModel):
     risk_tier: RiskTier | None = None
     lifecycle_status: LifecycleStatus | None = None
 
+    _check_owner_email = field_validator("owner_email")(_validated_email)
+
     @field_validator("name", "purpose", "owner_email", "model_name", mode="before")
     @classmethod
     def _strip_declared_metadata(cls, value):
@@ -181,6 +224,28 @@ class AiSystemItem(BaseModel):
     updated_at: datetime | None = None
 
 
+class AiSystemSummary(BaseModel):
+    """What a MACHINE credential sees. Everything R3 needs to validate an
+    attribution, and nothing else — see `_reader`."""
+
+    id: str
+    name: str
+    lifecycle_status: str
+    retired: bool
+
+
+def _reader(request: Request, authorization: str = Header(default=""),
+            db: Session = Depends(get_db)) -> tuple[Organization, bool]:
+    """Authenticate a read and report WHICH credential did it.
+
+    `resolve_org` accepts either and returns only the org, so a route built on
+    it alone cannot tell a browser session from an API key. Delegates to it
+    rather than re-implementing auth, and mirrors its own precedence: a present
+    Authorization header IS the SDK path there, so it is the SDK path here.
+    """
+    return resolve_org(request, authorization, db), bool(authorization)
+
+
 def _serialize(system: AiSystem) -> AiSystemItem:
     return AiSystemItem(
         id=str(system.id), name=system.name, owner_email=system.owner_email,
@@ -190,6 +255,18 @@ def _serialize(system: AiSystem) -> AiSystemItem:
         retired=(system.lifecycle_status == RETIRED),
         created_at=system.created_at, updated_at=system.updated_at,
     )
+
+
+def _summarize(system: AiSystem) -> AiSystemSummary:
+    return AiSystemSummary(
+        id=str(system.id), name=system.name,
+        lifecycle_status=system.lifecycle_status,
+        retired=(system.lifecycle_status == RETIRED),
+    )
+
+
+def _project(system: AiSystem, machine: bool):
+    return _summarize(system) if machine else _serialize(system)
 
 
 def _get_system(db: Session, org_id, system_id: uuid.UUID) -> AiSystem:
@@ -207,10 +284,19 @@ def _get_system(db: Session, org_id, system_id: uuid.UUID) -> AiSystem:
 
 def _ensure_unique_name(db: Session, org_id, name: str,
                         exclude_id: uuid.UUID | None = None) -> None:
-    """Names are unique PER ORG. Two customers may both run a "support-bot", and
-    neither may learn that the other does — hence the org_id filter here, not a
-    global unique index."""
-    stmt = select(AiSystem.id).where(AiSystem.org_id == org_id, AiSystem.name == name)
+    """Names are unique PER ORG and only among LIVE systems.
+
+    Per org, because two customers may both run a "support-bot" and neither may
+    learn the other does — hence the org_id filter rather than a global index.
+
+    Only among live systems, because retirement is terminal and the documented
+    way back is to declare a new system under the same name. A retired row that
+    went on reserving its name made the API refuse the remedy its own error
+    message named. Mirrors `uq_ai_system_org_name_active` (migration 0069) —
+    and the INDEX is the authority; this is the fast path.
+    """
+    stmt = select(AiSystem.id).where(AiSystem.org_id == org_id, AiSystem.name == name,
+                                     AiSystem.lifecycle_status != RETIRED)
     if exclude_id is not None:
         stmt = stmt.where(AiSystem.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
@@ -228,8 +314,8 @@ def _flush_or_conflict(db: Session) -> None:
     `_ensure_unique_name` is a check-then-act with a real window: two admins
     submitting the same name — or one double-clicked form — both read "no such
     name" and both proceed, and the second one's INSERT then hits
-    `uq_ai_system_org_name` at flush time. Without this the customer gets a 500
-    for a condition the API already has a correct answer for.
+    `uq_ai_system_org_name_active` at flush time. Without this the customer gets
+    a 500 for a condition the API already has a correct answer for.
 
     The pre-check stays because it is the common path and gives the same 409
     without burning a transaction. The CONSTRAINT is the authority; only it is
@@ -242,14 +328,14 @@ def _flush_or_conflict(db: Session) -> None:
         db.flush()
     except IntegrityError as exc:
         db.rollback()
-        if "uq_ai_system_org_name" in str(exc.orig):
+        if "uq_ai_system_org_name_active" in str(exc.orig):
             raise _duplicate_name() from exc
         raise
 
 
-@router.get("/v1/systems", response_model=list[AiSystemItem])
+@router.get("/v1/systems", response_model=None)
 def list_systems(
-    org: Organization = Depends(resolve_org),
+    reader: tuple[Organization, bool] = Depends(_reader),
     db: Session = Depends(get_db),
 ):
     """This workspace's declared AI systems. Members and the SDK may both read.
@@ -257,22 +343,39 @@ def list_systems(
     Retired systems are INCLUDED and flagged — an inventory that hides what was
     retired cannot answer "what were you running last March", which is the
     question the evidence exists for.
+
+    ⚠ A MACHINE CREDENTIAL GETS A NARROWER PROJECTION (id, name,
+    lifecycle_status, retired) and a dashboard session gets the whole
+    declaration. The reason is what the full record IS: owner emails, purposes,
+    providers, risk tiers and data classifications across every product a
+    customer runs — their AI governance chart, and a list of named staff. An API
+    key lives in application config, gets baked into container images and CI,
+    and is the credential here most likely to leak; it should not be able to
+    read that. R3 needs an id, and enough to tell a live system from a retired
+    one, to validate an attribution before sending it — which is exactly this.
+
+    `response_model` is None deliberately: a union response model would let
+    FastAPI validate the full item against the summary and silently return
+    whichever it matched first, which is the failure this exists to prevent.
     """
+    org, machine = reader
     systems = db.execute(
         select(AiSystem).where(AiSystem.org_id == org.id)
         .order_by(AiSystem.lifecycle_status.asc(), AiSystem.name.asc())
     ).scalars().all()
-    return [_serialize(system) for system in systems]
+    return [_project(system, machine) for system in systems]
 
 
-@router.get("/v1/systems/{system_id}", response_model=AiSystemItem)
+@router.get("/v1/systems/{system_id}", response_model=None)
 def get_system(
     system_id: uuid.UUID,
-    org: Organization = Depends(resolve_org),
+    reader: tuple[Organization, bool] = Depends(_reader),
     db: Session = Depends(get_db),
 ):
-    """One declared system, retired or not. Members and the SDK may both read."""
-    return _serialize(_get_system(db, org.id, system_id))
+    """One declared system, retired or not. Members and the SDK may both read —
+    and a machine credential gets the narrow projection, as on the list."""
+    org, machine = reader
+    return _project(_get_system(db, org.id, system_id), machine)
 
 
 @router.post("/v1/systems", response_model=AiSystemItem, status_code=201)
