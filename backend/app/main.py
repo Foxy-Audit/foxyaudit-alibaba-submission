@@ -50,7 +50,7 @@ from .routers import (
     account, admin_anchors, admin_alerts, admin_audit_view, admin_billing, admin_campaigns, admin_config, admin_data, admin_grading, admin_health,
     admin_inbox, admin_leads, admin_notifications, admin_orgs, admin_security, admin_staff, admin_stats, analytics, anchors,
     auth_google, auth_human, auth_staff, badge, billing, consent, health, keys, leads, logs,
-    passport, policies, sso, verify, webhooks, coverage,
+    passport, policies, sso, systems, verify, webhooks, coverage,
 )
 
 _settings = get_settings()
@@ -156,7 +156,8 @@ customer_api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handl
 customer_api.add_exception_handler(RequestValidationError, _validation_error_handler)
 
 for _r in (auth_human, auth_google, health, logs, verify, passport, keys, billing, policies,
-           analytics, coverage, anchors, leads, consent, account, badge, webhooks, sso):
+           analytics, coverage, anchors, leads, consent, account, badge, webhooks, sso,
+           systems):
     customer_api.include_router(_r.router, tags=[_r.__name__.rsplit(".", 1)[-1]])
 
 

@@ -323,6 +323,64 @@ class WebhookSubscription(Base):
         DateTime(timezone=True), server_default=func.now())
 
 
+class AiSystem(Base):
+    """An AI system an organization DECLARES it operates — the inventory the
+    evidence is attributed to (R1).
+
+    Content-blind by construction: it records accountable ownership and
+    operating context (owner, purpose, provider, model name, environment, data
+    classification, risk tier) and never a prompt, a response, or a credential.
+    That field list is not arbitrary — it is the shape EU AI Act paperwork asks
+    for, which is why this is a product surface rather than a foreign key.
+
+    Two properties are load-bearing and both are enforced elsewhere too:
+
+    * **Declared, never inferred.** Nothing writes this table except a dashboard
+      admin registering a system. Foxy must not guess a customer's AI estate;
+      an inventory Foxy guessed would not be evidence.
+    * **Retired, never deleted.** ``lifecycle_status`` goes to ``retired`` and
+      the row stays, because chained evidence already points at this id. There
+      is deliberately no DELETE endpoint (see ``routers/systems.py``).
+
+    Org-scoped by RLS (posture A: ENABLE + FORCE + ``org_isolation``, migration
+    0068) AND by an explicit ``org_id`` filter in every query — the filter is
+    the load-bearing half, RLS is the second layer.
+
+    ``created_by`` is ``ON DELETE SET NULL``: a system outlives the person who
+    registered it, so offboarding a user must never remove their systems from
+    the inventory.
+    """
+
+    __tablename__ = "ai_systems"
+    # Unique PER ORG, never globally — two customers may both run a "support-bot".
+    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_ai_system_org_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    owner_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(256), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, server_default="other")
+    model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    environment: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="production")
+    data_classification: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="internal")
+    risk_tier: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="medium")
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="active")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class OrgPolicy(Base):
     """Per-org compliance policy configuration — Core Requirement #1.
 
