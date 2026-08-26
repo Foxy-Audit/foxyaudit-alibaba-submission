@@ -17,7 +17,9 @@ Reads use ``_reader`` (which delegates to ``resolve_org``) because both
 audiences need them: a member browsing the dashboard, and the SDK, which in R3
 will want to check the id it is about to send. ⚠ The two do NOT see the same
 thing — a machine credential gets ``AiSystemSummary`` and a dashboard session
-gets the whole declaration. See ``list_systems`` for why. Writes use ``require_role('admin')`` — a cookie session, never a Bearer
+gets the whole declaration. See ``list_systems`` for why.
+
+Writes use ``require_role('admin')`` — a cookie session, never a Bearer
 key — because declaring an accountable system is a governance act by a named
 human, and ``created_by`` has to name someone. ``keys.py`` splits the same way:
 the machine key may rotate itself (``require_org``), while managing the named
@@ -269,12 +271,19 @@ def _project(system: AiSystem, machine: bool):
     return _summarize(system) if machine else _serialize(system)
 
 
-def _get_system(db: Session, org_id, system_id: uuid.UUID) -> AiSystem:
+def _get_system(db: Session, org_id, system_id: uuid.UUID,
+                for_update: bool = False) -> AiSystem:
     """Fetch one system, scoped to the org. The explicit org_id filter is the
-    load-bearing isolation; the RLS policy (0068) is the second layer."""
-    system = db.execute(
-        select(AiSystem).where(AiSystem.id == system_id, AiSystem.org_id == org_id)
-    ).scalar_one_or_none()
+    load-bearing isolation; the RLS policy (0068) is the second layer.
+
+    `for_update` takes a row lock, and a caller that decides something FROM this
+    row and then writes based on that decision needs it — see `retire_system`.
+    Reads do not, and taking it on a list would serialise the dashboard.
+    """
+    stmt = select(AiSystem).where(AiSystem.id == system_id, AiSystem.org_id == org_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    system = db.execute(stmt).scalar_one_or_none()
     if system is None:
         # 404, not 403: a foreign tenant's UUID must not be distinguishable from
         # a missing one, or this is an existence oracle over other customers.
@@ -294,6 +303,14 @@ def _ensure_unique_name(db: Session, org_id, name: str,
     went on reserving its name made the API refuse the remedy its own error
     message named. Mirrors `uq_ai_system_org_name_active` (migration 0069) —
     and the INDEX is the authority; this is the fast path.
+
+    ⚠ BOTH SIDES OF THE PREDICATE, NOT JUST ONE. The index excludes retired rows
+    from the uniqueness rule ENTIRELY, so a retired row may also be renamed onto
+    a live sibling's name. Callers must therefore skip this check when the row
+    being renamed is itself retired: asking only "is the target name taken by a
+    live row" makes the pre-check STRICTER than the index it shadows, and a
+    pre-check that refuses what the constraint would allow is a rule nobody
+    wrote down.
     """
     stmt = select(AiSystem.id).where(AiSystem.org_id == org_id, AiSystem.name == name,
                                      AiSystem.lifecycle_status != RETIRED)
@@ -467,7 +484,9 @@ def update_system(
                 detail="A retired system cannot be returned to service. Declare a "
                        "new system: its evidence must not share an id with the "
                        "period before retirement")
-    if "name" in values:
+    # Skipped for a retired row: 0069's index does not constrain it, and a
+    # pre-check stricter than its own constraint invents a rule.
+    if "name" in values and system.lifecycle_status != RETIRED:
         _ensure_unique_name(db, admin.org_id, values["name"], exclude_id=system.id)
     if "owner_email" in values:
         values["owner_email"] = values["owner_email"].lower()
@@ -505,8 +524,19 @@ def retire_system(
     ⚠ There is no inverse. ``PUT`` 409s on both edges of 'retired' and no
     un-retire endpoint exists — see the module docstring for why reviving an id
     would make its evidence ambiguous.
+
+    ⚠ THE ROW IS LOCKED, AND THAT IS WHAT MAKES "IDEMPOTENT" TRUE.
+    This reads the lifecycle, decides from it, and writes — check-then-act, the
+    same shape as the name race. Two concurrent retires (a double-clicked
+    button) both read 'active', both pass the check and both write a
+    `system.retire` account_action. A duplicated record of a governance action
+    is worse than a duplicated row: it is a trail that cannot be trusted to be a
+    COUNT, on the one surface whose whole value is being countable. `FOR UPDATE`
+    makes the second request wait and then re-read the committed row, where it
+    finds 'retired' and writes nothing. `routers/logs.py` locks `org_sequences`
+    for the same reason.
     """
-    system = _get_system(db, admin.org_id, system_id)
+    system = _get_system(db, admin.org_id, system_id, for_update=True)
     if system.lifecycle_status != RETIRED:
         system.lifecycle_status = RETIRED
         account_audit.record_account_action(

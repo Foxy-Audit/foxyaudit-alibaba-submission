@@ -363,13 +363,18 @@ class AiSystem(Base):
     __table_args__ = (
         Index("uq_ai_system_org_name_active", "org_id", "name", unique=True,
               postgresql_where=text("lifecycle_status <> 'retired'")),
+        Index("ix_ai_systems_org", "org_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False, index=True)
+        # Named explicitly to match what 0068 created. A bare index=True
+        # would have SQLAlchemy call it ix_ai_systems_org_id while the
+        # database calls it ix_ai_systems_org — harmless at runtime, and
+        # permanent noise in every autogenerate diff after it.
+        nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     owner_email: Mapped[str] = mapped_column(String(320), nullable=False)
     purpose: Mapped[str] = mapped_column(String(256), nullable=False)

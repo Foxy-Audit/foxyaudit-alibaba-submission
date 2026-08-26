@@ -979,3 +979,216 @@ def test_a_member_reads_the_whole_declaration_too(admin, add_user, login):
 
     body = member.get("/v1/systems").json()[0]
     assert "owner_email" in body and "risk_tier" in body, body
+
+
+# ───── gate round 3 · the export's completeness claim must be true ──────────
+
+def test_the_account_export_carries_the_declared_systems(admin):
+    """`/v1/account/export` says it exports "everything this workspace holds".
+    `ai_systems` was missing, and it holds `owner_email` — personal data about
+    someone who need not be a `User` row at all, so the users section does not
+    cover them. A compliance product shipping a completeness claim it does not
+    meet is the defect class this repo can least afford."""
+    import json
+
+    org, client = admin
+    created = client.post("/v1/systems", json=_payload(
+        owner_email="named.person@bank.example")).json()
+
+    r = client.get("/v1/account/export")
+    assert r.status_code == 200, r.text
+    bundle = json.loads(r.content)
+    assert "ai_systems" in bundle, sorted(bundle)
+
+    [row] = bundle["ai_systems"]
+    assert row["id"] == created["id"]
+    assert row["owner_email"] == "named.person@bank.example", (
+        "the personal data the export exists to surface is missing")
+    # the WHOLE declaration — a subject-access request should see what was
+    # declared about whom
+    for field in ("name", "purpose", "provider", "model_name", "environment",
+                  "data_classification", "risk_tier", "lifecycle_status",
+                  "retired", "created_at", "updated_at"):
+        assert field in row, f"{field} missing from the exported declaration"
+
+
+def test_the_export_includes_retired_declarations_too(admin):
+    """A retired system is precisely the one nobody is thinking about any more.
+    It still names an owner and still describes what ran."""
+    import json
+
+    _, client = admin
+    live = client.post("/v1/systems", json=_payload("still-running")).json()
+    gone = client.post("/v1/systems", json=_payload(
+        "shut-down", owner_email="former.owner@bank.example")).json()
+    client.post(f"/v1/systems/{gone['id']}/retire")
+
+    bundle = json.loads(client.get("/v1/account/export").content)
+    rows = {r["id"]: r for r in bundle["ai_systems"]}
+    assert set(rows) == {live["id"], gone["id"]}, rows
+    assert rows[gone["id"]]["retired"] is True
+    assert rows[gone["id"]]["owner_email"] == "former.owner@bank.example"
+
+
+def test_the_export_never_leaks_another_tenants_systems(make_org, login):
+    import json
+
+    a, b = make_org(), make_org()
+    ca = login(a["admin_email"], a["admin_password"])
+    cb = login(b["admin_email"], b["admin_password"])
+    ca.post("/v1/systems", json=_payload("mine"))
+    cb.post("/v1/systems", json=_payload("theirs"))
+
+    bundle = json.loads(ca.get("/v1/account/export").content)
+    assert [r["name"] for r in bundle["ai_systems"]] == ["mine"]
+
+
+def test_an_empty_inventory_exports_as_an_empty_list_not_a_missing_key(admin):
+    """An honest empty state. A missing key reads as "we do not hold this",
+    which is a different claim from "you have declared nothing"."""
+    import json
+
+    _, client = admin
+    bundle = json.loads(client.get("/v1/account/export").content)
+    assert bundle["ai_systems"] == []
+
+
+# ───── gate round 3 · one governance action per transition, under a race ────
+
+def test_two_concurrent_retires_record_exactly_one_governance_event(admin, login):
+    """`retire_system` reads the lifecycle, decides from it, then writes — the
+    same check-then-act shape as the name race, but in the AUDIT TRAIL, where a
+    duplicate is worse: a governance trail that cannot be trusted to be a COUNT.
+
+    ⚠ The interleaving is FORCED, not hoped for. `_get_system` is wrapped so the
+    first caller holds the request open after its read; a second retire then
+    arrives inside that window. Without `FOR UPDATE` the second request reads
+    'active', passes the check and writes a second `system.retire`. With it, the
+    second read blocks until the first commits and then sees 'retired'.
+
+    ⚠ Asserted on the COUNT of audit actions, never on the second response's
+    status — that is 200 either way, which is exactly what makes this bug quiet.
+    """
+    import threading
+
+    from app.routers import systems
+
+    org, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+
+    real_get = systems._get_system
+    first_has_read = threading.Event()
+    calls = {"n": 0}
+    lock = threading.Lock()
+
+    def _slow_first(*args, **kwargs):
+        with lock:
+            calls["n"] += 1
+            mine = calls["n"]
+        row = real_get(*args, **kwargs)
+        if mine == 1:
+            first_has_read.set()
+            # hold the transaction open long enough for the second request to
+            # get all the way through its own read
+            threading.Event().wait(1.5)
+        return row
+
+    systems._get_system = _slow_first
+    try:
+        a = login(org["admin_email"], org["admin_password"])
+        b = login(org["admin_email"], org["admin_password"])
+        out = {}
+
+        def go(name, c):
+            if name == "b":
+                first_has_read.wait(5)
+            out[name] = c.post(f"/v1/systems/{created['id']}/retire").status_code
+
+        threads = [threading.Thread(target=go, args=(n, c))
+                   for n, c in (("a", a), ("b", b))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+    finally:
+        systems._get_system = real_get
+
+    assert out == {"a": 200, "b": 200}, out
+    assert client.get(f"/v1/systems/{created['id']}").json()["retired"] is True
+
+    actions = [x["action"] for x in client.get("/v1/account/audit").json()]
+    assert actions.count("system.retire") == 1, (
+        f"a double-clicked retire fabricated {actions.count('system.retire')} "
+        f"governance events: {actions}")
+
+
+def test_the_retire_read_takes_the_row_lock(admin):
+    """The behavioural guard above depends on a real interleaving and could in
+    principle be starved by a slow machine. This asserts the mechanism itself,
+    at the source, so the reason it passes cannot quietly become luck."""
+    import inspect
+
+    from app.routers import systems
+
+    assert "for_update=True" in inspect.getsource(systems.retire_system), (
+        "retire no longer locks the row it decides from")
+    assert "with_for_update()" in inspect.getsource(systems._get_system)
+
+
+def test_an_ordinary_repeat_retire_still_records_nothing_extra(admin):
+    """The lock must not have changed the sequential case."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    for _ in range(3):
+        assert client.post(f"/v1/systems/{created['id']}/retire").status_code == 200
+    actions = [x["action"] for x in client.get("/v1/account/audit").json()]
+    assert actions.count("system.retire") == 1, actions
+
+
+# ───── gate round 3 · the pre-check must not outlaw what the index allows ───
+
+def test_a_retired_row_may_be_renamed_onto_a_live_siblings_name(admin):
+    """`uq_ai_system_org_name_active` excludes retired rows from the uniqueness
+    rule ENTIRELY, so this is permitted by the constraint. The pre-check asked
+    only "is the target name taken by a live row" and refused it — stricter than
+    the index it shadows, which is a rule nobody wrote down."""
+    _, client = admin
+    old = client.post("/v1/systems", json=_payload("shared-name")).json()
+    client.post(f"/v1/systems/{old['id']}/retire")
+    live = client.post("/v1/systems", json=_payload("shared-name")).json()
+
+    other = client.post("/v1/systems", json=_payload("to-be-renamed")).json()
+    client.post(f"/v1/systems/{other['id']}/retire")
+
+    r = client.put(f"/v1/systems/{other['id']}", json={"name": "shared-name"})
+    assert r.status_code == 200, (
+        f"the pre-check refused what the index permits: {r.text}")
+    assert r.json()["name"] == "shared-name"
+    assert r.json()["retired"] is True
+    # and the live row is untouched
+    assert client.get(f"/v1/systems/{live['id']}").json()["name"] == "shared-name"
+
+
+def test_a_live_row_still_cannot_be_renamed_onto_a_live_sibling(admin):
+    """The loosening is only for retired rows. Two live systems sharing a name
+    is still the thing the index forbids."""
+    _, client = admin
+    client.post("/v1/systems", json=_payload("taken"))
+    mover = client.post("/v1/systems", json=_payload("mover")).json()
+    r = client.put(f"/v1/systems/{mover['id']}", json={"name": "taken"})
+    assert r.status_code == 409, r.text
+
+
+def test_the_declared_index_names_match_the_database(admin):
+    """A model index called ix_ai_systems_org_id against a database index called
+    ix_ai_systems_org is harmless at runtime and permanent autogenerate noise.
+    Checked against the live catalog rather than against the model twice."""
+    from sqlalchemy import text as sa_text
+
+    from app.models import AiSystem
+
+    declared = {i.name for i in AiSystem.__table__.indexes}
+    with SessionLocal() as db:
+        actual = {r[0] for r in db.execute(sa_text(
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'ai_systems'"))}
+    assert declared <= actual, f"declared but absent from the database: {declared - actual}"

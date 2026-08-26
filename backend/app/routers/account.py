@@ -29,8 +29,8 @@ from ..auth import require_role, require_step_up_user, require_user, resolve_org
 from ..config import get_settings
 from ..db import get_db
 from ..models import (
-    AccountAction, ApiKey, AuditLog, ChainAnchor, ExportJob, Invoice, Notification,
-    Organization, OrgPolicy, User,
+    AccountAction, AiSystem, ApiKey, AuditLog, ChainAnchor, ExportJob, Invoice,
+    Notification, Organization, OrgPolicy, User,
 )
 from .logs import limiter          # the app's single Limiter instance
 
@@ -417,14 +417,28 @@ def account_export(
 ):
     """Self-serve, machine-readable export of everything this workspace holds —
     org profile, users, policy, keys (metadata only, never the secret), invoices,
-    anchors, and the full hash-chain ledger. Admin only. Content-blind: the ledger
-    carries only hashes + verdicts, never prompt/response text."""
+    anchors, declared AI systems, and the full hash-chain ledger. Admin only.
+    Content-blind: the ledger carries only hashes + verdicts, never prompt or
+    response text.
+
+    ⚠ THE FIRST LINE IS A COMPLETENESS CLAIM, AND IT HAS TO STAY TRUE.
+    `ai_systems` was missing for one release of R1 and the claim was false while
+    it was. That table holds `owner_email` — PERSONAL DATA about someone who
+    need not be a `User` row at all, so the users section does not cover them —
+    which is exactly what a subject-access request is about. Anything added to
+    this workspace's schema belongs here, or this docstring has to stop saying
+    "everything".
+    """
     org = db.get(Organization, admin.org_id)
     users = db.execute(select(User).where(User.org_id == admin.org_id)).scalars().all()
     policy = db.get(OrgPolicy, admin.org_id)
     keys = db.execute(select(ApiKey).where(ApiKey.org_id == admin.org_id)).scalars().all()
     invoices = db.execute(select(Invoice).where(Invoice.org_id == admin.org_id)).scalars().all()
     anchors = db.execute(select(ChainAnchor).where(ChainAnchor.org_id == admin.org_id)).scalars().all()
+    systems = db.execute(
+        select(AiSystem).where(AiSystem.org_id == admin.org_id)
+        .order_by(AiSystem.created_at.asc())
+    ).scalars().all()
     logs = db.execute(
         select(AuditLog).where(AuditLog.org_id == admin.org_id)
         .order_by(AuditLog.seq.asc())
@@ -459,6 +473,21 @@ def account_export(
         "anchors": [{"root_hash": a.root_hash, "last_seq": a.last_seq, "chain": a.chain,
                      "tx_hash": a.tx_hash, "status": a.status,
                      "anchored_at": _iso(a.anchored_at)} for a in anchors],
+        # The WHOLE declaration, retired rows included. A subject-access request
+        # over this workspace should see what was declared about whom, and a
+        # retired system is precisely the one someone has stopped thinking about
+        # — it still names an owner and still describes what ran. Every field is
+        # customer-declared: nothing here is Foxy's opinion, and nothing here can
+        # hold prompt or response content.
+        "ai_systems": [{"id": str(s.id), "name": s.name, "owner_email": s.owner_email,
+                        "purpose": s.purpose, "provider": s.provider,
+                        "model_name": s.model_name, "environment": s.environment,
+                        "data_classification": s.data_classification,
+                        "risk_tier": s.risk_tier,
+                        "lifecycle_status": s.lifecycle_status,
+                        "retired": s.lifecycle_status == "retired",
+                        "created_at": _iso(s.created_at),
+                        "updated_at": _iso(s.updated_at)} for s in systems],
         "ledger": [{"seq": r.seq, "prompt_hash": r.prompt_hash, "response_hash": r.response_hash,
                     "policy_tag": r.policy_tag, "agent": r.agent, "chain_hash": r.chain_hash,
                     "grading_status": r.grading_status, "gemini_verdict": r.gemini_verdict,
