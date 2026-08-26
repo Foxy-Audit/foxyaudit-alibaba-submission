@@ -23,14 +23,35 @@ key list is ``require_role('admin')``.
 
 ⚠ THERE IS NO DELETE ENDPOINT, AND NONE MAY BE ADDED
 ----------------------------------------------------
-Retiring is the only way to take a system out of service. ``POST
-/v1/systems/{id}/retire`` sets ``lifecycle_status='retired'``; the row stays,
+Retiring is the only way to take a system out of service, and ``PUT`` cannot do
+it: setting ``lifecycle_status='retired'`` through the general update is a 409
+naming the retire endpoint, so one governance action is never filed as another.
+``POST /v1/systems/{id}/retire`` sets it; the row stays,
 still lists, still gets, and (from R2) keeps every event ever attributed to it
 while accepting no new ones. A DELETE would orphan chained evidence — the hash
 chain has already committed to that id and cannot be edited to forget it, so the
 row would be gone while the evidence pointing at it remained. If a future phase
 wants "remove it from my dashboard", that is a filter on lifecycle_status, not a
 DELETE.
+
+⚠ RETIREMENT IS TERMINAL — THERE IS NO UN-RETIRE, DELIBERATELY
+--------------------------------------------------------------
+Nothing returns a retired system to service: not ``PUT`` (409 on both edges of
+'retired'), and there is no un-retire endpoint. A customer who runs the thing
+again declares a NEW system.
+
+That is a decision about what evidence means, not a missing feature. From R2 a
+retired system accepts no new events, so reviving an id would make it name two
+operating periods separated by a gap the registry cannot describe — and the
+question this table exists to answer ("what was the mortgage bot's risk tier
+when it produced this event") would have two answers with nothing to choose
+between them. A fresh row is the truthful statement that this is a new
+deployment, and it leaves old evidence attributed to the declaration actually in
+force when it was recorded.
+
+The cost is real and accepted: retiring by mistake cannot be undone and costs a
+re-declaration under a new id. That is the right way round for an audit surface
+— the recoverable error is the one that leaves a record.
 
 ⚠ DECLARED, NEVER INFERRED
 --------------------------
@@ -52,6 +73,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import account_audit
@@ -74,10 +96,17 @@ LifecycleStatus = Literal["draft", "active", "retired"]
 
 RETIRED = "retired"
 
+# The fields whose OLD value an update must record. "Someone lowered the risk
+# tier on the mortgage bot — from what, and when" is the question this registry
+# exists to answer, and a trail listing only the field NAMES cannot answer it.
+# Deliberately NOT every field: owner_email churn is noise, and this is an audit
+# surface rather than a diff log.
+_GOVERNANCE_FIELDS = ("risk_tier", "data_classification", "lifecycle_status")
+
 
 class AiSystemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    owner_email: str | None = Field(default=None, max_length=320)
+    owner_email: str | None = Field(default=None, min_length=1, max_length=320)
     purpose: str = Field(min_length=1, max_length=256)
     provider: Provider = "other"
     model_name: str | None = Field(
@@ -87,15 +116,26 @@ class AiSystemCreate(BaseModel):
     risk_tier: RiskTier = "medium"
     lifecycle_status: LifecycleStatus = "active"
 
-    @field_validator("name", "purpose", "owner_email", "model_name")
+    @field_validator("name", "purpose", "owner_email", "model_name", mode="before")
     @classmethod
-    def _strip_declared_metadata(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        if not value:
-            raise ValueError("value must not be blank")
-        return value
+    def _strip_declared_metadata(cls, value):
+        """Trim BEFORE `min_length`/`max_length`/`pattern` run — mode="before" is
+        the whole point of this validator.
+
+        An "after" validator runs once the constraints have already passed, so
+        `model_name` (the only trimmed field carrying a `pattern`) rejected
+        `" gpt-4o "` with a raw regex message while `name` and `purpose` were
+        silently trimmed: the same input, two behaviours, decided by whether the
+        field happened to have a pattern. Trimming first makes every trimmed
+        field behave the same way — surrounding whitespace is never significant
+        in a declaration, so it is removed before anything judges the value.
+
+        Blankness is then caught by `min_length=1` on each field rather than by
+        a raised ValueError here, which is why `owner_email` carries one.
+        Non-strings pass through untouched so the type error stays the type
+        error.
+        """
+        return value.strip() if isinstance(value, str) else value
 
 
 class AiSystemUpdate(BaseModel):
@@ -106,7 +146,7 @@ class AiSystemUpdate(BaseModel):
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_email: str | None = Field(default=None, max_length=320)
+    owner_email: str | None = Field(default=None, min_length=1, max_length=320)
     purpose: str | None = Field(default=None, min_length=1, max_length=256)
     provider: Provider | None = None
     model_name: str | None = Field(
@@ -116,15 +156,11 @@ class AiSystemUpdate(BaseModel):
     risk_tier: RiskTier | None = None
     lifecycle_status: LifecycleStatus | None = None
 
-    @field_validator("name", "purpose", "owner_email", "model_name")
+    @field_validator("name", "purpose", "owner_email", "model_name", mode="before")
     @classmethod
-    def _strip_declared_metadata(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        if not value:
-            raise ValueError("value must not be blank")
-        return value
+    def _strip_declared_metadata(cls, value):
+        """Trim before the constraints — see AiSystemCreate's copy for why."""
+        return value.strip() if isinstance(value, str) else value
 
 
 class AiSystemItem(BaseModel):
@@ -178,8 +214,37 @@ def _ensure_unique_name(db: Session, org_id, name: str,
     if exclude_id is not None:
         stmt = stmt.where(AiSystem.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409,
-                            detail="An AI system with that name already exists")
+        raise _duplicate_name()
+
+
+def _duplicate_name() -> HTTPException:
+    return HTTPException(status_code=409,
+                         detail="An AI system with that name already exists")
+
+
+def _flush_or_conflict(db: Session) -> None:
+    """Flush, turning a lost race for a name into the 409 the pre-check gives.
+
+    `_ensure_unique_name` is a check-then-act with a real window: two admins
+    submitting the same name — or one double-clicked form — both read "no such
+    name" and both proceed, and the second one's INSERT then hits
+    `uq_ai_system_org_name` at flush time. Without this the customer gets a 500
+    for a condition the API already has a correct answer for.
+
+    The pre-check stays because it is the common path and gives the same 409
+    without burning a transaction. The CONSTRAINT is the authority; only it is
+    free of a window.
+
+    Re-raised if it is any other IntegrityError — a CHECK violation is a bug
+    here, not a conflict, and must not be reported as one.
+    """
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        if "uq_ai_system_org_name" in str(exc.orig):
+            raise _duplicate_name() from exc
+        raise
 
 
 @router.get("/v1/systems", response_model=list[AiSystemItem])
@@ -236,7 +301,7 @@ def create_system(
         created_by=admin.id,
     )
     db.add(system)
-    db.flush()
+    _flush_or_conflict(db)
     account_audit.record_account_action(
         db, org_id=admin.org_id, actor_email=admin.email, action="system.create",
         target=system.name,
@@ -260,6 +325,10 @@ def update_system(
 
     This rewrites the DECLARATION, never the ledger: evidence already attributed
     to this system keeps pointing at the same id and the same chain hashes.
+
+    ⚠ It CANNOT retire, and it cannot un-retire. `lifecycle_status` may only move
+    between 'draft' and 'active' here; both edges of 'retired' are 409s. See
+    `retire_system` for why retirement is terminal.
     """
     system = _get_system(db, admin.org_id, system_id)
     values = body.model_dump(exclude_unset=True)
@@ -276,15 +345,40 @@ def update_system(
     if any(values.get(field) is None for field in required_fields if field in values):
         raise HTTPException(status_code=422,
                             detail="required system fields cannot be null")
+    # ⚠ NEITHER EDGE OF 'retired' IS A GENERAL UPDATE.
+    #
+    # Retiring through here would record `system.update` for what is a
+    # `system.retire` — one governance action filed as another. Un-retiring
+    # through here would be worse: a system that stopped accepting evidence
+    # would start again with no endpoint, no governance event, and nothing in
+    # the trail saying it happened.
+    if "lifecycle_status" in values:
+        if values["lifecycle_status"] == RETIRED:
+            raise HTTPException(
+                status_code=409,
+                detail="Retire a system with POST /v1/systems/{id}/retire — "
+                       "retirement is a governance action and is recorded as its own")
+        if system.lifecycle_status == RETIRED:
+            raise HTTPException(
+                status_code=409,
+                detail="A retired system cannot be returned to service. Declare a "
+                       "new system: its evidence must not share an id with the "
+                       "period before retirement")
     if "name" in values:
         _ensure_unique_name(db, admin.org_id, values["name"], exclude_id=system.id)
     if "owner_email" in values:
         values["owner_email"] = values["owner_email"].lower()
+    # Captured BEFORE the writes, and only for the fields that actually change —
+    # an entry saying `risk_tier: high -> high` is noise in an audit trail.
+    previous = {field: getattr(system, field) for field in _GOVERNANCE_FIELDS
+                if field in values and getattr(system, field) != values[field]}
     for field, value in values.items():
         setattr(system, field, value)
+    _flush_or_conflict(db)
     account_audit.record_account_action(
         db, org_id=admin.org_id, actor_email=admin.email, action="system.update",
-        target=system.name, detail={"system_id": str(system.id), "fields": sorted(values)},
+        target=system.name, detail={"system_id": str(system.id), "fields": sorted(values),
+                                    "previous": previous},
     )
     db.commit()
     db.refresh(system)
@@ -297,12 +391,17 @@ def retire_system(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
-    """Retire a system. Dashboard admins only. THE ONLY WAY TO REMOVE ONE.
+    """Retire a system. Dashboard admins only. THE ONLY WAY TO REMOVE ONE,
+    AND IT IS ONE-WAY.
 
     The row stays and keeps listing; from R2 it will accept no new events while
     keeping every historical one. Idempotent — retiring an already-retired
     system returns it unchanged and records no second audit action, so a
     double-clicked button does not fabricate a second governance event.
+
+    ⚠ There is no inverse. ``PUT`` 409s on both edges of 'retired' and no
+    un-retire endpoint exists — see the module docstring for why reviving an id
+    would make its evidence ambiguous.
     """
     system = _get_system(db, admin.org_id, system_id)
     if system.lifecycle_status != RETIRED:

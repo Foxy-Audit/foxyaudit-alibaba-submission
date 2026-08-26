@@ -470,3 +470,275 @@ def test_the_check_constraints_hold_independently_of_the_api(make_org):
     finally:
         db.rollback()
         db.close()
+
+
+# ─────────── gate round 1 · retirement is terminal, and PUT cannot do it ─────
+#
+# Driven through the ENDPOINTS, not asserted against the schema: a model-level
+# check ("lifecycle_status is absent from AiSystemUpdate") would pass whichever
+# way the refusal is implemented, and would still pass if the field came back
+# with a handler that quietly allowed it.
+
+def test_put_cannot_retire_a_system(admin):
+    """Retiring through the general update would file `system.update` for what is
+    a `system.retire` — one governance action recorded as another."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+
+    r = client.put(f"/v1/systems/{created['id']}", json={"lifecycle_status": "retired"})
+    assert r.status_code == 409, r.text
+    assert "/retire" in r.json()["detail"], r.json()
+
+    after = client.get(f"/v1/systems/{created['id']}").json()
+    assert after["retired"] is False, "PUT retired it anyway"
+    assert after["lifecycle_status"] == "active"
+    actions = [a["action"] for a in client.get("/v1/account/audit").json()]
+    assert "system.retire" not in actions
+    assert actions.count("system.update") == 0, (
+        f"a refused update was still recorded: {actions}")
+
+
+def test_put_cannot_revive_a_retired_system(admin):
+    """The worse half: a system that stopped accepting evidence must not start
+    again with no endpoint, no governance event and nothing in the trail."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    assert client.post(f"/v1/systems/{created['id']}/retire").status_code == 200
+
+    for revive in ("active", "draft"):
+        r = client.put(f"/v1/systems/{created['id']}",
+                       json={"lifecycle_status": revive})
+        assert r.status_code == 409, f"{revive}: {r.text}"
+        assert "cannot be returned to service" in r.json()["detail"]
+        assert client.get(f"/v1/systems/{created['id']}").json()["retired"] is True
+
+    actions = [a["action"] for a in client.get("/v1/account/audit").json()]
+    assert actions.count("system.retire") == 1, actions
+    assert "system.update" not in actions, "a revival was recorded as an update"
+
+
+def test_there_is_no_un_retire_endpoint(admin):
+    """Retirement is terminal by decision. If a future phase adds a way back it
+    must be its own endpoint with its own governance event — and this guard is
+    what makes that a deliberate act rather than a side effect."""
+    import inspect
+
+    from app.routers import systems
+
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    client.post(f"/v1/systems/{created['id']}/retire")
+
+    for path in ("unretire", "un-retire", "reactivate", "restore"):
+        assert client.post(f"/v1/systems/{created['id']}/{path}").status_code == 404
+
+    src = inspect.getsource(systems)
+    assert "RETIREMENT IS TERMINAL" in systems.__doc__, (
+        "the docstring recording the decision is gone")
+    for verb in ("unretire", "reactivate"):
+        assert f'/{verb}"' not in src, f"an un-retire endpoint appeared: {verb}"
+
+
+def test_a_retired_systems_declaration_can_still_be_corrected(admin):
+    """Terminal lifecycle, not a frozen row. The owner of a retired system can
+    still change jobs, and the inventory should be able to say so."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    client.post(f"/v1/systems/{created['id']}/retire")
+
+    r = client.put(f"/v1/systems/{created['id']}",
+                   json={"owner_email": "new.owner@bank.example"})
+    assert r.status_code == 200, r.text
+    assert r.json()["owner_email"] == "new.owner@bank.example"
+    assert r.json()["retired"] is True, "correcting a field revived it"
+
+
+def test_put_may_still_move_a_draft_into_service(admin):
+    """The transition PUT keeps. Refusing every lifecycle_status change would
+    strand 'draft' with no way out."""
+    _, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(lifecycle_status="draft")).json()
+    assert created["lifecycle_status"] == "draft"
+    r = client.put(f"/v1/systems/{created['id']}", json={"lifecycle_status": "active"})
+    assert r.status_code == 200, r.text
+    assert r.json()["lifecycle_status"] == "active"
+    assert r.json()["retired"] is False
+
+
+# ──────── gate round 1 · a lost race for a name is a 409, never a 500 ────────
+
+def test_losing_the_race_for_a_name_is_a_409_not_a_500(admin, monkeypatch):
+    """`_ensure_unique_name` is check-then-act with a real window: two admins
+    submitting the same name, or one double-clicked form, both read "no such
+    name" and the second INSERT hits the constraint at flush time.
+
+    The window is driven directly — neutering the pre-check is what puts the
+    request in the state a lost race leaves it in. Without the handler this is a
+    500 for a condition the API already answers correctly.
+    """
+    from app.routers import systems
+
+    _, client = admin
+    assert client.post("/v1/systems", json=_payload("raced-bot")).status_code == 201
+
+    monkeypatch.setattr(systems, "_ensure_unique_name",
+                        lambda *a, **k: None)          # the race, deterministically
+    r = client.post("/v1/systems", json=_payload("raced-bot"))
+    assert r.status_code == 409, f"a lost race returned {r.status_code}: {r.text}"
+    assert "already exists" in r.json()["detail"]
+    assert len(client.get("/v1/systems").json()) == 1
+
+
+def test_losing_the_race_on_a_rename_is_a_409_too(admin, monkeypatch):
+    from app.routers import systems
+
+    _, client = admin
+    client.post("/v1/systems", json=_payload("bot-a"))
+    other = client.post("/v1/systems", json=_payload("bot-b")).json()
+
+    monkeypatch.setattr(systems, "_ensure_unique_name", lambda *a, **k: None)
+    r = client.put(f"/v1/systems/{other['id']}", json={"name": "bot-a"})
+    assert r.status_code == 409, f"a lost race returned {r.status_code}: {r.text}"
+    assert client.get(f"/v1/systems/{other['id']}").json()["name"] == "bot-b"
+
+
+def test_a_check_violation_is_not_reported_as_a_name_conflict():
+    """The conflict handler must not swallow every IntegrityError. A CHECK
+    violation is a bug here, not a duplicate name, and answering 409 would send a
+    developer hunting a name that is not the problem.
+
+    Driven at `_flush_or_conflict` directly with a session whose flush raises,
+    because that IS the discrimination under test — patching the function itself
+    (the first version of this guard) proved only that a raise propagates.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError
+
+    from app.routers import systems
+
+    class _Session:
+        def __init__(self, message):
+            self._message = message
+            self.rolled_back = False
+
+        def flush(self):
+            raise IntegrityError("stmt", {}, Exception(self._message))
+
+        def rollback(self):
+            self.rolled_back = True
+
+    # the duplicate name -> the 409 the pre-check would have given
+    dup = _Session('duplicate key value violates unique constraint '
+                   '"uq_ai_system_org_name"')
+    with pytest.raises(HTTPException) as caught:
+        systems._flush_or_conflict(dup)
+    assert caught.value.status_code == 409
+    assert dup.rolled_back, "the failed transaction was left open"
+
+    # anything else -> straight back out, uncaught
+    other = _Session('new row violates check constraint "ck_ai_system_risk_tier"')
+    with pytest.raises(IntegrityError):
+        systems._flush_or_conflict(other)
+
+    # and the clean path stays quiet
+    class _Ok:
+        def flush(self):
+            self.flushed = True
+
+    ok = _Ok()
+    systems._flush_or_conflict(ok)
+    assert ok.flushed
+
+
+# ──────── gate round 1 · the audit records WHAT IT WAS, not just which ───────
+
+def test_an_update_records_the_previous_governance_values(admin):
+    """"Someone lowered the risk tier on the mortgage bot — from what?" is the
+    question this registry exists to answer, and field names alone cannot."""
+    _, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(risk_tier="critical",
+                                        data_classification="regulated")).json()
+    r = client.put(f"/v1/systems/{created['id']}",
+                   json={"risk_tier": "low", "data_classification": "public"})
+    assert r.status_code == 200, r.text
+
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.update")
+    assert entry["detail"]["previous"] == {
+        "risk_tier": "critical", "data_classification": "regulated"}, entry["detail"]
+    assert sorted(entry["detail"]["fields"]) == ["data_classification", "risk_tier"]
+    assert entry["detail"]["system_id"] == created["id"]
+
+
+def test_the_audit_does_not_keep_a_diff_of_every_field(admin):
+    """An audit surface, not a diff log. owner_email churn is noise, and a trail
+    that records everything is one nobody reads."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    client.put(f"/v1/systems/{created['id']}",
+               json={"owner_email": "someone.else@bank.example",
+                     "purpose": "A different purpose entirely",
+                     "risk_tier": "low"})
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.update")
+    assert set(entry["detail"]["previous"]) == {"risk_tier"}, entry["detail"]
+
+
+def test_an_unchanged_governance_field_is_not_recorded_as_a_change(admin):
+    """`risk_tier: high -> high` is noise. Only real transitions belong here."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload(risk_tier="high")).json()
+    client.put(f"/v1/systems/{created['id']}",
+               json={"risk_tier": "high", "purpose": "Reworded, same risk"})
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.update")
+    assert entry["detail"]["previous"] == {}, entry["detail"]
+
+
+def test_moving_a_draft_into_service_records_what_it_was(admin):
+    """lifecycle_status is a governance field, so the one transition PUT still
+    performs carries its before-value like the others."""
+    _, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(lifecycle_status="draft")).json()
+    client.put(f"/v1/systems/{created['id']}", json={"lifecycle_status": "active"})
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.update")
+    assert entry["detail"]["previous"] == {"lifecycle_status": "draft"}, entry["detail"]
+
+
+# ──── gate round 1 · trimming is one behaviour, not one per field ────────────
+
+@pytest.mark.parametrize("field,sent,stored", [
+    ("name", "  padded-bot  ", "padded-bot"),
+    ("purpose", "  Answers questions  ", "Answers questions"),
+    ("model_name", "  gpt-4o  ", "gpt-4o"),
+    ("owner_email", "  Owner@Bank.Example  ", "owner@bank.example"),
+])
+def test_surrounding_whitespace_is_trimmed_on_every_trimmed_field(admin, field,
+                                                                  sent, stored):
+    """`model_name` carries a `pattern` and the other three do not. With an
+    "after" validator that alone decided the answer: " gpt-4o " 422'd on the raw
+    regex while " padded-bot " was silently accepted. Same input, two
+    behaviours."""
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload(**{field: sent}))
+    assert r.status_code == 201, f"{field}: {r.text}"
+    assert r.json()[field] == stored
+
+
+@pytest.mark.parametrize("field", ["name", "purpose", "owner_email", "model_name"])
+def test_a_whitespace_only_value_is_not_a_declaration_on_any_field(admin, field):
+    _, client = admin
+    r = client.post("/v1/systems", json=_payload(**{field: "   "}))
+    assert r.status_code == 422, f"{field} accepted whitespace: {r.text}"
+
+
+def test_trimming_applies_to_an_update_too(admin):
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    r = client.put(f"/v1/systems/{created['id']}", json={"model_name": "  gpt-5.6  "})
+    assert r.status_code == 200, r.text
+    assert r.json()["model_name"] == "gpt-5.6"
