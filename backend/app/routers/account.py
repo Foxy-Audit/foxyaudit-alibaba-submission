@@ -417,7 +417,8 @@ def account_export(
 ):
     """Self-serve, machine-readable export of everything this workspace holds —
     org profile, users, policy, keys (metadata only, never the secret), invoices,
-    anchors, declared AI systems, and the full hash-chain ledger. Admin only.
+    anchors, declared AI systems, the account-action trail, and the full
+    hash-chain ledger. Admin only.
     Content-blind: the ledger carries only hashes + verdicts, never prompt or
     response text.
 
@@ -428,6 +429,17 @@ def account_export(
     which is exactly what a subject-access request is about. Anything added to
     this workspace's schema belongs here, or this docstring has to stop saying
     "everything".
+
+    That rule then caught `account_actions`, which had been absent since this
+    endpoint was written. It is the workspace's own record of who changed what,
+    it carries `actor_email`, and from R1 it also carries the previous values of
+    governance fields — a subject-access request is precisely the thing it
+    answers. Its `detail` is exported whole because every writer of it records
+    THAT a secret changed and never the secret (`routers/policies.py` says so at
+    the one call site that touches keys); if that ever stops being true, this is
+    the second place it leaks.
+
+    ⚠ NOT BOUNDED, deliberately — see the query below.
     """
     org = db.get(Organization, admin.org_id)
     users = db.execute(select(User).where(User.org_id == admin.org_id)).scalars().all()
@@ -438,6 +450,19 @@ def account_export(
     systems = db.execute(
         select(AiSystem).where(AiSystem.org_id == admin.org_id)
         .order_by(AiSystem.created_at.asc())
+    ).scalars().all()
+    # ⚠ No LIMIT, and that is a decision. `GET /v1/account/audit` caps at 500
+    # because it renders a page; this is an export, and a truncated audit trail
+    # inside a completeness claim is the defect this docstring exists to
+    # prevent. It is also not the size risk here: this table gains a row per
+    # account mutation while `audit_logs` below gains one per interaction and is
+    # already exported unbounded, so it is smaller by orders of magnitude on any
+    # workspace where either is large. The whole bundle being built in memory is
+    # a pre-existing property of this endpoint that account_actions does not
+    # meaningfully change.
+    actions = db.execute(
+        select(AccountAction).where(AccountAction.org_id == admin.org_id)
+        .order_by(AccountAction.created_at.asc())
     ).scalars().all()
     logs = db.execute(
         select(AuditLog).where(AuditLog.org_id == admin.org_id)
@@ -488,6 +513,12 @@ def account_export(
                         "retired": s.lifecycle_status == "retired",
                         "created_at": _iso(s.created_at),
                         "updated_at": _iso(s.updated_at)} for s in systems],
+        # Who changed what, and — from R1 — what the governance values were
+        # before. `detail` is customer-facing by construction: its writers record
+        # that a secret changed, never the secret.
+        "account_actions": [{"actor_email": a.actor_email, "action": a.action,
+                             "target": a.target, "detail": a.detail,
+                             "created_at": _iso(a.created_at)} for a in actions],
         "ledger": [{"seq": r.seq, "prompt_hash": r.prompt_hash, "response_hash": r.response_hash,
                     "policy_tag": r.policy_tag, "agent": r.agent, "chain_hash": r.chain_hash,
                     "grading_status": r.grading_status, "gemini_verdict": r.gemini_verdict,

@@ -271,24 +271,60 @@ def _project(system: AiSystem, machine: bool):
     return _summarize(system) if machine else _serialize(system)
 
 
-def _get_system(db: Session, org_id, system_id: uuid.UUID,
-                for_update: bool = False) -> AiSystem:
-    """Fetch one system, scoped to the org. The explicit org_id filter is the
-    load-bearing isolation; the RLS policy (0068) is the second layer.
+# ─────────────────────── fetching one system: TWO helpers ───────────────────
+#
+# ⚠ THERE IS DELIBERATELY NO SINGLE `_get_system` WITH A `for_update` FLAG.
+#
+# There was, and the flag defaulted to False, so taking the lock was something a
+# call site had to REMEMBER. `retire_system` remembered after R1d; `update_system`
+# did not, and its two retired-guards then decided from a stale read — a PUT
+# racing a retire passed both guards and overwrote the committed retirement,
+# returning a system to service with only a `system.update` in the trail. That is
+# exactly the outcome terminal retirement exists to prevent, reached through the
+# back door, and it recurred one caller over because the safe thing was opt-in.
+#
+# So the flag is gone and the choice is made by WHICH FUNCTION YOU CALL. A new
+# caller cannot inherit the unsafe default by writing less; there is no default.
+# `test_no_mutating_handler_reads_without_the_lock` walks this module's AST and
+# fails if a POST/PUT/PATCH/DELETE handler reaches for the read-only one.
 
-    `for_update` takes a row lock, and a caller that decides something FROM this
-    row and then writes based on that decision needs it — see `retire_system`.
-    Reads do not, and taking it on a list would serialise the dashboard.
-    """
-    stmt = select(AiSystem).where(AiSystem.id == system_id, AiSystem.org_id == org_id)
-    if for_update:
-        stmt = stmt.with_for_update()
-    system = db.execute(stmt).scalar_one_or_none()
+def _system_query(org_id, system_id: uuid.UUID):
+    """The org-scoped lookup both helpers share. The explicit org_id filter is
+    the load-bearing isolation; the RLS policy (0068) is the second layer."""
+    return select(AiSystem).where(AiSystem.id == system_id, AiSystem.org_id == org_id)
+
+
+def _resolved(system: AiSystem | None) -> AiSystem:
     if system is None:
         # 404, not 403: a foreign tenant's UUID must not be distinguishable from
         # a missing one, or this is an existence oracle over other customers.
         raise HTTPException(status_code=404, detail="AI system not found")
     return system
+
+
+def _load_system(db: Session, org_id, system_id: uuid.UUID) -> AiSystem:
+    """Read one system. ⚠ READ-ONLY — never decide-and-write from this.
+
+    Safe for a handler that serialises the row and returns it. NOT safe for one
+    that reads `lifecycle_status`, branches on it and then writes: between the
+    read and the write another transaction can commit, and the branch was taken
+    against a row that no longer exists in that state. Use `_lock_system`.
+    """
+    return _resolved(db.execute(_system_query(org_id, system_id)).scalar_one_or_none())
+
+
+def _lock_system(db: Session, org_id, system_id: uuid.UUID) -> AiSystem:
+    """Read one system under `SELECT … FOR UPDATE`, for a handler that decides
+    from the row and then writes.
+
+    A concurrent writer's transaction blocks here and this one re-reads the
+    committed row afterwards, so the branch is taken against current state.
+    `routers/logs.py` locks `org_sequences` for the same reason. Not used by the
+    list or the single read: locking those would serialise the dashboard for no
+    benefit, because they decide nothing.
+    """
+    return _resolved(
+        db.execute(_system_query(org_id, system_id).with_for_update()).scalar_one_or_none())
 
 
 def _ensure_unique_name(db: Session, org_id, name: str,
@@ -392,7 +428,7 @@ def get_system(
     """One declared system, retired or not. Members and the SDK may both read —
     and a machine credential gets the narrow projection, as on the list."""
     org, machine = reader
-    return _project(_get_system(db, org.id, system_id), machine)
+    return _project(_load_system(db, org.id, system_id), machine)
 
 
 @router.post("/v1/systems", response_model=AiSystemItem, status_code=201)
@@ -449,8 +485,13 @@ def update_system(
     ⚠ It CANNOT retire, and it cannot un-retire. `lifecycle_status` may only move
     between 'draft' and 'active' here; both edges of 'retired' are 409s. See
     `retire_system` for why retirement is terminal.
+
+    ⚠ LOCKED, and the retired-guards below are why. They decide from
+    `lifecycle_status`, so on an unlocked read a PUT racing a concurrent retire
+    passes both and its UPDATE overwrites the committed retirement — silently
+    returning the system to service with only a `system.update` recorded.
     """
-    system = _get_system(db, admin.org_id, system_id)
+    system = _lock_system(db, admin.org_id, system_id)
     values = body.model_dump(exclude_unset=True)
     if not values:
         raise HTTPException(status_code=422,
@@ -525,7 +566,7 @@ def retire_system(
     un-retire endpoint exists — see the module docstring for why reviving an id
     would make its evidence ambiguous.
 
-    ⚠ THE ROW IS LOCKED, AND THAT IS WHAT MAKES "IDEMPOTENT" TRUE.
+    ⚠ THE ROW IS LOCKED (`_lock_system`), AND THAT IS WHAT MAKES "IDEMPOTENT" TRUE.
     This reads the lifecycle, decides from it, and writes — check-then-act, the
     same shape as the name race. Two concurrent retires (a double-clicked
     button) both read 'active', both pass the check and both write a
@@ -536,7 +577,7 @@ def retire_system(
     finds 'retired' and writes nothing. `routers/logs.py` locks `org_sequences`
     for the same reason.
     """
-    system = _get_system(db, admin.org_id, system_id, for_update=True)
+    system = _lock_system(db, admin.org_id, system_id)
     if system.lifecycle_status != RETIRED:
         system.lifecycle_status = RETIRED
         account_audit.record_account_action(

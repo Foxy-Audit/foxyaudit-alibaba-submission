@@ -399,7 +399,7 @@ def test_the_router_filters_by_org_itself_and_does_not_lean_on_rls(admin):
 
     from app.routers import systems
 
-    assert "AiSystem.org_id == org_id" in inspect.getsource(systems._get_system)
+    assert "AiSystem.org_id == org_id" in inspect.getsource(systems._system_query)
     assert "AiSystem.org_id == org.id" in inspect.getsource(systems.list_systems)
     assert "AiSystem.org_id == org_id" in inspect.getsource(systems._ensure_unique_name)
 
@@ -1076,7 +1076,7 @@ def test_two_concurrent_retires_record_exactly_one_governance_event(admin, login
     org, client = admin
     created = client.post("/v1/systems", json=_payload()).json()
 
-    real_get = systems._get_system
+    real_get = systems._lock_system
     first_has_read = threading.Event()
     calls = {"n": 0}
     lock = threading.Lock()
@@ -1093,7 +1093,7 @@ def test_two_concurrent_retires_record_exactly_one_governance_event(admin, login
             threading.Event().wait(1.5)
         return row
 
-    systems._get_system = _slow_first
+    systems._lock_system = _slow_first
     try:
         a = login(org["admin_email"], org["admin_password"])
         b = login(org["admin_email"], org["admin_password"])
@@ -1111,7 +1111,7 @@ def test_two_concurrent_retires_record_exactly_one_governance_event(admin, login
         for t in threads:
             t.join(30)
     finally:
-        systems._get_system = real_get
+        systems._lock_system = real_get
 
     assert out == {"a": 200, "b": 200}, out
     assert client.get(f"/v1/systems/{created['id']}").json()["retired"] is True
@@ -1130,9 +1130,9 @@ def test_the_retire_read_takes_the_row_lock(admin):
 
     from app.routers import systems
 
-    assert "for_update=True" in inspect.getsource(systems.retire_system), (
+    assert "_lock_system" in inspect.getsource(systems.retire_system), (
         "retire no longer locks the row it decides from")
-    assert "with_for_update()" in inspect.getsource(systems._get_system)
+    assert "with_for_update()" in inspect.getsource(systems._lock_system)
 
 
 def test_an_ordinary_repeat_retire_still_records_nothing_extra(admin):
@@ -1192,3 +1192,300 @@ def test_the_declared_index_names_match_the_database(admin):
         actual = {r[0] for r in db.execute(sa_text(
             "SELECT indexname FROM pg_indexes WHERE tablename = 'ai_systems'"))}
     assert declared <= actual, f"declared but absent from the database: {declared - actual}"
+
+
+# ───── gate round 4 · the lock rule is enforced, not remembered ─────────────
+
+def test_a_put_cannot_resurrect_a_system_by_racing_a_retire(admin, login):
+    """R1b made retirement terminal; R1d locked `retire_system`. `update_system`
+    was left unlocked, so its two retired-guards decided from a STALE read: a PUT
+    carrying `lifecycle_status` that races a concurrent retire passed both guards
+    and its UPDATE overwrote the committed retirement — the system silently back
+    in service with only a `system.update` in the trail.
+
+    ⚠ The interleaving is FORCED: the PUT holds its transaction open after
+    reading, and the retire is released inside that window. Asserted on the final
+    `lifecycle_status` AND on the audit actions, never on either response's
+    status — both are 200 in the broken case, which is what makes this silent.
+    """
+    import threading
+
+    from app.routers import systems
+
+    org, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(lifecycle_status="draft")).json()
+
+    # ⚠ BOTH helpers are wrapped, and that is not belt-and-braces.
+    #
+    # The first version wrapped only `_lock_system`. Removing the lock from
+    # `update_system` makes it call `_load_system` instead — so the wrapper never
+    # fired, the interleaving never happened, and this guard stayed GREEN under
+    # the exact mutation it exists to catch. A harness keyed on the thing the
+    # mutation removes proves nothing. Wrapping both means the first read is
+    # delayed whichever helper the handler reached for.
+    real = {"load": systems._load_system, "lock": systems._lock_system}
+    put_has_read = threading.Event()
+    seen = {"n": 0}
+    lock = threading.Lock()
+
+    def _wrap(which):
+        def _slow_first(*args, **kwargs):
+            with lock:
+                seen["n"] += 1
+                mine = seen["n"]
+            row = real[which](*args, **kwargs)
+            if mine == 1:
+                put_has_read.set()
+                threading.Event().wait(1.5)      # hold the read open
+            return row
+        return _slow_first
+
+    systems._load_system = _wrap("load")
+    systems._lock_system = _wrap("lock")
+    try:
+        putter = login(org["admin_email"], org["admin_password"])
+        retirer = login(org["admin_email"], org["admin_password"])
+        out = {}
+
+        def do_put():
+            out["put"] = putter.put(f"/v1/systems/{created['id']}",
+                                    json={"lifecycle_status": "active"}).status_code
+
+        def do_retire():
+            put_has_read.wait(5)
+            out["retire"] = retirer.post(
+                f"/v1/systems/{created['id']}/retire").status_code
+
+        threads = [threading.Thread(target=do_put), threading.Thread(target=do_retire)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+    finally:
+        systems._load_system = real["load"]
+        systems._lock_system = real["lock"]
+
+    final = client.get(f"/v1/systems/{created['id']}").json()
+    assert final["lifecycle_status"] == "retired", (
+        f"a racing PUT resurrected a retired system: {final['lifecycle_status']} "
+        f"(responses: {out})")
+    assert final["retired"] is True
+
+    trail = client.get("/v1/account/audit").json()
+    assert [a["action"] for a in trail].count("system.retire") == 1, trail
+
+    # ⚠ The invariant is about the DIRECTION, not about lifecycle changes as
+    # such. Whichever request takes the lock first runs legitimately: if the PUT
+    # wins it performs draft -> active and records that, and the retire then
+    # follows. What must never appear is an update transitioning OUT of
+    # 'retired' — that is un-retirement, and it is what an unlocked read let a
+    # racing PUT do. (The first version of this guard forbade any lifecycle
+    # entry at all and failed on the legal draft -> active.)
+    for u in (a for a in trail if a["action"] == "system.update"):
+        assert u["detail"].get("previous", {}).get("lifecycle_status") != "retired", (
+            f"an update transitioned a system OUT of retirement: {u['detail']}")
+
+
+def test_no_mutating_handler_reads_without_the_lock():
+    """THE RULE, ENFORCED. `_get_system(..., for_update=False)` made the safe
+    thing opt-in, and caller number two forgot. There is now no default to
+    forget — but nothing stopped a future handler reaching for `_load_system`
+    anyway, so this walks the module's AST and fails if one does.
+
+    Checked by decorator, not by name: a handler added later is caught whatever
+    it is called.
+    """
+    import ast
+    import pathlib
+
+    from app.routers import systems
+
+    tree = ast.parse(pathlib.Path(systems.__file__).read_text(encoding="utf-8"))
+    mutating = {"post", "put", "patch", "delete"}
+    offenders, locking = [], []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        verbs = {d.func.attr for d in node.decorator_list
+                 if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)}
+        if not (verbs & mutating):
+            continue
+        called = {c.func.id for c in ast.walk(node)
+                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        if "_load_system" in called:
+            offenders.append(node.name)
+        if "_lock_system" in called:
+            locking.append(node.name)
+
+    assert not offenders, (
+        f"these mutating handlers read the row without locking it: {offenders}")
+    # and the guard itself is live — it must actually be finding handlers
+    assert sorted(locking) == ["retire_system", "update_system"], (
+        f"the AST scan found {locking}; if a mutating handler was added or "
+        f"renamed, decide whether it decides from the row before editing this")
+
+
+def test_the_read_only_helper_really_does_not_lock(admin):
+    """The split is only worth something if the two helpers differ."""
+    import inspect
+
+    from app.routers import systems
+
+    assert "with_for_update" not in inspect.getsource(systems._load_system)
+    assert "with_for_update" in inspect.getsource(systems._lock_system)
+    assert not hasattr(systems, "_get_system"), (
+        "the flag-bearing helper is back; the lock is opt-in again")
+
+
+def test_an_uncontended_put_still_works_normally(admin):
+    """The lock must not have changed the ordinary path."""
+    _, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(lifecycle_status="draft")).json()
+    r = client.put(f"/v1/systems/{created['id']}",
+                   json={"lifecycle_status": "active", "risk_tier": "low"})
+    assert r.status_code == 200, r.text
+    assert r.json()["lifecycle_status"] == "active"
+    assert r.json()["risk_tier"] == "low"
+
+
+# ───── gate round 4 · the completeness rule caught account_actions ──────────
+
+def test_the_export_carries_the_account_action_trail(admin):
+    """The rule written into the export docstring in R1d then caught a table that
+    had been absent since the endpoint was written. It holds `actor_email` and,
+    from R1, the previous values of governance fields."""
+    import json
+
+    org, client = admin
+    created = client.post("/v1/systems", json=_payload(risk_tier="critical")).json()
+    client.put(f"/v1/systems/{created['id']}", json={"risk_tier": "low"})
+
+    bundle = json.loads(client.get("/v1/account/export").content)
+    assert "account_actions" in bundle, sorted(bundle)
+
+    by_action = {a["action"]: a for a in bundle["account_actions"]}
+    assert "system.create" in by_action and "system.update" in by_action, by_action
+
+    upd = by_action["system.update"]
+    assert upd["actor_email"] == org["admin_email"].lower(), (
+        "the personal data this section exists to surface is missing")
+    assert upd["detail"]["previous"] == {"risk_tier": "critical"}, upd["detail"]
+    assert upd["created_at"]
+
+
+def test_the_exported_trail_is_not_truncated(admin):
+    """`GET /v1/account/audit` caps at 500 because it renders a page. An export
+    is a completeness claim, and a silently truncated audit trail inside one is
+    the defect this whole section exists to prevent."""
+    import json
+
+    _, client = admin
+    for i in range(12):
+        client.post("/v1/systems", json=_payload(f"bulk-{i}"))
+
+    bundle = json.loads(client.get("/v1/account/export").content)
+    creates = [a for a in bundle["account_actions"] if a["action"] == "system.create"]
+    assert len(creates) == 12, len(creates)
+    assert "limit" not in inspect_export_source(), (
+        "a LIMIT appeared on the exported trail")
+
+
+def inspect_export_source():
+    import inspect
+
+    from app.routers import account
+
+    src = inspect.getsource(account.account_export)
+    start = src.index("actions = db.execute(")
+    return src[start:start + 250].lower()
+
+
+def test_the_export_never_leaks_another_tenants_actions(make_org, login):
+    import json
+
+    a, b = make_org(), make_org()
+    ca = login(a["admin_email"], a["admin_password"])
+    cb = login(b["admin_email"], b["admin_password"])
+    ca.post("/v1/systems", json=_payload("mine"))
+    cb.post("/v1/systems", json=_payload("theirs"))
+
+    bundle = json.loads(ca.get("/v1/account/export").content)
+    targets = {x["target"] for x in bundle["account_actions"] if x["target"]}
+    assert "theirs" not in targets, targets
+    emails = {x["actor_email"] for x in bundle["account_actions"] if x["actor_email"]}
+    assert b["admin_email"].lower() not in emails, emails
+
+
+def test_the_export_filters_by_org_itself_and_does_not_lean_on_rls():
+    """⚠ THE BEHAVIOURAL TENANT GUARDS ABOVE CANNOT CATCH A DROPPED FILTER.
+
+    Measured, not assumed: removing `AccountAction.org_id == admin.org_id` from
+    the export query fails NOTHING. `require_role('admin')` runs through
+    `auth._scope_org`, which drops to the confined `foxy_app` role, and
+    `account_actions` and `ai_systems` are both posture-A tables — so RLS hides
+    the other tenant's rows and every cross-tenant assertion stays green.
+
+    That is the design working, and the Database note's rule is explicit that it
+    is not a reason to drop the clause: staff and worker paths do not run under
+    that role. So the clause is asserted at the source, the same way
+    `test_the_router_filters_by_org_itself_and_does_not_lean_on_rls` does for the
+    router. This is the third time this shape has come up in R1 (M4/M5, J5).
+    """
+    import inspect
+
+    from app.routers import account
+
+    src = inspect.getsource(account.account_export)
+    for clause in ("AccountAction.org_id == admin.org_id",
+                   "AiSystem.org_id == admin.org_id"):
+        assert clause in src, f"the export lost its org filter: {clause}"
+
+
+def test_no_writer_of_the_action_trail_records_a_secret():
+    """The trail is now exported whole, so `detail` is customer-visible. Every
+    writer must record THAT a secret changed, never the secret. Enumerated from
+    the AST rather than trusted, because this is the second place a leak here
+    would surface and the first (GET /v1/account/audit) has been live for
+    months."""
+    import ast
+    import pathlib
+
+    from app.routers import systems
+
+    app_dir = pathlib.Path(systems.__file__).parent.parent
+    banned = ("api_key", "secret", "password", "token", "key_enc", "client_secret")
+    offenders = []
+    for path in sorted(app_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and getattr(node.func, "attr", getattr(node.func, "id", None))
+                    == "record_account_action"):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "detail":
+                    continue
+                for value in getattr(kw.value, "values", []):
+                    rendered = ast.unparse(value).lower()
+                    if not any(word in rendered for word in banned):
+                        continue
+                    # ⚠ Naming a secret is not leaking one. The established safe
+                    # idiom records THAT it changed — `bool((row.gemini_key_enc
+                    # or "").strip())` exports True/False, never the ciphertext —
+                    # and a comparison does the same. Only a value that would
+                    # render the secret itself is a finding. Flagging the safe
+                    # idiom was this guard's first bug, and a guard that cries
+                    # wolf on the correct pattern gets deleted by the next
+                    # person, taking the real check with it.
+                    safe = (isinstance(value, ast.Compare)
+                            or (isinstance(value, ast.Call)
+                                and getattr(value.func, "id", None) == "bool"))
+                    if not safe:
+                        offenders.append(
+                            f"{path.name}:{node.lineno} {ast.unparse(value)}")
+    assert not offenders, (
+        f"an account-action detail may carry a secret, and it is now exported: "
+        f"{offenders}")
