@@ -212,6 +212,25 @@ AUDIT_LABELS = {
     # scans the backend for every recorded action and fails without it, which is
     # exactly why the backend change and this line ship together.
     "billing.evaluation_ended": "Evaluation ended — plan purchased",
+    # R1's AI-system registry (register #255). Three governance actions, and
+    # they shipped without labels here: `test_every_recorded_action_has_a_label`
+    # turned `main` red and it stayed red until the NEXT phase's gate found it,
+    # because R1's diff was backend-only and its blast radius was not. The
+    # backend side now carries a pointer back to this map — see
+    # `account_audit.record_account_action`.
+    #
+    # "Declared", not "Created", because the registry's whole claim is that an
+    # inventory is DECLARED by the customer and never inferred by Foxy from
+    # traffic (routers/systems.py). A customer reading their own history should
+    # meet the word the product means.
+    #
+    # ⚠ "Retired", not "Removed" or "Deleted". Retirement is TERMINAL — no
+    # un-retire endpoint, no DELETE, and a PUT 409s on both edges of it — while
+    # the row and every event ever attributed to it stay. A label promising a
+    # deletion would describe neither half of that.
+    "system.create": "Declared an AI system",
+    "system.update": "Updated an AI system",
+    "system.retire": "Retired an AI system",
 }
 
 AUDIT_EMPTY = ("No account changes recorded yet",
