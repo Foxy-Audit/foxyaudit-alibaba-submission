@@ -25,6 +25,9 @@ foxy = FoxyClient(api_key=..., system_id="3f2504e0-4f89-41d3-9a0c-0305e82c3301")
 
 or `FOXY_SYSTEM_ID=3f2504e0-…` in the environment, which is usually where it
 belongs — the same code points at a different system in staging and production.
+⚠ The two doors answer a **bad** value differently: the kwarg raises, the
+environment variable logs an error and runs unattributed. See *"A malformed id
+is refused"* below before you set it in a deployment.
 
 **One process is usually one system, so client-level is the setting to reach
 for.** If one process genuinely serves two AI products, a decorator can override
@@ -53,17 +56,32 @@ configured with. The SDK owns it because it now validates the spelling before
 anything is sent and degrades it correctly when the ledger refuses it — a
 hand-set copy bypasses both. Move the value to `FoxyClient(system_id=...)`.
 
-**2. A malformed id raises, at configure time.** `mode` and `response_scan` fall
-back to a default on a typo; this does not, because there is nothing safe to fall
-back to. Absent is a supported, first-class state, so a malformed id is not a
-weaker choice — it is a statement that failed to parse, and dropping it quietly
-would produce evidence indistinguishable from an SDK nobody configured, on every
-event, for the life of the process.
+**2. A malformed id is refused, and where you set it decides how loudly.** Only
+the canonical spelling is accepted — 36 characters, lower-case hex with hyphens,
+exactly as `GET /v1/systems` returns it. Braced, `urn:uuid:`, undashed and
+upper-case forms are **refused rather than repaired**: the value is bound into a
+hash chain, and one system must not end up with five spellings. An empty or
+whitespace-only value means "no attribution", not "malformed".
 
-Only the canonical spelling is accepted — 36 characters, lower-case hex with
-hyphens, exactly as `GET /v1/systems` returns it. Braced, `urn:uuid:`, undashed
-and upper-case forms are **refused rather than repaired**: the value is bound
-into a hash chain, and one system must not end up with five spellings.
+| Where you set it | What a bad value does |
+|---|---|
+| `FoxyClient(system_id=…)`, `@audit(system_id=…)`, `log_interaction(system_id=…)` | **raises `ValueError`** at construction or at import |
+| `FOXY_SYSTEM_ID` | **logs an error and runs unattributed** — the process starts, events flow, nothing says which system produced them |
+
+That split is deliberate. Code is written and run by the same person, so a
+traceback is the cheapest possible feedback and you see it in development. A
+deployment variable is usually written by somebody else and first exercised in
+production, and this SDK does not stop your service over telemetry
+configuration — no other `FOXY_*` variable can, and this one will not either.
+
+**But do not treat the log line as cosmetic.** An unattributed process is
+indistinguishable downstream from a system with no traffic, so the error is
+emitted at startup, names the variable, and says every event will be
+unattributed. If a declared system shows no events, check it.
+
+Unlike `mode` and `response_scan`, there is no default to fall back to — absent
+is a supported, first-class state, so a malformed id is not a weaker choice but a
+statement that failed to parse.
 
 ### When the ledger refuses an attribution
 
@@ -847,7 +865,10 @@ event's attribution; the SDK resends it unattributed and leaves every other syst
 alone. See the 1.14.0 notes above for what is recorded when that happens.
 
 Spelling is validated locally, at configure time, and only the canonical form is accepted — the
-one `GET /v1/systems` returns. A malformed id raises rather than being repaired or dropped.
+one `GET /v1/systems` returns. A bad value in **code** (`FoxyClient(system_id=…)`,
+`@audit(system_id=…)`) raises `ValueError`; a bad **`FOXY_SYSTEM_ID`** logs an error and runs
+unattributed rather than stopping your process. Neither is ever repaired into something you did
+not type. An empty `FOXY_SYSTEM_ID` means "no attribution" and is not an error.
 
 ### Scanning the response (OWASP LLM05 — Improper Output Handling)
 
@@ -924,7 +945,7 @@ That is exactly why prevention is opt-in.
 | Salt sidecar | `salt_sidecar_path` | `FOXY_SALT_SIDECAR` | _(none → commitments unsalted)_ |
 | Durable spool | `spool_path` | `FOXY_SPOOL_PATH` | `~/.foxy-audit/spool.sqlite3` |
 | Stable client id | `client_id` | `FOXY_CLIENT_ID` | persisted in the local spool when omitted |
-| AI system | `system_id` | `FOXY_SYSTEM_ID` | _(none → events carry no attribution)_ |
+| AI system | `system_id` | `FOXY_SYSTEM_ID` | _(none → events carry no attribution)_. A bad kwarg raises; a bad env var logs an error and runs unattributed |
 | Required capture | `audit_required` | `FOXY_AUDIT_REQUIRED` | `False` |
 | Prompt guard mode | `mode` | `FOXY_MODE` | `observe` (`block` / `redact` enforce before the call) |
 | Response scan | `response_scan` | `FOXY_RESPONSE_SCAN` | `observe` (`block` prevents, `off` disables) |

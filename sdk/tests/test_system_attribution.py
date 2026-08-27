@@ -97,18 +97,47 @@ _UNDECLARED_DETAIL = (
     "event_metadata contains unsupported fields: system_id {id} names no AI "
     "system in this workspace. Declare it with POST /v1/systems, or send the "
     "event without an attribution.")
-#: A CAPABILITY refusal: `schemas.py`'s allowlist message, which cannot name an
-#: id because the backend sending it has never heard of the key.
-_CAPABILITY_DETAIL = "event_metadata contains unsupported fields"
+#: A CAPABILITY refusal — `schemas.py`'s allowlist message. ⚠ IT IS A LIST, and
+#: that is the whole discriminator: it comes out of a pydantic validator as a
+#: `RequestValidationError`, which is always a list of error objects, while the
+#: ownership refusals above are `HTTPException(detail="…")` and serialise as a
+#: bare string. Copied from what the running app actually emits.
+_CAPABILITY_DETAIL = [{
+    "type": "value_error", "loc": ["body", 0, "event_metadata"],
+    "msg": "Value error, event_metadata contains unsupported fields"}]
 
 
-def _backend(seen, refuse=None, capability=()):
+def _echoing_capability_detail(event):
+    """🔴 THE SAME REFUSAL FROM A BACKEND OLDER THAN 2026-08-25.
+
+    FastAPI's STOCK `RequestValidationError` handler puts the rejected value in
+    `input` — for a list body, the whole event — so a capability refusal about a
+    completely unrelated unknown key comes back quoting our own live `system_id`
+    verbatim. `main._validation_error_handler` strips that, and it only exists
+    from `eeed428`; every older deployment echoes, the frozen production one
+    included.
+
+    So this is not an unlucky coincidence to be tolerated. It is what the
+    MAJORITY of deployments in the field send, and the shape check is what
+    stands between it and a receipt saying a healthy system was retired.
+    """
+    return [{
+        "type": "value_error", "loc": ["body", 0, "event_metadata"],
+        "msg": "Value error, event_metadata contains unsupported fields",
+        "input": dict(event.get("event_metadata") or {}),
+        "ctx": {"error": {}},
+        "url": "https://errors.pydantic.dev/2.13/v/value_error"}]
+
+
+def _backend(seen, refuse=None, capability=(), echo=False):
     """A backend that answers with REAL R2 shapes, at the HTTP boundary.
 
     ``refuse`` maps a system id to the message template that refuses it —
-    SEMANTIC, and only the FIRST offending id in the batch is named, because
-    `_validate_system_attributions` raises on the first one it meets.
-    ``capability`` names event_metadata keys this backend does not know at all.
+    SEMANTIC, `HTTPException`, so a bare-string `detail`, and only the FIRST
+    offending id in the batch is named, because `_validate_system_attributions`
+    raises on the first one it meets. ``capability`` names event_metadata keys
+    this backend does not know at all, answered the way pydantic answers.
+    ``echo`` makes it a pre-`eeed428` backend, which quotes the event back.
     """
     refuse = refuse or {}
 
@@ -118,8 +147,9 @@ def _backend(seen, refuse=None, capability=()):
             metadata = event.get("event_metadata") or {}
             for key in capability:
                 if key in metadata:
-                    return _Response(422, text=json.dumps(
-                        {"detail": _CAPABILITY_DETAIL}))
+                    detail = (_echoing_capability_detail(event) if echo
+                              else _CAPABILITY_DETAIL)
+                    return _Response(422, text=json.dumps({"detail": detail}))
         for event in body:
             metadata = event.get("event_metadata") or {}
             spelling = metadata.get("system_id")
@@ -128,6 +158,10 @@ def _backend(seen, refuse=None, capability=()):
                     {"detail": refuse[spelling].format(id=spelling)}))
         return _Response(202, payload={"status": "accepted", "receipts": []})
     return post
+
+
+def _json(detail):
+    return json.dumps({"detail": detail})
 
 
 def _row(seq, metadata):
@@ -165,6 +199,32 @@ def _receipts(path):
 def _clean_latch(monkeypatch):
     """No latch may leak between tests — it is process-global by design."""
     monkeypatch.setattr(dispatch, "_no_provenance", {})
+
+
+def _flush(path, post, times=1):
+    """Flush ``path`` through a PRIVATE dispatcher whose ``_post`` is ``post``.
+
+    ⚠ NOT `dispatch._DISPATCHER`, AND NOT A CLASS-LEVEL PATCH — this file
+    learned the difference the hard way. Several tests here construct a real
+    `FoxyClient` with an api_key, which calls `dispatch.resume` and starts the
+    shared dispatcher's BACKGROUND THREAD. That thread loops on
+    `self._flush_spool()` with no argument, so a class-level `_post` patch is
+    live for it too: it would wander into another test's spool and append to
+    that test's `seen`, or drain rows before the assertion counted them.
+
+    The symptom is the worst kind — green in isolation, intermittently red in
+    the suite, and the failing test is whichever one the thread happened to
+    reach. A private instance starts no thread (only `submit`/`resume` do) and
+    an INSTANCE attribute is invisible to every other dispatcher, so the two
+    cannot meet. `_paths` is pinned to this spool so even an atexit flush of
+    this instance cannot touch the developer's real one.
+    """
+    dispatcher = dispatch.AsyncDispatcher()
+    dispatcher._post = post
+    dispatcher._paths = {path}
+    for _ in range(times):
+        dispatcher._flush_spool({path})
+    return dispatcher
 
 
 def _payloads(tmp_path, module=client_module, **kwargs):
@@ -213,17 +273,13 @@ def test_a_backend_that_cannot_hold_an_attribution_loses_only_that_rung(tmp_path
     coat.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, capability=("system_id",)))
+    post = _backend(seen, capability=("system_id",))
     path = str(tmp_path / "spool.sqlite3")
     endpoint = "https://pre-r2.example.test/v1/logs/batch"
     _enqueue(path, endpoint, _row(1, {"system_id": LIVE,
                                       "policy_tag_raw": "HIPAA",
                                       "ruleset_version": "2026.08.5"}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert len(seen) == 2, "expected one rejected POST and exactly one retry"
     assert "system_id" in seen[0][0]["event_metadata"]
@@ -254,18 +310,14 @@ def test_one_retired_system_does_not_cost_the_estate_its_attribution(
     IS LATCHED — the endpoint has not been shown to be incapable of anything.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, refuse={RETIRED: detail}))
+    post = _backend(seen, refuse={RETIRED: detail})
     path = str(tmp_path / "spool.sqlite3")
     endpoint = "https://ledger.example.test/v1/logs/batch"
     _enqueue(path, endpoint,
              _row(1, {"system_id": LIVE}),
              _row(2, {"system_id": RETIRED}),
              _row(3, {"system_id": LIVE}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert len(seen) == 2, "one refusal, one targeted resend"
     resent = seen[1]
@@ -288,16 +340,12 @@ def test_only_the_refused_row_says_it_lost_an_attribution(tmp_path):
     wrong control.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, refuse={RETIRED: _RETIRED_DETAIL}))
+    post = _backend(seen, refuse={RETIRED: _RETIRED_DETAIL})
     path = str(tmp_path / "spool.sqlite3")
     _enqueue(path, "https://ledger.example.test/v1/logs/batch",
              _row(1, {"system_id": LIVE}),
              _row(2, {"system_id": RETIRED}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     marks = [r.get("foxy_degraded") for r in _receipts(path)]
     assert marks == [None, [dispatch._DEGRADED_ATTRIBUTION]], marks
@@ -312,17 +360,13 @@ def test_two_refused_systems_in_one_batch_both_resolve(tmp_path):
     exactly the estate-wide outage the split exists to prevent, one batch later.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(_backend(seen, refuse={
-        RETIRED: _RETIRED_DETAIL, OTHER_RETIRED: _UNDECLARED_DETAIL}))
+    post = _backend(seen, refuse={ RETIRED: _RETIRED_DETAIL, OTHER_RETIRED: _UNDECLARED_DETAIL})
     path = str(tmp_path / "spool.sqlite3")
     _enqueue(path, "https://ledger.example.test/v1/logs/batch",
              _row(1, {"system_id": RETIRED}),
              _row(2, {"system_id": LIVE}),
              _row(3, {"system_id": OTHER_RETIRED}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert len(seen) == 3, "two refusals, and one resend each"
     assert [e["event_metadata"].get("system_id") for e in seen[-1]] == [
@@ -342,17 +386,13 @@ def test_a_semantic_refusal_teaches_the_next_batch_nothing(tmp_path):
     unattributed evidence for every OTHER system is not.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, refuse={RETIRED: _RETIRED_DETAIL}))
+    post = _backend(seen, refuse={RETIRED: _RETIRED_DETAIL})
     path = str(tmp_path / "spool.sqlite3")
     endpoint = "https://ledger.example.test/v1/logs/batch"
-    try:
-        _enqueue(path, endpoint, _row(1, {"system_id": RETIRED}))
-        dispatch._DISPATCHER._flush_spool({path})
-        _enqueue(path, endpoint, _row(2, {"system_id": LIVE}))
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _enqueue(path, endpoint, _row(1, {"system_id": RETIRED}))
+    _flush(path, post)
+    _enqueue(path, endpoint, _row(2, {"system_id": LIVE}))
+    _flush(path, post)
 
     assert seen[-1][0]["event_metadata"]["system_id"] == LIVE, (
         "the second batch was pre-stripped by a latch that must not exist")
@@ -375,17 +415,14 @@ def test_a_reworded_refusal_falls_back_to_the_capability_branch(tmp_path):
     `_refused_attributions` only ever matches ids THIS BATCH PUT ON THE WIRE.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(_backend(seen, refuse={
+    post = _backend(seen, refuse={
         RETIRED: "event_metadata contains unsupported fields: that AI system "
-                 "has been retired"}))
+                 "has been retired"})
     path = str(tmp_path / "spool.sqlite3")
     endpoint = "https://reworded.example.test/v1/logs/batch"
     _enqueue(path, endpoint,
              _row(1, {"system_id": LIVE}), _row(2, {"system_id": RETIRED}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert all("system_id" not in e["event_metadata"] for e in seen[-1])
     assert list(dispatch._no_provenance) == [
@@ -400,9 +437,9 @@ def test_a_refusal_naming_an_id_this_batch_never_sent_is_not_ours_to_act_on():
     proving it. It falls to the ladder instead.
     """
     body = [_row(1, {"system_id": LIVE})]
-    resp = _Response(422, text=_RETIRED_DETAIL.format(id=RETIRED))
+    resp = _Response(422, text=_json(_RETIRED_DETAIL.format(id=RETIRED)))
     assert dispatch._refused_attributions(resp, body) == ()
-    resp = _Response(422, text=_RETIRED_DETAIL.format(id=LIVE))
+    resp = _Response(422, text=_json(_RETIRED_DETAIL.format(id=LIVE)))
     assert dispatch._refused_attributions(resp, body) == (LIVE,)
 
 
@@ -414,9 +451,10 @@ def test_a_422_that_is_not_a_field_refusal_is_never_read_as_one():
     id being quoted back changes nothing: the phrase gate runs first.
     """
     body = [_row(1, {"system_id": LIVE})]
-    resp = _Response(422, text="prompt_hash is not hexadecimal (%s)" % LIVE)
+    resp = _Response(422, text=_json("prompt_hash is not hexadecimal (%s)" % LIVE))
     assert dispatch._refused_attributions(resp, body) == ()
-    assert dispatch._refused_attributions(_Response(500, text=LIVE), body) == ()
+    assert dispatch._refused_attributions(
+        _Response(500, text=_json(_RETIRED_DETAIL.format(id=LIVE))), body) == ()
 
 
 # ══ surface 2 · the caller's API, and the spelling ═══════════════════════════
@@ -532,16 +570,71 @@ def test_an_empty_system_id_is_no_attribution_rather_than_a_bad_one(tmp_path,
     assert "event_metadata" not in sent[-1]
 
 
-def test_the_environment_is_a_door_a_typo_lives_in_too(tmp_path, monkeypatch):
-    """FOXY_SYSTEM_ID is judged by the same rule as the kwarg.
+@pytest.mark.parametrize("bad", NEAR_MISSES + ("not-a-uuid",))
+def test_the_environment_is_judged_by_the_same_rule_but_never_raises(
+        bad, tmp_path, monkeypatch, caplog):
+    """⚠ R3b — THE SPLIT: SAME RULE, DIFFERENT ANSWER, AND IT IS A DECISION.
 
-    Validating the kwarg alone would leave unchecked the one place a value is
-    most likely to be pasted by hand.
+    FOXY_SYSTEM_ID is checked exactly as the kwarg is — it is the place a value
+    is most likely to be pasted by hand, so leaving it unchecked would send the
+    typo to the wire. What it does NOT do is raise.
+
+    Deploy configuration is usually written by someone other than the author and
+    usually first exercised in production. Raising would make this the only
+    environment variable in the package able to stop a customer's process, over
+    telemetry, from a library whose standing promise is that it never breaks the
+    host — and on a compliance product, with the vendor's name on the outage.
+
+    ⚠ THE COUNTER-ARGUMENT IS ANSWERED RATHER THAN DISMISSED. A silently
+    unattributed process is undetectable downstream, so this is not silent: a
+    `log.error` at startup, in the same place and instant the raise would have
+    been, naming the variable and stating the consequence. What differs is only
+    whether the service dies.
     """
-    monkeypatch.setenv("FOXY_SYSTEM_ID", "3F2504E0-4F89-41D3-9A0C-0305E82C3301")
+    monkeypatch.setenv("FOXY_SYSTEM_ID", bad)
+    with caplog.at_level("ERROR", logger="foxy_audit"):
+        client = FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
+                            endpoint="https://ledger.example.test",
+                            spool_path=str(tmp_path / "spool.sqlite3"),
+                            client_id="c" * 32)
+    assert "FOXY_SYSTEM_ID" in caplog.text
+    assert "NO AI-system attribution" in caplog.text
+    assert bad not in caplog.text, "the refusal quoted the value back"
+    # Disabled, not carried: the bad value must survive nowhere.
+    assert client.cfg.system_id == ""
+
+    sent = []
+    monkeypatch.setattr(dispatch, "submit",
+                        lambda cfg, payload, wait=False: sent.append(payload))
+    client.log_interaction("a prompt", "a response", "hipaa")
+    assert "event_metadata" not in sent[-1]
+
+
+def test_a_code_door_still_raises_where_the_environment_does_not(tmp_path,
+                                                                 monkeypatch):
+    """The other half of the split, side by side, so the asymmetry is visible.
+
+    The SAME value: a raise from the kwarg, a logged error from the variable.
+    """
+    bad = "3F2504E0-4F89-41D3-9A0C-0305E82C3301"
     with pytest.raises(ValueError):
         FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
-                   spool_path=str(tmp_path / "spool.sqlite3"))
+                   spool_path=str(tmp_path / "a.sqlite3"), system_id=bad)
+
+    monkeypatch.setenv("FOXY_SYSTEM_ID", bad)
+    FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
+               spool_path=str(tmp_path / "b.sqlite3"))
+
+
+def test_a_kwarg_beats_a_broken_environment_without_consulting_it(tmp_path,
+                                                                  monkeypatch):
+    """`resolve` prefers the kwarg, so a bad variable beside a good kwarg is
+    never reached — and must not be reported as if it were."""
+    monkeypatch.setenv("FOXY_SYSTEM_ID", "not-a-uuid")
+    client, sent = _payloads(tmp_path, system_id=LIVE)
+    _capture(monkeypatch, sent)
+    client.log_interaction("a prompt", "a response", "hipaa")
+    assert sent[-1]["event_metadata"]["system_id"] == LIVE
 
 
 def test_the_refusal_never_quotes_the_value_back():
@@ -891,15 +984,12 @@ def test_a_spool_written_by_1_13_0_flushes_clean(tmp_path):
     and this release must leave it exactly as it found it.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(_backend(seen))
+    post = _backend(seen)
     path = str(tmp_path / "spool.sqlite3")
     _enqueue(path, "https://ledger.example.test/v1/logs/batch",
              _row(1, {"model": "gpt-5.6"}),
              _row(2, {"policy_tag_raw": "HIPAA"}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert len(seen) == 1, "an unattributed batch cost an extra POST"
     assert seen[0][0]["event_metadata"] == {"model": "gpt-5.6"}
@@ -916,17 +1006,13 @@ def test_an_upgraded_spool_mixes_attributed_and_unattributed_rows(tmp_path):
     branch `_drop_attribution` guards with `isinstance(metadata, dict)`.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, refuse={RETIRED: _RETIRED_DETAIL}))
+    post = _backend(seen, refuse={RETIRED: _RETIRED_DETAIL})
     path = str(tmp_path / "spool.sqlite3")
     old_row = _row(1, {"model": "gpt-5.6"})
     del old_row["event_metadata"]
     _enqueue(path, "https://ledger.example.test/v1/logs/batch",
              old_row, _row(2, {"system_id": RETIRED}), _row(3, {"system_id": LIVE}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post)
 
     assert "event_metadata" not in seen[-1][0]
     assert "system_id" not in seen[-1][1]["event_metadata"]
@@ -950,18 +1036,260 @@ def test_a_stripped_resend_never_expects_the_attribution_back(tmp_path):
     drives the whole path and asserts the row LEAVES the spool.
     """
     seen = []
-    dispatch.AsyncDispatcher._post = staticmethod(
-        _backend(seen, refuse={RETIRED: _RETIRED_DETAIL}))
+    post = _backend(seen, refuse={RETIRED: _RETIRED_DETAIL})
     path = str(tmp_path / "spool.sqlite3")
     endpoint = "https://ledger.example.test/v1/logs/batch"
     spool = _enqueue(path, endpoint, _row(1, {"system_id": RETIRED}))
-    try:
-        dispatch._DISPATCHER._flush_spool({path})
-        dispatch._DISPATCHER._flush_spool({path})
-    finally:
-        del dispatch.AsyncDispatcher._post
+    _flush(path, post, times=2)
 
     assert len(seen) == 2, "the acked row was re-POSTed: it never left the spool"
     assert spool.due(10) == []
     receipt = _receipts(path)[0]
     assert receipt["foxy_degraded"] == [dispatch._DEGRADED_ATTRIBUTION]
+
+
+# ══ surface 1b · the discriminator is STRUCTURAL, not a sentence ═════════════
+
+def test_a_capability_refusal_that_quotes_our_id_is_still_a_capability_refusal(
+        tmp_path):
+    """🔴 R3b. THE ECHO IS THE DEFAULT, NOT AN UNLUCKY COINCIDENCE.
+
+    FastAPI's stock `RequestValidationError` handler puts the rejected value in
+    `input` — for a list body, the whole event — so a capability refusal about a
+    completely unrelated unknown key comes back carrying our own live
+    `system_id`. `main._validation_error_handler` strips it, and that handler
+    only exists from 2026-08-25: every older deployment echoes, the frozen
+    production one included.
+
+    R3 matched on "is one of this batch's spellings in the body", so against
+    that population it took the SEMANTIC branch on every batch — and the harm
+    was never lost evidence or a false latch. It was a FALSE RECEIPT: a row
+    stamped `system_id_refused` and an operator warning saying "retired or not
+    declared" about a live, healthy system, for as long as that backend ran.
+
+    The `detail` SHAPE is what separates them, and it is a property of how each
+    is raised rather than of how either is worded.
+    """
+    seen = []
+    post = _backend(seen, capability=("system_id",), echo=True)
+    path = str(tmp_path / "spool.sqlite3")
+    endpoint = "https://pre-eeed428.example.test/v1/logs/batch"
+    _enqueue(path, endpoint,
+             _row(1, {"system_id": LIVE}), _row(2, {"system_id": RETIRED}))
+    _flush(path, post)
+
+    # The body quoted LIVE straight back at us. It is still not about LIVE.
+    assert LIVE in seen[0][0]["event_metadata"]["system_id"]
+    assert all("system_id" not in e["event_metadata"] for e in seen[-1])
+    assert list(dispatch._no_provenance) == [
+        (endpoint, dispatch._DEGRADED_SYSTEM_ID)], dispatch._no_provenance
+    marks = [r.get("foxy_degraded") for r in _receipts(path)]
+    assert marks == [[dispatch._DEGRADED_SYSTEM_ID],
+                     [dispatch._DEGRADED_SYSTEM_ID]], marks
+    assert all(dispatch._DEGRADED_ATTRIBUTION not in (m or []) for m in marks), (
+        "a healthy system was recorded as retired-or-undeclared")
+
+
+def test_the_detail_shape_is_the_discriminator(tmp_path):
+    """Both layers, at the unit, over the shapes the running app really emits.
+
+    ⚠ THE STRINGS HERE WERE READ OFF THE APP, not composed. A test that invented
+    its own idea of either shape would agree with itself forever.
+    """
+    body = [_row(1, {"system_id": LIVE})]
+
+    # HTTPException -> a bare string. Semantic, and ours to act on.
+    for template in (_RETIRED_DETAIL, _UNDECLARED_DETAIL):
+        resp = _Response(422, text=_json(template.format(id=LIVE)))
+        assert dispatch._refused_attributions(resp, body) == (LIVE,), template
+
+    # RequestValidationError -> always a list. Never ours, however it is worded
+    # and whatever it quotes.
+    for detail in (
+        _CAPABILITY_DETAIL,
+        _echoing_capability_detail(body[0]),
+        [{"type": "value_error", "loc": ["body", 0],
+          "msg": "Value error, event_metadata contains unsupported fields: "
+                 "system_id is not an AI system id"}],
+        [{"type": "value_error", "loc": ["body", 0],
+          "msg": "Value error, event_metadata contains unsupported fields: "
+                 "policy_tag_raw is not a spelling of policy_tag"}],
+    ):
+        resp = _Response(422, text=_json(detail))
+        assert dispatch._refused_attributions(resp, body) == (), detail
+
+
+#: ⚠ EVERY ONE OF THESE CARRIES THE PHRASE, AND THAT IS NOT DECORATION.
+#: `_rejects_unsupported_fields` gates on "unsupported fields" being in the body
+#: BEFORE the shape is ever looked at — so a fail-safe case without the phrase
+#: returns () at the first line and proves nothing about the shape check. The
+#: first cut of this list had exactly that defect: seven cases, all green, none
+#: of them reaching the code they were named for. Found by a mutant that deleted
+#: the shape gate and SURVIVED, then diagnosed rather than waved through.
+_PHRASE = "event_metadata contains unsupported fields"
+UNREADABLE = (
+    # not JSON at all -> json.loads raises -> the except branch
+    _PHRASE,
+    "<html>422: %s: system_id %s has been RETIRED</html>" % (_PHRASE, LIVE),
+    # JSON, but `detail` is not a string. ⚠ THE FIRST TWO ARE THE ONES THAT
+    # BITE: `in` over a dict tests its KEYS and over a list tests its ELEMENTS,
+    # so these are the shapes where membership WOULD match if the shape gate
+    # were gone. Not shapes FastAPI produces — a self-hosted error handler, or a
+    # proxy — which is exactly what "a shape we do not recognise" means.
+    '{"detail": {"%s": "retired"}, "note": "%s"}' % (LIVE, _PHRASE),
+    '{"detail": ["%s"], "note": "%s"}' % (LIVE, _PHRASE),
+    '{"detail": null, "error": "%s"}' % _PHRASE,
+    '{"detail": {"system_id": "%s"}, "note": "%s"}' % (LIVE, _PHRASE),
+    # JSON, but not an object at the top -> `.get` raises -> the except branch
+    '["%s", "%s"]' % (LIVE, _PHRASE),
+    # an object with no `detail` at all
+    '{"message": "%s: system_id %s"}' % (_PHRASE, LIVE),
+)
+
+
+@pytest.mark.parametrize("text", UNREADABLE)
+def test_every_way_of_being_unsure_lands_on_the_capability_branch(text):
+    """⚠ THE FAIL-SAFE, AND IT IS THE SAME DIRECTION IT ALWAYS WAS.
+
+    Unreadable, unparseable, or a shape this SDK does not recognise — every one
+    returns `()` and falls through to the ladder, which strips endpoint-wide and
+    latches exactly as 1.13.0 did. The worst case of not understanding a body is
+    the previous release's behaviour, never something new.
+    """
+    body = [_row(1, {"system_id": LIVE})]
+    assert dispatch._refused_attributions(_Response(422, text=text), body) == ()
+
+
+def test_these_bodies_all_get_PAST_the_phrase_gate():
+    """THE CONTROL FOR THE LIST ABOVE, and the reason it exists.
+
+    `_rejects_unsupported_fields` runs first. A case it rejects never reaches
+    the shape check, so it would pass the test above no matter what the shape
+    check did — a guard green from birth. This asserts every case is actually
+    delivered to the code it is named for.
+    """
+    for text in UNREADABLE:
+        assert dispatch._rejects_unsupported_fields(_Response(422, text=text)), text
+
+
+def test_a_body_whose_text_cannot_be_read_is_not_ours_either():
+    """A response object that raises on `.text` — a truncated stream, a proxy
+    that closed. The `except` there is not decoration."""
+    class _Broken:
+        status_code = 422
+
+        @property
+        def text(self):
+            raise RuntimeError("the connection went away")
+
+    assert dispatch._refused_attributions(_Broken(), [_row(1, {"system_id": LIVE})]) == ()
+
+
+def test_the_ladder_latches_a_rung_a_value_error_never_refused(tmp_path):
+    """🟡 KNOWN LIMIT, PINNED SO IT IS NOT REDISCOVERED AS A SURPRISE (#259).
+
+    ⚠ THIS TEST DOES NOT BLESS THE BEHAVIOUR. It records it, with the reason it
+    was left alone, so that a future reader meets a decision rather than a bug —
+    and so that anyone who fixes it has to come here and say so.
+
+    `event_metadata contains unsupported fields: …` is also the prefix of the
+    VALUE refusals, which say a key this backend KNOWS carries a bad value.
+    `_rejects_unsupported_fields` cannot tell those from a capability refusal,
+    so such a 422 walks the whole ladder: `system_id` is stripped, the 422
+    persists, `policy_tag_raw` is stripped, the POST succeeds — and BOTH latch.
+    `system_id` is then disabled for 900 seconds against a backend that accepts
+    it.
+
+    Left alone because it is UNREACHABLE FROM THIS SDK: `client._typed_tag`
+    mirrors both of the ledger's typed-tag rules and `client._checked_system_id`
+    mirrors the canonical spelling, so every value refusal is refused locally
+    before anything is sent. Reaching this state means a hand-edited spool or a
+    producer that is not this package — and in that state over-stripping is the
+    conservative answer, since the batch still lands and the degradation is
+    recorded and self-heals. The precise alternative would key the latch on the
+    message having no ": …" suffix: a new wording dependency inside the one
+    decision three gate rounds have already got wrong.
+
+    R3 WIDENED THIS RATHER THAN CREATING IT — before the `system_id` rung the
+    same 422 latched `policy_tag_raw` alone, also a key the backend accepts.
+    """
+    seen = []
+
+    def post(endpoint, api_key, body):
+        seen.append(json.loads(json.dumps(body)))
+        # The backend knows every key. It refuses one VALUE.
+        for event in body:
+            if (event.get("event_metadata") or {}).get("policy_tag_raw") == "PCI":
+                return _Response(422, text=_json([{
+                    "type": "value_error", "loc": ["body", 0],
+                    "msg": "Value error, event_metadata contains unsupported "
+                           "fields: policy_tag_raw is not a spelling of "
+                           "policy_tag"}]))
+        return _Response(202, payload={"status": "accepted", "receipts": []})
+
+    post = post
+    path = str(tmp_path / "spool.sqlite3")
+    endpoint = "https://value-error.example.test/v1/logs/batch"
+    _enqueue(path, endpoint,
+             _row(1, {"system_id": LIVE, "policy_tag_raw": "PCI"}))
+    _flush(path, post)
+
+    # The batch LANDS — that is the part that matters, and the reason this is a
+    # limit rather than an outage.
+    assert seen[-1], "the batch never got through"
+    assert len(_receipts(path)) == 1
+    # …and `system_id` is latched, though this backend never refused the key.
+    assert (endpoint, dispatch._DEGRADED_SYSTEM_ID) in dispatch._no_provenance, (
+        "the known limit is gone — good. Delete this test, close #259, and say "
+        "so in the ladder's comment.")
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_an_empty_value_is_unset_at_a_CODE_door_too(blank, tmp_path,
+                                                    monkeypatch):
+    """⚠ "" IS "UNSET", NOT "MALFORMED", AND THAT HOLDS AT EVERY DOOR.
+
+    `FOXY_SYSTEM_ID=` in a compose file is the obvious case, but the same value
+    reaches CODE constantly — `system_id=os.environ.get("SYS_ID", "")`,
+    `system_id=config.get("system")`, a form field nobody filled in. Reading it
+    as a typo would raise on the caller's decision NOT to attribute, which is
+    the opposite of what the validation is for.
+
+    ⚠ FOUND BY RE-AIMING A SURVIVING MUTANT. Deleting the empty-string branch
+    survived the suite, because `resolve` strips, the environment door tests
+    truthiness, and `log_interaction` folds `"" or None` — so nothing then
+    reached the branch. It is reachable from all three code doors, and the
+    survivor was a missing test rather than dead code. Diagnosed, not waved
+    through.
+    """
+    client = FoxyClient(api_key="foxy_sk_test", desktop_ping=False,
+                        endpoint="https://ledger.example.test",
+                        spool_path=str(tmp_path / "spool.sqlite3"),
+                        client_id="c" * 32, system_id=blank)
+    assert client.cfg.system_id == ""
+
+    sent = []
+    monkeypatch.setattr(dispatch, "submit",
+                        lambda cfg, payload, wait=False: sent.append(payload))
+
+    @client.audit(policy="hipaa", system_id=blank)
+    def ask(prompt):
+        return "an answer"
+
+    ask("a clean question")
+    client.log_interaction("a prompt", "a response", "hipaa", system_id=blank)
+    assert all("event_metadata" not in p for p in sent), sent
+
+
+def test_an_explicit_blank_kwarg_also_overrules_the_environment(tmp_path,
+                                                                monkeypatch):
+    """`resolve` prefers the kwarg, and a blank one is still a kwarg.
+
+    "Attribute nothing from this client, whatever the deployment says" has to be
+    expressible, and it is the same precedence every other setting follows.
+    """
+    monkeypatch.setenv("FOXY_SYSTEM_ID", LIVE)
+    client, sent = _payloads(tmp_path, system_id="")
+    _capture(monkeypatch, sent)
+    client.log_interaction("a prompt", "a response", "hipaa")
+    assert "event_metadata" not in sent[-1]

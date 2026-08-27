@@ -198,6 +198,46 @@ class AsyncDispatcher:
                     # — one older than `policy_rules`, say — would otherwise
                     # disable these keys for the whole retry window while the
                     # actual offender went untouched and the batch kept failing.
+                    #
+                    # ⚠ KNOWN LIMIT, DOCUMENTED AND NOT FIXED (R3b gate, #259).
+                    # "unsupported fields" is also the prefix of the VALUE
+                    # refusals — `policy_tag_raw is not a spelling of
+                    # policy_tag`, `system_id is not an AI system id` — which
+                    # say a key this backend KNOWS carries a bad value. Nothing
+                    # here can tell those from a capability refusal, so such a
+                    # 422 walks the ladder: rung 1 is stripped, the 422
+                    # persists, rung 2 fixes it, and BOTH latch. `system_id` is
+                    # then disabled for 900 seconds against a backend that
+                    # accepts it.
+                    #
+                    # Left alone deliberately, and the reasoning belongs here
+                    # rather than in a register nobody opens while reading this
+                    # line:
+                    #
+                    #   * IT IS UNREACHABLE FROM THIS SDK. Every value refusal
+                    #     is mirrored client-side before anything is sent —
+                    #     `client._typed_tag` enforces both of the ledger's
+                    #     typed-tag rules, `client._checked_system_id` enforces
+                    #     the canonical spelling — so reaching this state means
+                    #     a hand-edited spool or a producer that is not this
+                    #     package.
+                    #   * IN THAT STATE, OVER-STRIPPING IS THE CONSERVATIVE
+                    #     ANSWER. The batch still lands; what degrades is
+                    #     provenance, recorded in the receipt, self-healing in
+                    #     15 minutes. Being precise about a state that means
+                    #     something upstream is already broken would buy
+                    #     accuracy nobody can reach.
+                    #   * AND THE PRECISE VERSION COSTS MORE THAN IT SAVES. It
+                    #     would key the latch on the message having no ": …"
+                    #     suffix — a NEW wording dependency, inside the one
+                    #     decision three gate rounds have already got wrong, for
+                    #     a path no shipped client can take.
+                    #
+                    # R3 WIDENED THIS RATHER THAN CREATING IT: before the
+                    # `system_id` rung, the same 422 latched `policy_tag_raw`
+                    # alone — also a key the backend accepts. One rung then, two
+                    # now. If it is ever fixed, fix it for both. Pinned by
+                    # test_the_ladder_latches_a_rung_a_value_error_never_refused.
                     if escalated and resp.status_code < 400:
                         marked_at = time.time()
                         for name in escalated:
@@ -459,29 +499,76 @@ def _refused_attributions(resp, body) -> tuple:
     absent from the evidence rather than merely delayed. That is #256, and it is
     the defect this function exists to prevent rather than one it fixes.
 
-    ⚠ IT MATCHES ONLY SPELLINGS THIS BATCH ACTUALLY SENT, and that is the guard
-    against a reworded message rather than a hope that the wording holds. It
-    never parses the sentence, never looks for a UUID shape, and never trusts an
-    id it did not itself put on the wire.
+    🔴 TWO CONDITIONS, AND NEITHER IS SUFFICIENT ALONE. R3 shipped with only the
+    second and that was WRONG about which case is the unlucky one:
 
-    ⚠ FAIL SAFE, IN BOTH DIRECTIONS:
+    1. ``detail`` IS A JSON STRING, not a list. This is the structural fact that
+       separates the two layers, and it is a property of how each is RAISED
+       rather than of how either is worded:
 
-    * R2 rewords so the id no longer appears -> ``()`` -> the caller falls
-      through to the ladder, strips endpoint-wide and latches, which is exactly
-      what 1.13.0 did. The worst case is never worse than the previous release.
-    * some other 422 happens to quote an id back -> the caller drops that id's
-      attribution, re-POSTs, and the refusal persists -> the ladder runs anyway.
-      One extra POST and a lost latch, never a FALSE latch. A wrong guess in
-      this direction costs a round trip; a wrong guess in the other costs
-      evidence, so the asymmetry is deliberate.
+         * the ownership refusals are ``HTTPException(422, detail="…")``, and
+           FastAPI serialises that as ``{"detail": "<the sentence>"}``;
+         * every capability and value refusal comes out of a pydantic validator
+           as ``RequestValidationError``, which is ALWAYS a list of error
+           objects — including through ``main._validation_error_handler``, whose
+           redaction keeps ``type``/``loc``/``msg`` per error and therefore
+           keeps the shape.
+
+       Measured against the running app rather than inferred: str for both
+       ownership refusals, list for the unknown key, for
+       ``system_id is not an AI system id`` and for the two ``policy_tag_raw``
+       value errors. Guarded at the source by
+       ``test_the_two_refusal_layers_have_different_detail_SHAPES``.
+
+    2. THE SPELLING IS ONE THIS BATCH ACTUALLY SENT. Kept from R3, and still
+       carrying its own weight: it is what stops a refusal about somebody else's
+       id, or a reworded sentence, from being acted on.
+
+    ⚠ WHY THE FIRST CONDITION IS NOT OPTIONAL, AND WHY "an unrelated 422 that
+    happens to quote an id back" WAS THE WRONG WAY ROUND. FastAPI's STOCK
+    ``RequestValidationError`` handler puts the rejected value in ``input`` —
+    for a list body, the whole event — so a capability refusal about a
+    completely different unknown key comes back carrying our own live
+    ``system_id`` verbatim. ``main._validation_error_handler`` strips that, and
+    it only exists from 2026-08-25: EVERY older deployment echoes, and that
+    population includes the frozen production one. So the coincidence is the
+    DEFAULT, not the accident.
+
+    What that cost was never lost evidence and never a false latch — the
+    direction R3 reasoned about was right — it was a FALSE RECEIPT: a row
+    stamped ``system_id_refused`` and an operator warning saying "retired or not
+    declared" about a live, healthy system, on every batch, for as long as that
+    backend runs. On a product whose claim is that its evidence is honest, that
+    is the harm.
+
+    ⚠ THE SHAPE CHECK IS NOT REDUNDANT WITH READING ``detail`` RATHER THAN THE
+    WHOLE BODY, though it is close, and the distance is worth stating. Against
+    the two shapes FastAPI itself produces — a list of error objects, redacted
+    or echoing — ``spelling in detail`` is False anyway, because ``in`` over a
+    list of dicts compares whole elements. What the check buys is every OTHER
+    shape: a ``detail`` that is an object KEYED by the id, or a bare list OF
+    ids, where membership WOULD match. Those come from a self-hosted error
+    handler or a proxy, not from us, and "a shape we do not recognise" has to
+    land on the older, coarser answer rather than on a guess.
+
+    ⚠ FAIL SAFE, UNCHANGED IN DIRECTION. An unreadable body, a body that is not
+    JSON, a body that is not an object, a ``detail`` that is not a string, or no
+    id of ours inside it -> ``()`` -> the caller falls through to the ladder,
+    strips endpoint-wide and latches, which is exactly what 1.13.0 did. Every
+    way of being unsure lands on the older, coarser answer, so the worst case is
+    never worse than the previous release.
 
     Returns the spellings in batch order, deduped.
     """
     if not _rejects_unsupported_fields(resp):
         return ()
     try:
-        text = resp.text
+        detail = json.loads(resp.text).get("detail")
     except Exception:                        # noqa: BLE001 — a body we cannot read
+        return ()
+    # A LIST is a pydantic validation error: the allowlist, or a value refusal.
+    # Neither is about a particular system, and both can quote one back.
+    if not isinstance(detail, str):
         return ()
     named = []
     for event in body:
@@ -490,7 +577,7 @@ def _refused_attributions(resp, body) -> tuple:
             continue
         spelling = metadata.get("system_id")
         if (isinstance(spelling, str) and spelling not in named
-                and spelling in text):
+                and spelling in detail):
             named.append(spelling)
     return tuple(named)
 

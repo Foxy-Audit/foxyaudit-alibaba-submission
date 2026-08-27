@@ -155,12 +155,28 @@ def _checked_system_id(value, where: str):
     DETERMINISTIC: it costs every event in the process its attribution, forever,
     on a value the caller copied out of ``GET /v1/systems`` thirty seconds ago.
 
-    ⚠ AND WHERE IT RAISES IS THE POINT. Every door is a CONFIGURE-TIME one —
-    the constructor, decoration, or an explicit ``log_interaction`` argument —
-    never inside the wrapped call. ``log_interaction``'s promise that telemetry
-    can never break the host application is about the telemetry it performs, not
-    about an argument that is malformed before any of it starts;
-    ``_validate_on_event`` raises from the constructor for the same reason.
+    ⚠ BUT ONLY FROM A **CODE** DOOR — R3b, AND THE SPLIT IS THE POINT. This
+    raises for ``FoxyClient(system_id=...)``, ``@audit(system_id=...)`` and
+    ``log_interaction(system_id=...)``: the person who typed the value is the
+    person who sees the traceback, in development, in seconds.
+    ``FOXY_SYSTEM_ID`` is NOT such a door and does not reach here as a raise —
+    see :meth:`FoxyClient.__init__`. Deploy configuration is usually written by
+    somebody other than the author, and raising there would make this the only
+    environment variable in the package that can stop a customer's process, over
+    telemetry, in a library whose standing promise is that it never breaks the
+    host.
+
+    ⚠ AND WHERE IT RAISES IS ALWAYS CONFIGURE TIME — the constructor,
+    decoration, or an explicit ``log_interaction`` argument — never inside the
+    wrapped call. ``log_interaction``'s promise that telemetry can never break
+    the host application is about the telemetry it performs, not about an
+    argument that is malformed before any of it starts; ``_validate_on_event``
+    raises from the constructor for the same reason.
+
+    An EMPTY or whitespace-only string is ``None``, not a typo: ``FOXY_SYSTEM_ID=``
+    in a compose file, or an unset variable interpolated into one, is how a
+    deployment spells "do not attribute". Reading that as malformed would refuse
+    the customer's decision NOT to attribute, which is the opposite of the job.
 
     Refused rather than repaired, exactly as ``_typed_tag`` refuses a spelling
     it could have trimmed: sending an id the caller never typed would put a
@@ -168,6 +184,8 @@ def _checked_system_id(value, where: str):
     afterwards.
     """
     if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
         return None
     parsed = None
     if isinstance(value, str):
@@ -319,16 +337,50 @@ class FoxyClient:
             response_scan=response_scan,
         )
         # THE DEFAULT ATTRIBUTION FOR EVERYTHING THIS CLIENT RECORDS, and the
-        # door where a typo stops. Validated after `resolve` rather than inside
-        # it so that FOXY_SYSTEM_ID is judged by the same rule as the kwarg —
-        # an environment variable is a place a typo lives just as happily — and
-        # so `FoxyConfig.resolve` keeps its promise never to raise.
+        # door where a typo stops. Both doors are judged by the SAME RULE and
+        # answered DIFFERENTLY — R3b, and the asymmetry is the decision:
         #
-        # `self.cfg.system_id` is therefore canonical-or-empty on every client
-        # that exists, which is what lets `log_interaction` read it directly
-        # instead of carrying a second, validated copy beside it.
-        _checked_system_id(self.cfg.system_id or None,
-                           "FoxyClient(system_id=...) / FOXY_SYSTEM_ID")
+        #   * the KWARG is code. The person who typed it is the person who runs
+        #     it, in development, and a traceback is the cheapest possible
+        #     feedback. It raises.
+        #   * FOXY_SYSTEM_ID is DEPLOY CONFIGURATION, usually written by someone
+        #     other than the author and usually first exercised in production.
+        #     Raising there would make this the only environment variable in the
+        #     package able to stop a customer's process — over telemetry, from a
+        #     library that promises never to break the host, and (on a
+        #     compliance product sold to hospitals and banks) with the vendor's
+        #     name on the outage.
+        #
+        # ⚠ THE COUNTER-ARGUMENT IS ANSWERED, NOT DISMISSED. Silently dropping
+        # an attribution is undetectable downstream — an unattributed process
+        # looks exactly like a system with no traffic — which is why this is a
+        # `log.error` and not a debug line, emitted at startup, in the same
+        # place and at the same instant the raise would have been, naming the
+        # variable and stating the consequence. What differs is only whether the
+        # service dies. The worst case here is an audit trail missing one
+        # bounded field until someone fixes a variable; the worst case there is
+        # a regulated customer's service down because their audit SDK did not
+        # like a UUID.
+        _checked_system_id(system_id, "FoxyClient(system_id=...)")
+        if system_id is None and self.cfg.system_id:
+            # It came from the environment: `resolve` prefers the kwarg, so a
+            # kwarg of None is what makes this branch about FOXY_SYSTEM_ID.
+            try:
+                _checked_system_id(self.cfg.system_id, "FOXY_SYSTEM_ID")
+            except ValueError as exc:
+                log.error(
+                    "foxy-audit: FOXY_SYSTEM_ID is not usable, so events from "
+                    "this process will carry NO AI-system attribution — they "
+                    "are delivered and chained exactly as before, but nothing "
+                    "on them says which of your systems produced them, and a "
+                    "system with no traffic looks the same on your dashboard. "
+                    "Everything else is unaffected. %s", exc)
+                # Rebuilt rather than mutated: the config is frozen, and the
+                # rest of this method (and `log_interaction`) reads
+                # `cfg.system_id` as the single source of truth, so the bad
+                # value must not survive anywhere.
+                self.cfg = self.cfg.__class__(
+                    **{**self.cfg.__dict__, "system_id": ""})
         if self.cfg.enabled and not self.cfg.client_id:
             spool = EventSpool(self.cfg.spool_path or None)
             self.cfg = self.cfg.__class__(

@@ -755,13 +755,18 @@ def _degrade_through_the_sdk(tmp_path, http, headers, events):
         posted.append(json.loads(json.dumps(body)))
         return http.post("/v1/logs/batch", headers=headers, json=body)
 
-    original = dispatch.AsyncDispatcher._post
-    dispatch.AsyncDispatcher._post = staticmethod(_post)
+    # ⚠ A PRIVATE DISPATCHER AND AN INSTANCE ATTRIBUTE, never the module
+    # singleton and never a class-level patch. The singleton runs a background
+    # thread as soon as anything calls `submit`/`resume`, and that thread loops
+    # on `_flush_spool()` with no argument — so a class patch is live for it
+    # too, and it will wander into another spool and append to `posted`. Green
+    # in isolation, intermittently red in a suite, blaming whichever test the
+    # thread reached. A fresh instance starts no thread.
+    dispatcher = dispatch.AsyncDispatcher()
+    dispatcher._post = _post
+    dispatcher._paths = {str(tmp_path / "spool.sqlite3")}
     dispatch._no_provenance.clear()
-    try:
-        dispatch._DISPATCHER._flush_spool({str(tmp_path / "spool.sqlite3")})
-    finally:
-        dispatch.AsyncDispatcher._post = original
+    dispatcher._flush_spool({str(tmp_path / "spool.sqlite3")})
     return posted, spool, endpoint
 
 
@@ -891,6 +896,98 @@ def test_a_malformed_attribution_degrades_through_the_capability_branch(
     assert list(dispatch._no_provenance) == [
         (endpoint, dispatch._DEGRADED_SYSTEM_ID)], dispatch._no_provenance
     dispatch._no_provenance.clear()
+
+def test_the_two_refusal_layers_have_different_detail_SHAPES(declared, client):
+    """🔴 R3b — THE PREMISE THE SDK'S LATCH SPLIT RESTS ON, GUARDED AT ITS SOURCE.
+
+    From 1.14.0 the SDK tells a SEMANTIC refusal (this system is retired or is
+    not yours) from a CAPABILITY refusal (this backend cannot hold the key) by
+    the SHAPE of `detail`, because the two are raised differently:
+
+      * the ownership refusals are `HTTPException(422, detail="…")`, which
+        FastAPI serialises as `{"detail": "<a string>"}`;
+      * everything the pydantic validators refuse — the unknown key, and the
+        VALUE errors for `system_id` and `policy_tag_raw` — arrives as
+        `RequestValidationError`, which is ALWAYS a list of error objects, and
+        `main._validation_error_handler` keeps that shape while redacting.
+
+    ⚠ IT CANNOT BE THE MESSAGE, AND THAT IS WHY THIS TEST IS HERE. Both layers
+    must carry "unsupported fields" or `dispatch._rejects_unsupported_fields`
+    stops recognising the refusal and `spool.retry` re-queues the batch forever
+    — so the wording is deliberately identical and can never be the
+    discriminator. And a body naming an id is NOT rare: FastAPI's stock handler
+    echoes the rejected event in `input`, this workspace's `system_id` included,
+    on every deployment older than `eeed428`. An SDK matching on "does the body
+    mention one of my ids" therefore reads a capability refusal about an
+    unrelated key as "your system is retired" — a false receipt about a healthy
+    system, on every batch.
+
+    So: change how a refusal here is RAISED and this breaks, loudly, in the
+    phase that owns the message rather than in a customer's spool.
+    """
+    org, admin, live = declared
+    retired = admin.post("/v1/systems", json=_payload("legacy-bot"))
+    retired_id = retired.json()["id"]
+    admin.post(f"/v1/systems/{retired_id}/retire")
+
+    unknown = _event()
+    unknown["event_metadata"]["totally_unknown_key"] = "x"
+    bad_shape = _event()
+    bad_shape["event_metadata"]["system_id"] = "not-a-uuid"
+    bad_spelling = _event()
+    bad_spelling["event_metadata"]["policy_tag_raw"] = "PCI"
+
+    #: label -> (event, the type `detail` must have)
+    cases = {
+        "ownership/retired": (_attributed(retired_id), str),
+        "ownership/undeclared": (_attributed(str(uuid.uuid4())), str),
+        "capability/unknown-key": (unknown, list),
+        "value/system_id-shape": (bad_shape, list),
+        "value/policy_tag_raw-fold": (bad_spelling, list),
+    }
+    probe = _sdk_probe()
+    for label, (event, shape) in cases.items():
+        response = client.post("/v1/logs/batch", headers=org["auth"],
+                               json=[event])
+        assert response.status_code == 422, f"{label}: {response.text}"
+        # Still recognisable, or the spool bricks — the older guarantee, which
+        # the shape split must not have quietly traded away.
+        assert probe(response), f"{label} is no longer degradable"
+        detail = response.json()["detail"]
+        assert isinstance(detail, shape), (
+            f"{label}: detail is {type(detail).__name__}, not {shape.__name__} "
+            "— the SDK's latch split reads this shape")
+
+    # And the SDK agrees, driven rather than restated: only the string-shaped
+    # refusals name a system the SDK may act on.
+    dispatch = _sdk_dispatch()
+    for label, (event, shape) in cases.items():
+        response = client.post("/v1/logs/batch", headers=org["auth"],
+                               json=[event])
+        named = dispatch._refused_attributions(response, [event])
+        assert bool(named) is (shape is str), f"{label}: {named}"
+
+
+def test_a_capability_refusal_quotes_the_attribution_only_when_it_is_stripped(
+        declared, client):
+    """The echo `eeed428` closed, asserted from the SDK's side of it.
+
+    This deployment redacts `input`, so a capability refusal here does NOT quote
+    the id — which is exactly why an SDK relying on that absence would work in
+    this test suite and fail in the field, against every older deployment. The
+    SDK's guard is the SHAPE, so it does not care either way; this pins what
+    THIS backend does so a regression in the redaction is caught here.
+    """
+    org, _admin, live = declared
+    event = _attributed(live)
+    event["event_metadata"]["totally_unknown_key"] = "x"
+    response = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
+
+    assert response.status_code == 422
+    assert live not in response.text, (
+        "the 422 echoed the attribution back — main._validation_error_handler "
+        "has stopped stripping `input`")
+
 
 def test_a_genuinely_malformed_payload_is_still_not_degradable(declared, client):
     """THE CONTROL, and the reason the probe is narrow.

@@ -61,15 +61,28 @@ from .introspect import CheckResult, ExplainResult, check, explain
 #   when it is refused — a hand-set copy bypasses both. If you were setting it
 #   by hand, move the value to `FoxyClient(system_id=...)`.
 #
-#   ⚠ A MALFORMED ID RAISES, at configure time, where `mode` and
-#   `response_scan` would fall back to a default. Those two have a safe default
-#   to fall back TO. This does not: absent is a supported, first-class state,
-#   so a malformed id is not a weaker choice but a statement that failed to
-#   parse — and dropping it quietly would produce evidence indistinguishable
-#   from an SDK nobody configured, on every event, for the life of the process.
+#   ⚠ A MALFORMED ID IS REFUSED, AND WHERE YOU SET IT DECIDES HOW LOUDLY.
 #   Only the canonical spelling is accepted; braced, URN, undashed and
 #   upper-case forms are refused rather than repaired, because the value is
-#   bound into a hash chain and one system must not have five spellings.
+#   bound into a hash chain and one system must not have five spellings. An
+#   empty or whitespace-only value means "no attribution", not "malformed".
+#
+#     * `FoxyClient(system_id=)`, `@audit(system_id=)` and
+#       `log_interaction(system_id=)` RAISE ValueError. Code is written and run
+#       by the same person; a traceback is the cheapest feedback and you meet
+#       it in development.
+#     * `FOXY_SYSTEM_ID` LOGS AN ERROR and runs unattributed. Deploy
+#       configuration is usually written by somebody other than the author and
+#       first exercised in production, and this SDK does not stop a customer's
+#       service over telemetry configuration — no other FOXY_* variable can.
+#
+#   The log line is not cosmetic: an unattributed process is indistinguishable
+#   downstream from a system with no traffic, so it is emitted at startup, at
+#   ERROR, naming the variable and stating the consequence.
+#
+#   Unlike `mode` and `response_scan` there is no default to fall back TO —
+#   absent is a supported, first-class state, so a malformed id is not a weaker
+#   choice but a statement that failed to parse.
 #
 #   TWO REFUSALS, TWO ANSWERS, AND THE DIFFERENCE MATTERS TO YOUR EVIDENCE.
 #   The ledger answers both with the same "unsupported fields" phrase, because
