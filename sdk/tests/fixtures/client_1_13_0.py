@@ -132,62 +132,6 @@ _RAW_TAG_RE = re.compile(r"[A-Za-z0-9 _-]{1,64}")
 #: raw tag character-for-character identical to the canonical one.
 _RAW_TAG_SEPARATORS = re.compile(r"[ -]")
 _MODES = ("observe", "block", "redact")
-
-
-def _checked_system_id(value, where: str):
-    """The canonical spelling of a declared AI system's id, or a ``ValueError``.
-
-    ⚠ THE LEDGER'S RULE, NOT A REGEX OF OUR OWN. ``schemas.py`` accepts a value
-    only when ``str(uuid.UUID(raw)) == raw``, so this asks the same question the
-    same way rather than writing a pattern that can drift from it. ``uuid.UUID``
-    also swallows ``{...}``, ``urn:uuid:...`` and undashed or upper-case hex —
-    five strings naming one system — and that value is CHAIN-BOUND, so five
-    spellings would be five chain hashes for one attribution.
-
-    ⚠ IT RAISES, WHERE ``mode`` AND ``response_scan`` FALL BACK, AND THAT IS
-    DECIDED RATHER THAN INCONSISTENT. Those two have a safe default to fall back
-    TO: an unreadable ``mode`` becomes ``observe`` and the SDK still audits
-    everything, correctly, just less strictly. There is no equivalent here.
-    ``system_id`` has no default because ABSENT is a supported, first-class
-    state — so a malformed one is not a weaker choice, it is a statement that
-    failed to parse, and quietly dropping it produces evidence indistinguishable
-    from an SDK nobody ever configured. The failure is also TOTAL and
-    DETERMINISTIC: it costs every event in the process its attribution, forever,
-    on a value the caller copied out of ``GET /v1/systems`` thirty seconds ago.
-
-    ⚠ AND WHERE IT RAISES IS THE POINT. Every door is a CONFIGURE-TIME one —
-    the constructor, decoration, or an explicit ``log_interaction`` argument —
-    never inside the wrapped call. ``log_interaction``'s promise that telemetry
-    can never break the host application is about the telemetry it performs, not
-    about an argument that is malformed before any of it starts;
-    ``_validate_on_event`` raises from the constructor for the same reason.
-
-    Refused rather than repaired, exactly as ``_typed_tag`` refuses a spelling
-    it could have trimmed: sending an id the caller never typed would put a
-    fabricated attribution in a hash chain that by design cannot be edited
-    afterwards.
-    """
-    if value is None:
-        return None
-    parsed = None
-    if isinstance(value, str):
-        try:
-            parsed = uuid.UUID(value)
-        except ValueError:
-            parsed = None
-    if parsed is None or str(parsed) != value:
-        # The VALUE IS NOT ECHOED. This is local — nothing has been sent — but
-        # the message can reach a log aggregator, and a caller who put something
-        # unexpected in this argument is exactly who this branch catches.
-        raise ValueError(
-            "%s must be the id of a declared AI system, spelled exactly as "
-            "GET /v1/systems returns it: 36 characters, lower-case hex with "
-            "hyphens (e.g. 3f2504e0-4f89-41d3-9a0c-0305e82c3301). Braced, "
-            "URN, upper-case and undashed forms are refused rather than "
-            "repaired, because the value is bound into the hash chain and one "
-            "system must not have five spellings. Pass no system_id to send "
-            "the event unattributed." % where)
-    return value
 _PROMPT_KWARGS = ("prompt", "user_prompt", "message", "messages", "contents",
                   "text", "input", "query")
 # Prompt-side decisions that describe ENFORCEMENT the guard actually performed.
@@ -287,7 +231,6 @@ class FoxyClient:
         salt_sidecar_path: str | None = None,
         spool_path: str | None = None,
         client_id: str | None = None,
-        system_id: str | None = None,
         audit_required: bool | None = None,
         mode: str | None = None,
         response_scan: str | None = None,
@@ -313,22 +256,10 @@ class FoxyClient:
             salt_sidecar_path=salt_sidecar_path,
             spool_path=spool_path,
             client_id=client_id,
-            system_id=system_id,
             audit_required=audit_required,
             mode=mode,
             response_scan=response_scan,
         )
-        # THE DEFAULT ATTRIBUTION FOR EVERYTHING THIS CLIENT RECORDS, and the
-        # door where a typo stops. Validated after `resolve` rather than inside
-        # it so that FOXY_SYSTEM_ID is judged by the same rule as the kwarg —
-        # an environment variable is a place a typo lives just as happily — and
-        # so `FoxyConfig.resolve` keeps its promise never to raise.
-        #
-        # `self.cfg.system_id` is therefore canonical-or-empty on every client
-        # that exists, which is what lets `log_interaction` read it directly
-        # instead of carrying a second, validated copy beside it.
-        _checked_system_id(self.cfg.system_id or None,
-                           "FoxyClient(system_id=...) / FOXY_SYSTEM_ID")
         if self.cfg.enabled and not self.cfg.client_id:
             spool = EventSpool(self.cfg.spool_path or None)
             self.cfg = self.cfg.__class__(
@@ -375,13 +306,11 @@ class FoxyClient:
     def enabled(self) -> bool:
         return self.cfg.enabled
 
-    def _record_host_exception(self, prompt, exc, policy, agent, metadata=None,
-                               system_id=None):
+    def _record_host_exception(self, prompt, exc, policy, agent, metadata=None):
         """Telemetry failure must never replace the application's exception."""
         try:
             self.log_interaction(prompt, exc, policy, agent,
-                                 event_type="exception", metadata=metadata,
-                                 system_id=system_id)
+                                 event_type="exception", metadata=metadata)
         except AuditRequiredError:
             log.debug("foxy-audit could not capture host exception", exc_info=True)
 
@@ -472,8 +401,7 @@ class FoxyClient:
                 "signals": list(decision.signals), "reason": decision.reason,
                 "event_type": "redacted", "org_tightened": org_tightened}
 
-    def _emit_block(self, plan: dict, policy: str, agent: str | None,
-                    system_id: str | None = None) -> None:
+    def _emit_block(self, plan: dict, policy: str, agent: str | None) -> None:
         """Emit the blocked audit event and fire the desktop policy_breach ping.
 
         prompt_hash = commitment of the ORIGINAL prompt; response_hash =
@@ -482,7 +410,7 @@ class FoxyClient:
         # ledger records WHERE the decision came from and an auditor reading the
         # event later does not have to guess (§B6).
         self.log_interaction(plan["hash_prompt"], "", policy, agent,
-                             event_type="blocked", system_id=system_id,
+                             event_type="blocked",
                              decision=("blocked_by_org_policy"
                                        if plan.get("org_tightened") else "blocked"),
                              policy_rules=plan["rules"], signals=plan["signals"],
@@ -599,8 +527,7 @@ class FoxyClient:
 
     def _emit_response_block(self, hash_prompt, response, policy: str,
                              agent: str | None, plan: dict | None, rdec,
-                             metadata: dict | None, delivered: bool,
-                             system_id: str | None = None) -> bool:
+                             metadata: dict | None, delivered: bool) -> bool:
         """Record the blocked response and ping the fox. Returns whether durable
         delivery of the audit event failed (``audit_required`` only).
 
@@ -646,7 +573,6 @@ class FoxyClient:
         try:
             self.log_interaction(hash_prompt, response, policy, agent,
                                  metadata=metadata, event_type=event_type,
-                                 system_id=system_id,
                                  **self._labels(plan, rdec, outcome=outcome, terminal=True))
         except AuditRequiredError:
             # The security decision outranks the delivery guarantee: the caller
@@ -678,7 +604,7 @@ class FoxyClient:
             signals=list(decision.signals))
 
     def audit(self, policy: str = "default", agent: str | None = None,
-              mode: str | None = None, system_id: str | None = None):
+              mode: str | None = None):
         """Return a decorator that audits the wrapped LLM-calling function.
 
         `agent` records which model/agent produced the interaction (e.g.
@@ -690,17 +616,6 @@ class FoxyClient:
         (evaluate the prompt FIRST and raise ``FoxyPolicyBlocked`` without ever
         calling the fn on a violation) or "redact" (scrub the prompt locally,
         then call the fn with the redacted prompt).
-
-        `system_id` attributes what this decorator records to one of the
-        customer's declared AI systems, overriding the client's own
-        ``system_id`` for these calls only. ⚠ THE CLIENT-LEVEL SETTING IS THE
-        ONE TO REACH FOR — one process usually IS one AI system, and
-        ``FoxyClient(system_id=...)`` / ``FOXY_SYSTEM_ID`` says so once instead
-        of on every decorator. This override exists because the registry's own
-        motivating case is a customer with SEVERAL AI products, and a monolith
-        serving a mortgage bot and an internal helpdesk from one process cannot
-        say so any other way short of building a second client. `agent` is here
-        for the identical reason and set the precedent.
 
         `mode` governs the PROMPT only. What happens to the RESPONSE is the
         client's ``response_scan`` setting, which has no per-decorator override
@@ -721,12 +636,6 @@ class FoxyClient:
         # `log_interaction` is the single place `policy_tag` reaches the wire, so
         # it is the single place that can also record what was typed; threading a
         # second argument through ten call sites could only make them disagree.
-        # ⚠ AT DECORATION, WHICH IS IMPORT TIME, AND IT RAISES. The comment
-        # below says a typo in a decorator argument should be noisy; `mode` and
-        # `policy` can afford to be noisy AND recover, because falling back to
-        # `observe` / `default` still audits. A malformed attribution has
-        # nothing to fall back to — see `_checked_system_id`.
-        system_id = _checked_system_id(system_id, "@audit(system_id=...)")
         if not _POLICY_RE.match(policy_engine.normalise_policy_tag(policy)):
             log.warning("foxy-audit: invalid policy tag %r; falling back to 'default'", policy)
             policy = "default"
@@ -751,8 +660,7 @@ class FoxyClient:
                     plan = self._evaluate_preflight(args, kwargs, policy, effective_mode,
                                                     org_tightened)
                     if plan and plan["kind"] == "block":
-                        await asyncio.to_thread(self._emit_block, plan, policy, agent,
-                                                system_id)
+                        await asyncio.to_thread(self._emit_block, plan, policy, agent)
                         raise FoxyPolicyBlocked(_block_message(policy, plan))
                     call_args = plan["args"] if plan else args
                     call_kwargs = plan["kwargs"] if plan else kwargs
@@ -761,8 +669,7 @@ class FoxyClient:
                     except BaseException as exc:
                         try:
                             await self._record_async(_extract_prompt(args, kwargs), exc,
-                                                     policy, agent, event_type="exception",
-                                                     system_id=system_id)
+                                                     policy, agent, event_type="exception")
                         except AuditRequiredError:
                             log.debug("foxy-audit could not capture async host exception",
                                       exc_info=True)
@@ -774,13 +681,12 @@ class FoxyClient:
                             and self.cfg.response_scan == "block"):
                         failed = await asyncio.to_thread(
                             self._emit_response_block, hash_prompt, response, policy,
-                            agent, plan, rdec, meta, False, system_id)
+                            agent, plan, rdec, meta, False)
                         raise FoxyResponseBlocked(
                             _response_block_message(policy, rdec, False, failed), failed)
                     await self._record_async(
                         hash_prompt, response, policy, agent, metadata=meta,
                         event_type=(plan and plan["event_type"]) or "interaction",
-                        system_id=system_id,
                         **self._labels(plan, rdec, outcome="response_flagged"))
                     return response
                 return awrapper
@@ -792,8 +698,7 @@ class FoxyClient:
                     plan = self._evaluate_preflight(args, kwargs, policy, effective_mode,
                                                     org_tightened)
                     if plan and plan["kind"] == "block":
-                        await asyncio.to_thread(self._emit_block, plan, policy, agent,
-                                                system_id)
+                        await asyncio.to_thread(self._emit_block, plan, policy, agent)
                         raise FoxyPolicyBlocked(_block_message(policy, plan))
                     call_args = plan["args"] if plan else args
                     call_kwargs = plan["kwargs"] if plan else kwargs
@@ -816,8 +721,7 @@ class FoxyClient:
                         try:
                             await self._record_async(_extract_prompt(args, kwargs), exc,
                                                      policy, agent, event_type="exception",
-                                                     metadata=_metadata(kwargs),
-                                                     system_id=system_id)
+                                                     metadata=_metadata(kwargs))
                         except AuditRequiredError:
                             log.debug("foxy-audit could not capture async stream exception",
                                       exc_info=True)
@@ -830,8 +734,7 @@ class FoxyClient:
                         stopped = self._with_coverage(stopped, scanner.coverage)
                         failed = await asyncio.to_thread(
                             self._emit_response_block, hash_prompt, chunks, policy,
-                            agent, plan, stopped, _metadata(kwargs), bool(chunks),
-                            system_id)
+                            agent, plan, stopped, _metadata(kwargs), bool(chunks))
                         raise FoxyResponseBlocked(
                             _response_block_message(policy, stopped, bool(chunks), failed),
                             failed)
@@ -842,7 +745,6 @@ class FoxyClient:
                     await self._record_async(
                         hash_prompt, chunks, policy, agent, metadata=_metadata(kwargs),
                         event_type=(plan and plan["event_type"]) or "stream",
-                        system_id=system_id,
                         **self._labels(plan, rdec, outcome="response_flagged"))
                 return agen_wrapper
 
@@ -852,7 +754,7 @@ class FoxyClient:
                 plan = self._evaluate_preflight(args, kwargs, policy, effective_mode,
                                                 org_tightened)
                 if plan and plan["kind"] == "block":
-                    self._emit_block(plan, policy, agent, system_id)
+                    self._emit_block(plan, policy, agent)
                     raise FoxyPolicyBlocked(_block_message(policy, plan))
                 call_args = plan["args"] if plan else args
                 call_kwargs = plan["kwargs"] if plan else kwargs
@@ -860,8 +762,7 @@ class FoxyClient:
                     response = fn(*call_args, **call_kwargs)
                 except BaseException as exc:
                     self._record_host_exception(_extract_prompt(args, kwargs), exc,
-                                                policy, agent, _metadata(kwargs),
-                                                system_id)
+                                                policy, agent, _metadata(kwargs))
                     raise
                 hash_prompt = plan["hash_prompt"] if plan else _extract_prompt(args, kwargs)
                 event_override = (plan and plan["event_type"]) or None
@@ -884,14 +785,13 @@ class FoxyClient:
                                 yield chunk
                         except BaseException as exc:
                             self._record_host_exception(_extract_prompt(args, kwargs), exc,
-                                                        policy, agent, _metadata(kwargs),
-                                                        system_id)
+                                                        policy, agent, _metadata(kwargs))
                             raise
                         if stopped is not None:
                             stopped = self._with_coverage(stopped, scanner.coverage)
                             failed = self._emit_response_block(
                                 hash_prompt, chunks, policy, agent, plan, stopped,
-                                _metadata(kwargs), bool(chunks), system_id)
+                                _metadata(kwargs), bool(chunks))
                             raise FoxyResponseBlocked(
                                 _response_block_message(policy, stopped, bool(chunks), failed),
                                 failed)
@@ -900,7 +800,6 @@ class FoxyClient:
                             hash_prompt, chunks, policy, agent,
                             metadata=_metadata(kwargs),
                             event_type=event_override or "stream",
-                            system_id=system_id,
                             **self._labels(plan, rdec,
                                            outcome="response_flagged"))
                     return generator()
@@ -908,13 +807,11 @@ class FoxyClient:
                 rdec = self._scan_response(response, policy)
                 if rdec is not None and rdec.triggered and self.cfg.response_scan == "block":
                     failed = self._emit_response_block(hash_prompt, response, policy,
-                                                       agent, plan, rdec, meta, False,
-                                                       system_id)
+                                                       agent, plan, rdec, meta, False)
                     raise FoxyResponseBlocked(
                         _response_block_message(policy, rdec, False, failed), failed)
                 self.log_interaction(hash_prompt, response, policy, agent, metadata=meta,
                                      event_type=event_override or "interaction",
-                                     system_id=system_id,
                                      **self._labels(plan, rdec,
                                                     outcome="response_flagged"))
                 return response
@@ -926,8 +823,7 @@ class FoxyClient:
     def log_interaction(self, prompt, response, policy: str, agent: str | None = None,
                         metadata: dict | None = None, event_type: str = "interaction",
                         decision: str | None = None, policy_rules=None,
-                        signals=None, blocked_reason: str | None = None,
-                        system_id: str | None = None):
+                        signals=None, blocked_reason: str | None = None):
         """Perform cryptographic hashing synchronously and push to AsyncDispatcher.
 
         The preflight guard passes ``decision`` ("allowed"|"blocked"|"redacted"),
@@ -940,23 +836,7 @@ class FoxyClient:
         (prevented) — and appends ``response_*``-namespaced ids to
         ``policy_rules``. It never touches ``signals``: see
         :meth:`_labels` for why that field is load-bearing on the backend.
-
-        ``system_id`` is the decorator's per-call override; ``None`` falls back
-        to the client's own, and both being unset is the ordinary case that
-        leaves this payload byte-for-byte what 1.13.0 emitted.
         """
-        # ⚠ OUTSIDE THE `try`, DELIBERATELY. Everything below is wrapped so that
-        # telemetry can never break the host application — but that promise is
-        # about the work this method PERFORMS, not about an argument that is
-        # malformed before any of it starts. Inside the `try` a typo would be
-        # swallowed into a debug log and every event would silently go out
-        # unattributed, which is the exact outcome `_checked_system_id` exists
-        # to prevent. Nothing reaches this line from the decorator but an
-        # already-validated value, so a raise here can only be a direct caller's
-        # bad literal, answered where they wrote it.
-        attribution = _checked_system_id(
-            system_id if system_id is not None else (self.cfg.system_id or None),
-            "log_interaction(system_id=...)")
         try:
             # THE ONE PLACE `policy_tag` REACHES THE WIRE, so the one place the
             # fold and the typed spelling can be decided together. Rebinding
@@ -1057,20 +937,6 @@ class FoxyClient:
                 # remove, and `policy="hipaa"` still takes neither branch nor
                 # this one, which is what keeps the unaffected payload identical.
                 payload.setdefault("event_metadata", {})["policy_tag_raw"] = typed_tag
-            if attribution is not None:
-                # A FOURTH WAY INTO `event_metadata`, and it has to be one for
-                # the same reason the third does: a clean observe row under a
-                # canonical tag enters none of the branches above, and an
-                # attributed event is exactly as attributable when nothing
-                # fired. Set AFTER `_reserve_provenance` has run, so the SDK's
-                # own value is the one that survives a caller who passed a copy.
-                #
-                # ⚠ THE KEY IS ABSENT, NEVER NULL, when there is no attribution.
-                # `schemas._system_id_is_a_system_identifier` asks whether the
-                # KEY is present rather than whether `.get` came back None, and
-                # a `{"system_id": null}` would 422 the whole batch — a row
-                # claiming the field while holding nothing.
-                payload.setdefault("event_metadata", {})["system_id"] = attribution
             # raw text goes out of scope here — never stored or transmitted
 
             if self.cfg.desktop_ping:
@@ -1430,23 +1296,8 @@ def _reserve_provenance(metadata) -> dict:
     # same tag, overwrite the one the SDK computed, and leave nothing downstream
     # able to tell which of the two it is reading. The set is named in
     # `dispatch` because stripping it on the 422 path is that module's job.
-    # ⚠ `dispatch.SYSTEM_ID_KEYS` — `system_id` — IS HERE FOR A FOURTH REASON.
-    # From 1.14.0 the SDK OWNS this key: it validates the spelling at configure
-    # time so a typo never reaches the wire, and `dispatch` degrades it on a
-    # refusal — per system for a retired one, endpoint-wide for a backend that
-    # cannot hold it at all. A caller setting it by hand in `metadata=` bypasses
-    # BOTH. It also bypasses the override rule: `@audit(system_id=...)` beside
-    # `metadata={"system_id": ...}` would have had the caller's copy win, since
-    # this dict is merged before the SDK's own value is set.
-    #
-    # ⚠ THIS IS A BEHAVIOUR CHANGE FOR ANYONE ALREADY DOING IT, and R2 deployed
-    # today, so "already doing it" means running from source against a backend
-    # newer than PyPI's 1.11.0. Their hand-set attribution used to pass straight
-    # through and chain; from 1.14.0 it is dropped, warned once, and replaced by
-    # the configured one — which is nothing unless they configure it. Named in
-    # the release notes for that reason.
     for key in (tuple(ruleset.PROVENANCE_KEYS) + _ENFORCEMENT_KEYS
-                + dispatch.TYPED_TAG_KEYS + dispatch.SYSTEM_ID_KEYS):
+                + dispatch.TYPED_TAG_KEYS):
         if key in clean:
             del clean[key]
             if key not in _warned_reserved:
@@ -1468,30 +1319,18 @@ def _reserve_provenance(metadata) -> dict:
                 # `my_ruleset_version` is just as unknown to the allowlist — so
                 # this is not a defect S14 introduced, only one it made reachable
                 # by three more keys.
-                # ⚠ THE REMEDY IS PER KEY, NOT PER SET. `_keys_phrase` learnt
-                # this on the degrade path: a warning that names the wrong
-                # remedy sends an operator to the wrong control. "Pass it
-                # through decision / policy_rules / blocked_reason" is right for
-                # the guard's three keys and NONSENSE for `system_id`, which has
-                # its own argument and its own configure-time door.
-                remedy = (
-                    "Set it with FoxyClient(system_id=...), FOXY_SYSTEM_ID, or "
-                    "@audit(system_id=...) — the SDK validates the spelling "
-                    "there, and degrades it correctly if the backend or the "
-                    "system refuses it."
-                    if key in dispatch.SYSTEM_ID_KEYS else
-                    "Drop it, or pass it through log_interaction's own "
-                    "decision / policy_rules / blocked_reason arguments.")
                 log.warning(
-                    "foxy-audit: event_metadata[%r] is RESERVED — the SDK sets "
-                    "it itself, from what the guard, its ruleset and this "
-                    "client's configuration actually say. Your value was "
-                    "dropped. DO NOT simply rename the "
+                    "foxy-audit: event_metadata[%r] is RESERVED — it records "
+                    "what the guard and its ruleset did, and the SDK sets it "
+                    "itself. Your value was dropped. DO NOT simply rename the "
                     "field: the backend allowlists event_metadata keys and 422s "
                     "the ENTIRE batch for one it does not know, and the SDK's "
                     "degrade path strips only the keys it knows by name — so a "
                     "renamed field re-queues every event beside it, "
-                    "indefinitely. %s Reported once per process.", key, remedy)
+                    "indefinitely. Drop "
+                    "it, or pass it through log_interaction's own decision / "
+                    "policy_rules / blocked_reason arguments. Reported once per "
+                    "process.", key)
     return clean
 
 

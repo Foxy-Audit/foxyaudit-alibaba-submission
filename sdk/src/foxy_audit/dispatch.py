@@ -136,6 +136,36 @@ class AsyncDispatcher:
                                 if name in _latched_rungs(endpoint)
                                 and _strip_provenance(body, keys)]
                     resp = self._post(endpoint, api_key, body)
+                    # 🔴 SEMANTIC BEFORE CAPABILITY, AND WITHOUT LATCHING (#256).
+                    # A refusal that NAMES one of this batch's system_ids is
+                    # about THAT SYSTEM — retired, or never declared here — not
+                    # about the endpoint's ability to hold an attribution. So
+                    # only the rows carrying that id lose theirs, and nothing is
+                    # remembered: the next batch tries again in full, because
+                    # nothing has been learned about the endpoint.
+                    #
+                    # LOOPED, because the router raises on the FIRST bad id it
+                    # meets, so a batch naming two retired systems needs two
+                    # passes. Bounded twice over: each pass must drop at least
+                    # one row's attribution or it stops, and there are at most
+                    # as many distinct ids as rows.
+                    refused = set()
+                    for _ in range(len(body)):
+                        named = _refused_attributions(resp, body)
+                        if not named:
+                            break
+                        dropped = _drop_attribution(body, named)
+                        if not dropped:
+                            break
+                        refused.update(dropped)
+                        log.warning(
+                            "foxy-audit: %s refused the attribution %s; "
+                            "resending %d event(s) without it. The system is "
+                            "retired or is not declared in this workspace — "
+                            "the events are intact, and every other event in "
+                            "this batch keeps its attribution.",
+                            endpoint, " / ".join(named), len(dropped))
+                        resp = self._post(endpoint, api_key, body)
                     # ESCALATE ONE RUNG AT A TIME, newest key set first. A
                     # blanket strip would answer "policy_tag_raw is unknown here"
                     # by also dropping ruleset provenance the backend accepts,
@@ -188,7 +218,7 @@ class AsyncDispatcher:
                         response = {"status": "accepted",
                                     "http_status": resp.status_code,
                                     "body": str(response)[:256]}
-                    if stripped:
+                    if stripped or refused:
                         # RECORDED, not merely logged — and recorded LOCALLY, in
                         # the spool receipt, because it cannot ride on the wire:
                         # a marker key would itself be unknown to the very
@@ -196,13 +226,22 @@ class AsyncDispatcher:
                         # the ledger about the degradation would re-trigger the
                         # failure it describes.
                         by_marker = defaultdict(list)
-                        for row, held in zip(batch, carried):
+                        for index, (row, held) in enumerate(zip(batch, carried)):
                             # What this row actually LOST: what it held, kept to
                             # what the batch dropped. A row carrying provenance
                             # in a batch where only the typed tag was stripped
                             # lost nothing and must not say it did.
-                            by_marker[tuple(n for n in held
-                                            if n in stripped)].append(row)
+                            #
+                            # The semantic refusal is per ROW rather than per
+                            # batch, so it joins from the index side. It can
+                            # coexist with the rung: a row whose attribution was
+                            # refused by name, in a batch that then met a
+                            # backend refusing the key outright, honestly lost
+                            # it both ways.
+                            markers = tuple(n for n in held if n in stripped)
+                            if index in refused:
+                                markers += (_DEGRADED_ATTRIBUTION,)
+                            by_marker[markers].append(row)
                         for markers, rows_for in by_marker.items():
                             spool.ack(rows_for,
                                       dict(response, foxy_degraded=list(markers))
@@ -260,6 +299,15 @@ PROVENANCE_RETRY_AFTER = 900.0
 
 _DEGRADED_PROVENANCE = "ruleset_provenance_stripped"
 _DEGRADED_TYPED_TAG = "policy_tag_raw_stripped"
+#: This ENDPOINT cannot hold an attribution at all — a backend older than R2,
+#: which does not know the key. Endpoint-wide, and latched.
+_DEGRADED_SYSTEM_ID = "system_id_stripped"
+#: THIS EVENT'S attribution was refused BY NAME — the system is retired, or was
+#: never declared in this workspace. A different thing from the rung above, with
+#: a different remedy, so it gets its own marker rather than borrowing one whose
+#: meaning ("upgrade your backend") would be false. See
+#: :func:`_refused_attributions`.
+_DEGRADED_ATTRIBUTION = "system_id_refused"
 
 #: The other client-supplied ``event_metadata`` key a lagging backend can reject,
 #: and therefore the other one this module has to be able to strip.
@@ -284,24 +332,49 @@ _DEGRADED_TYPED_TAG = "policy_tag_raw_stripped"
 #: ``raise_for_status``, then ``spool.retry`` re-queues the whole batch, forever.
 TYPED_TAG_KEYS = ("policy_tag_raw",)
 
+#: The THIRD client-supplied ``event_metadata`` key a lagging backend can refuse
+#: — the AI-system attribution (R3). A third tuple for the reason there is a
+#: second one: it describes neither the ruleset nor the caller's typed spelling,
+#: it names a row in the customer's own declared inventory, and folding it into
+#: either existing name would make that name false where it is read.
+#:
+#: ``client._reserve_provenance`` strips a CALLER's copy for a fourth reason
+#: again — the SDK validates this value at configure time and this module
+#: degrades it on refusal, and a hand-set copy would slip past both.
+SYSTEM_ID_KEYS = ("system_id",)
+
 #: The client-supplied key sets a backend can refuse, as RUNGS: a name, the keys,
 #: and the remedy to tell an operator. NEWEST FIRST, which is also
 #: OLDEST-BACKEND-LAST, and that ordering is the whole reason escalating one rung
 #: at a time terminates cheaply.
 #:
 #: ⚠ THE INGEST ALLOWLIST HAS ONLY EVER GROWN, so the sets a backend refuses
-#: are NESTED: {} ⊂ {policy_tag_raw} ⊂ {policy_tag_raw, ruleset_*}. A backend
-#: that knows ``policy_tag_raw`` (S12) necessarily knows the provenance keys
-#: (1.7.0-era), because the second was allowlisted first. So stripping the newest
-#: rung and re-probing finds the true boundary in at most one extra POST, and a
-#: backend refusing nothing still pays exactly one.
+#: are NESTED: {} ⊂ {system_id} ⊂ {system_id, policy_tag_raw} ⊂ {system_id,
+#: policy_tag_raw, ruleset_*}. A backend that knows ``system_id`` (R2)
+#: necessarily knows ``policy_tag_raw`` (S12), which necessarily knows the
+#: provenance keys (1.7.0-era), because each was allowlisted before the one
+#: after it. So stripping the newest rung and re-probing finds the true boundary
+#: in at most one extra POST, and a backend refusing nothing still pays exactly
+#: one.
+#:
+#: ⚠ WHICH IS WHY ``system_id`` WENT IN FIRST RATHER THAN LAST. It is the
+#: NEWEST key, so it is the one the most backends refuse. Appended instead, a
+#: backend that refuses only ``system_id`` — every deployment older than R2,
+#: including the frozen production one — would have had the typed tag stripped
+#: first: a POST spent on a rung that backend was happy to take, a 422 that says
+#: nothing new, and then a latch recording a refusal that never happened.
 #:
 #: If that nesting were ever violated — a backend refusing the ruleset keys but
-#: not the typed tag — this over-strips the typed tag for one retry window
+#: not the typed tag — this over-strips the newer rungs for one retry window
 #: rather than failing: rung 1 is applied, the 422 persists, rung 2 is applied,
-#: the POST succeeds, and BOTH latch. Degraded and recorded, not broken. Stated
-#: because it is the assumption the cheapness rests on, not a proof.
+#: and so on until the POST succeeds, and every rung applied latches. Degraded
+#: and recorded, not broken. Stated because it is the assumption the cheapness
+#: rests on, not a proof.
 _DEGRADE_LADDER = (
+    (_DEGRADED_SYSTEM_ID, SYSTEM_ID_KEYS,
+     "the AI-system attribution. The events are intact and every other field is "
+     "unchanged, but they no longer say which of your declared systems produced "
+     "them; a backend that allowlists event_metadata['system_id'] restores it"),
     (_DEGRADED_TYPED_TAG, TYPED_TAG_KEYS,
      "the caller's typed policy-tag spelling. The canonical policy_tag is "
      "unaffected and the events are intact; a backend that allowlists "
@@ -361,6 +434,84 @@ def _keys_phrase(keys) -> str:
     backend over a key that backend had never been asked about.
     """
     return " / ".join("event_metadata[%r]" % k for k in keys)
+
+
+def _refused_attributions(resp, body) -> tuple:
+    """Which of THIS batch's ``system_id`` values the refusal actually NAMES.
+
+    🔴 THE LATCH SPLIT, AND THE WHOLE REASON R3 IS NOT ONE MORE LADDER RUNG.
+
+    R2 answers a RETIRED or FOREIGN system with the same "unsupported fields"
+    phrase a capability refusal uses, and it had to: that phrase is the only one
+    :func:`_rejects_unsupported_fields` recognises, and a message this module
+    does not recognise means no strip-and-retry, then ``raise_for_status``, then
+    ``spool.retry`` re-queuing the whole batch forever. So the two refusals are
+    indistinguishable by status and by phrase — but not by CONTENT:
+
+    * a SEMANTIC refusal names the offending id, because a human has to be told
+      WHICH of their systems was retired;
+    * a CAPABILITY refusal cannot, because the backend that sends it has never
+      heard of the key.
+
+    Read as capability, one retired system would latch ``system_id`` off for
+    the whole ENDPOINT for 900 seconds — every healthy system's events included
+    — and those rows are chain-bound, so the attribution would be permanently
+    absent from the evidence rather than merely delayed. That is #256, and it is
+    the defect this function exists to prevent rather than one it fixes.
+
+    ⚠ IT MATCHES ONLY SPELLINGS THIS BATCH ACTUALLY SENT, and that is the guard
+    against a reworded message rather than a hope that the wording holds. It
+    never parses the sentence, never looks for a UUID shape, and never trusts an
+    id it did not itself put on the wire.
+
+    ⚠ FAIL SAFE, IN BOTH DIRECTIONS:
+
+    * R2 rewords so the id no longer appears -> ``()`` -> the caller falls
+      through to the ladder, strips endpoint-wide and latches, which is exactly
+      what 1.13.0 did. The worst case is never worse than the previous release.
+    * some other 422 happens to quote an id back -> the caller drops that id's
+      attribution, re-POSTs, and the refusal persists -> the ladder runs anyway.
+      One extra POST and a lost latch, never a FALSE latch. A wrong guess in
+      this direction costs a round trip; a wrong guess in the other costs
+      evidence, so the asymmetry is deliberate.
+
+    Returns the spellings in batch order, deduped.
+    """
+    if not _rejects_unsupported_fields(resp):
+        return ()
+    try:
+        text = resp.text
+    except Exception:                        # noqa: BLE001 — a body we cannot read
+        return ()
+    named = []
+    for event in body:
+        metadata = event.get("event_metadata")
+        if not isinstance(metadata, dict):
+            continue
+        spelling = metadata.get("system_id")
+        if (isinstance(spelling, str) and spelling not in named
+                and spelling in text):
+            named.append(spelling)
+    return tuple(named)
+
+
+def _drop_attribution(body: list, spellings) -> list:
+    """Remove ``system_id`` from the rows carrying ``spellings``; their indices.
+
+    PER ROW, not per batch, which is the entire difference from
+    :func:`_strip_provenance`. Ten events from a healthy system beside one from
+    a system somebody retired last week must lose nothing, and the returned
+    indices are what lets the receipt say so — a marker on a row it cannot be
+    true of means nothing at all.
+    """
+    wanted = set(spellings)
+    dropped = []
+    for index, event in enumerate(body):
+        metadata = event.get("event_metadata")
+        if isinstance(metadata, dict) and metadata.get("system_id") in wanted:
+            del metadata["system_id"]
+            dropped.append(index)
+    return dropped
 
 
 def _rungs_in(event) -> tuple:

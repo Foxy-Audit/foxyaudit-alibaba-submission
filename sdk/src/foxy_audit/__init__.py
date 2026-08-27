@@ -32,6 +32,71 @@ from .client import FoxyClient, FoxyPolicyBlocked, FoxyResponseBlocked
 from .config import FoxyConfig
 from .introspect import CheckResult, ExplainResult, check, explain
 
+# 1.14.0 — R3. The audit trail says WHICH of your AI systems produced it.
+#
+# ADDITIVE ON THE WIRE, and the unaffected path is byte-identical: an SDK with
+# no system configured emits the payload 1.13.0 emitted, key for key, proved
+# against the frozen 1.13.0 client in tests/test_system_attribution.py rather
+# than asserted. `event_metadata` has been chain material since chain V2, so a
+# key appearing on a row that did not need it would change that row's chain
+# hash for nothing.
+#
+#   NEW — `FoxyClient(system_id=...)`, `FOXY_SYSTEM_ID`, and
+#   `@audit(policy=..., system_id=...)`. The id is one of your DECLARED AI
+#   systems, exactly as `GET /v1/systems` spells it. Client-level is the one to
+#   reach for — one process is usually one system; the decorator override is
+#   for a process that hosts more than one.
+#
+#   ⚠ REQUIRES A BACKEND THAT ACCEPTS THE KEY. Self-hosted deployments older
+#   than the R2 release refuse it, and this SDK degrades rather than failing:
+#   see the two refusals below. You lose the attribution on those rows, never
+#   the rows.
+#
+#   ⚠ ONE BEHAVIOUR CHANGE, AND IT IS THE ONLY ONE. `metadata={"system_id":
+#   ...}` used to pass straight through to the ledger. `system_id` is now a
+#   RESERVED key, like `ruleset_version` / `decision` / `policy_tag_raw`: a
+#   caller's copy is dropped, warned once per process, and replaced by whatever
+#   this client is configured with. The SDK owns the key because it now
+#   validates the spelling before anything is sent and degrades it correctly
+#   when it is refused — a hand-set copy bypasses both. If you were setting it
+#   by hand, move the value to `FoxyClient(system_id=...)`.
+#
+#   ⚠ A MALFORMED ID RAISES, at configure time, where `mode` and
+#   `response_scan` would fall back to a default. Those two have a safe default
+#   to fall back TO. This does not: absent is a supported, first-class state,
+#   so a malformed id is not a weaker choice but a statement that failed to
+#   parse — and dropping it quietly would produce evidence indistinguishable
+#   from an SDK nobody configured, on every event, for the life of the process.
+#   Only the canonical spelling is accepted; braced, URN, undashed and
+#   upper-case forms are refused rather than repaired, because the value is
+#   bound into a hash chain and one system must not have five spellings.
+#
+#   TWO REFUSALS, TWO ANSWERS, AND THE DIFFERENCE MATTERS TO YOUR EVIDENCE.
+#   The ledger answers both with the same "unsupported fields" phrase, because
+#   that is the only phrase this SDK's retry recognises and anything else
+#   re-queues the batch forever. They are told apart by whether the refusal
+#   NAMES an id:
+#
+#     * it names one — that SYSTEM is retired, or is not declared in your
+#       workspace. Only the events carrying THAT id lose their attribution, and
+#       nothing is remembered: every other system's events keep theirs, on this
+#       batch and on the next.
+#     * it names none — that BACKEND cannot hold an attribution at all. The key
+#       is stripped for the whole endpoint and the refusal is remembered for 15
+#       minutes, then re-probed. This is the older, coarser answer, and it is
+#       also what a refusal we cannot read falls back to: the worst case is
+#       never worse than 1.13.0.
+#
+#   Either way the drop is RECORDED locally, in the spool receipt, as
+#   `foxy_degraded: ["system_id_refused"]` or `["system_id_stripped"]` — on the
+#   rows it is actually true of. It cannot ride on the wire: a marker key would
+#   itself be unknown to the backend that just rejected an unknown key.
+#
+#   NOT SENT TO A JUDGE. `system_id` is excluded from the metadata projection
+#   handed to Gemini or OpenAI. It tells a grader nothing — an opaque id is not
+#   something to reason from — and it would hand a provider a stable handle for
+#   partitioning one customer's traffic into their individual AI products.
+#
 # 1.13.0 — S13/S14/S15. The tag you typed, the rules that ran, the limits we
 # admit.
 #
@@ -532,7 +597,7 @@ from .introspect import CheckResult, ExplainResult, check, explain
 # taking the deterministic enforcement path, and the Compliance Passport does not
 # count it. Degraded, never broken, and only for a deployment that opted into
 # blocking. Nothing is emitted under the default.
-__version__ = "1.13.0"
+__version__ = "1.14.0"
 __all__ = ["CheckResult", "ExplainResult", "FoxyClient", "FoxyConfig",
            "FoxyPolicyBlocked", "FoxyResponseBlocked", "audit", "check",
            "explain", "__version__"]

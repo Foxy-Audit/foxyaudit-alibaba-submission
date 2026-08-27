@@ -6,11 +6,109 @@ The SDK creates customer-keyed HMAC commitments for supported LLM inputs and out
 throws raw text away before upload, and durably spools only metadata to the Foxy Audit backend. It also fires a best-effort local UDP ping so the
 desktop "fox" companion shows local capture activity and backend grading alerts.
 
+## 1.14.0 — the audit trail says which of your AI systems produced it
+
+**Upgrading from 1.11.0**, the version on PyPI. 1.12.0 and 1.13.0 were built and
+never published, so their notes below arrive with this release too.
+
+Foxy records events but until now had no idea **which** of your AI products each
+one came from. A bank running a mortgage chatbot, a fraud screener and an
+internal helpdesk got one undifferentiated pile of evidence, and could not answer
+*"show me everything the mortgage bot did"* — the first question any auditor asks.
+
+Declare your systems (`POST /v1/systems`, or the dashboard), then tell the SDK
+which one it is:
+
+```python
+foxy = FoxyClient(api_key=..., system_id="3f2504e0-4f89-41d3-9a0c-0305e82c3301")
+```
+
+or `FOXY_SYSTEM_ID=3f2504e0-…` in the environment, which is usually where it
+belongs — the same code points at a different system in staging and production.
+
+**One process is usually one system, so client-level is the setting to reach
+for.** If one process genuinely serves two AI products, a decorator can override
+it:
+
+```python
+@foxy.audit(policy="hipaa", system_id="<the helpdesk's id>")
+def helpdesk(prompt: str) -> str:
+    ...
+```
+
+The id rides in `event_metadata` and is folded into the tamper-evident hash
+chain, so an attribution cannot be altered after the fact.
+
+**Nothing changes if you do not set it.** An SDK with no system configured emits
+the payload 1.13.0 emitted, byte for byte — proved against a frozen copy of the
+1.13.0 client, not asserted. `event_metadata` is chain material, so a key on a
+row that did not need one would change that row's hash for nothing.
+
+### The two things to know before you upgrade
+
+**1. `metadata={"system_id": ...}` no longer reaches the ledger.** The key is now
+reserved, like `ruleset_version`, `decision` and `policy_tag_raw`: a caller's copy
+is dropped, warned once per process, and replaced by whatever the client is
+configured with. The SDK owns it because it now validates the spelling before
+anything is sent and degrades it correctly when the ledger refuses it — a
+hand-set copy bypasses both. Move the value to `FoxyClient(system_id=...)`.
+
+**2. A malformed id raises, at configure time.** `mode` and `response_scan` fall
+back to a default on a typo; this does not, because there is nothing safe to fall
+back to. Absent is a supported, first-class state, so a malformed id is not a
+weaker choice — it is a statement that failed to parse, and dropping it quietly
+would produce evidence indistinguishable from an SDK nobody configured, on every
+event, for the life of the process.
+
+Only the canonical spelling is accepted — 36 characters, lower-case hex with
+hyphens, exactly as `GET /v1/systems` returns it. Braced, `urn:uuid:`, undashed
+and upper-case forms are **refused rather than repaired**: the value is bound
+into a hash chain, and one system must not end up with five spellings.
+
+### When the ledger refuses an attribution
+
+A backend older than the release that added this key does not know it, and a
+system you retired accepts no new events. Both are answered the same way on the
+wire, and the SDK tells them apart by whether the refusal names an id:
+
+| The refusal | What the SDK does |
+|---|---|
+| names one of your ids — that **system** is retired or is not declared in your workspace | drops the attribution from **only the events carrying that id**, resends, and remembers nothing. Every other system's events keep theirs, on this batch and the next. |
+| names none — that **backend** cannot hold an attribution at all | strips the key for the whole endpoint, remembers it for 15 minutes, then re-probes. |
+
+The second is the coarser answer, and it is also the fallback when a refusal
+cannot be read — so the worst case is never worse than 1.13.0.
+
+**Either way you lose the attribution, never the events**, and the drop is
+recorded locally in the spool receipt as `foxy_degraded: ["system_id_refused"]`
+or `["system_id_stripped"]`, on the rows it is actually true of. It cannot ride
+on the wire: a marker key would itself be unknown to the backend that has just
+rejected an unknown key.
+
+**A dropped attribution does not come back.** A resend that lands after the
+original was already stored is treated as a duplicate and accepted, and it does
+not add an attribution the stored row lacks. The events are intact and every
+other field is unchanged; what is gone is the sentence naming the system.
+
+### It is not sent to a judge
+
+`system_id` is excluded from the metadata projection handed to Gemini or OpenAI.
+It tells a grader nothing — an opaque id is not something to reason from — and
+unlike `request_id` or `trace_id` it is stable for the whole life of a declared
+system, so it would give a provider a handle for partitioning one customer's
+traffic into their individual AI products and profiling each over time.
+
+### Downgrading
+
+If you spool events with an attribution and then downgrade to 1.13.0, that older
+SDK cannot strip a key it does not know about. Against a backend that accepts
+`system_id` this is harmless. Against one that does not, those rows will retry
+indefinitely. Flush the spool before downgrading, or delete it.
+
 ## 1.13.0 — the tag you typed, the rules that ran, the limits we admit
 
-**Upgrading from 1.11.0**, which is the version on PyPI. 1.12.0 was built and
-never published, so its `on_event` receipt — additive, documented below — arrives
-with this release too.
+*Superseded by 1.14.0 above; kept because 1.13.0 was never published to PyPI and
+these changes therefore arrive with 1.14.0.*
 
 **Three things change what your code sees, and one of them is a REMOVAL the
 version number will not warn you about.** It is a minor release rather than a
@@ -727,6 +825,30 @@ def ask_model(prompt: str) -> str:
 `agent` is optional — rows logged without it hash exactly as before, so existing chains keep
 verifying.
 
+### Attributing the AI system (`system_id`)
+
+`agent` records *which model*. `system_id` records **which of your AI products** — the mortgage
+bot rather than the internal helpdesk — by naming a system you declared through
+`POST /v1/systems`. It rides in `event_metadata` and is chain-bound, so per-system evidence is
+evidence rather than a filter someone applied afterwards.
+
+```python
+foxy = FoxyClient(api_key=..., system_id="3f2504e0-4f89-41d3-9a0c-0305e82c3301")
+```
+
+or `FOXY_SYSTEM_ID` in the environment. **One process is usually one system**, so set it on the
+client; `@foxy.audit(policy="hipaa", system_id=...)` overrides it for a process that serves more
+than one.
+
+Systems are **declared, never inferred** — an inventory Foxy guessed would not be evidence — and
+they are **retired, never deleted**: a retired system accepts no new events and keeps every
+historical one. Attribute an event to a retired or undeclared system and the ledger refuses that
+event's attribution; the SDK resends it unattributed and leaves every other system's events
+alone. See the 1.14.0 notes above for what is recorded when that happens.
+
+Spelling is validated locally, at configure time, and only the canonical form is accepted — the
+one `GET /v1/systems` returns. A malformed id raises rather than being repaired or dropped.
+
 ### Scanning the response (OWASP LLM05 — Improper Output Handling)
 
 `mode` governs the **prompt**. `response_scan` governs what came **back**: markup that will be
@@ -802,6 +924,7 @@ That is exactly why prevention is opt-in.
 | Salt sidecar | `salt_sidecar_path` | `FOXY_SALT_SIDECAR` | _(none → commitments unsalted)_ |
 | Durable spool | `spool_path` | `FOXY_SPOOL_PATH` | `~/.foxy-audit/spool.sqlite3` |
 | Stable client id | `client_id` | `FOXY_CLIENT_ID` | persisted in the local spool when omitted |
+| AI system | `system_id` | `FOXY_SYSTEM_ID` | _(none → events carry no attribution)_ |
 | Required capture | `audit_required` | `FOXY_AUDIT_REQUIRED` | `False` |
 | Prompt guard mode | `mode` | `FOXY_MODE` | `observe` (`block` / `redact` enforce before the call) |
 | Response scan | `response_scan` | `FOXY_RESPONSE_SCAN` | `observe` (`block` prevents, `off` disables) |
@@ -848,6 +971,13 @@ To the backend (`POST /v1/logs`, `Authorization: Bearer <key>`):
 
 ```json
 {"event_id": "<uuid>", "client_id": "...", "client_seq": 1, "commitment_alg": "hmac-sha256", "prompt_hash": "<64 hex>", "response_hash": "<64 hex>", "token_count": 123, "policy_tag": "hipaa_basic"}
+```
+
+With a system configured, one bounded identifier is added — the id of a system
+you declared, and nothing else:
+
+```json
+{"...": "...", "event_metadata": {"system_id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301"}}
 ```
 
 To the desktop fox (UDP `127.0.0.1:9999`):

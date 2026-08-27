@@ -17,8 +17,11 @@ about each:
      halves that a plain pop cannot both satisfy
   3. the JUDGE PROJECTION (judge.py) — NOT widened, deliberately, and driven
      against the bytes each provider is handed rather than against the helper
-  4. the SDK DEGRADE LADDER (dispatch.py) — untouched here (that is R3), but its
-     nesting assumption is asserted, because this phase is what keeps it true
+  4. the SDK DEGRADE LADDER (dispatch.py) — R2 asserted only that the SDK
+     RECOGNISES each refusal; R3 shipped the rung and the latch split, so the
+     RECOVERY is now driven end-to-end here, the shipped SDK against the shipped
+     router. The nesting assumption the ladder rests on is asserted here too,
+     because this phase is what keeps it true.
 
 The claim that makes the whole feature safe is that nothing changes for anyone
 who does not send a `system_id`. That is guarded, not assumed —
@@ -707,6 +710,69 @@ def _sdk_probe():
     return _rejects_unsupported_fields
 
 
+def _sdk_dispatch():
+    """The REAL dispatch MODULE, not just its probe.
+
+    Imported from sdk/src rather than reimplemented here, for the reason
+    `_sdk_probe` gives: a copy would keep agreeing with itself after the SDK
+    changed, which is the exact failure this guards. The SDK is stdlib-only, so
+    it imports cleanly into the backend venv.
+    """
+    import pathlib
+    import sys
+
+    sdk_src = pathlib.Path(__file__).resolve().parents[3] / "sdk" / "src"
+    if str(sdk_src) not in sys.path:
+        sys.path.insert(0, str(sdk_src))
+    from foxy_audit import dispatch
+
+    return dispatch
+
+
+def _degrade_through_the_sdk(tmp_path, http, headers, events):
+    """Drive the REAL SDK degrade path against the REAL backend.
+
+    `AsyncDispatcher._post` is redirected at the HTTP boundary — the one seam
+    between the two halves — so everything above it is the shipped SDK and
+    everything below it is the shipped router. Nothing about either refusal is
+    simulated.
+
+    Returns (every body POSTed, the spool, the endpoint).
+    """
+    import json
+
+    dispatch = _sdk_dispatch()
+    from foxy_audit.spool import EventSpool
+
+    endpoint = "http://backend.test/v1/logs/batch"
+    spool = EventSpool(str(tmp_path / "spool.sqlite3"))
+    for event in events:
+        spool.enqueue(endpoint, "foxy_sk_test", event)
+
+    posted = []
+
+    def _post(_endpoint, _api_key, body):
+        posted.append(json.loads(json.dumps(body)))
+        return http.post("/v1/logs/batch", headers=headers, json=body)
+
+    original = dispatch.AsyncDispatcher._post
+    dispatch.AsyncDispatcher._post = staticmethod(_post)
+    dispatch._no_provenance.clear()
+    try:
+        dispatch._DISPATCHER._flush_spool({str(tmp_path / "spool.sqlite3")})
+    finally:
+        dispatch.AsyncDispatcher._post = original
+    return posted, spool, endpoint
+
+
+def _spooled(system_id=None, **overrides):
+    """An event shaped for the spool: it needs a `client_id` to sequence on."""
+    event = (_attributed(system_id, **overrides) if system_id is not None
+             else _event(**overrides))
+    event["client_id"] = "c" * 32
+    return event
+
+
 def test_every_attribution_refusal_is_one_the_sdk_can_degrade_from(declared, client):
     """THE SPOOL. A 422 the probe does not recognise re-queues the batch forever.
 
@@ -722,11 +788,14 @@ def test_every_attribution_refusal_is_one_the_sdk_can_degrade_from(declared, cli
     come from two different layers and only one of them inherits schemas.py's
     wording by construction.
 
-    ⚠ What the SDK then does is drop the attribution and resend, so the event
-    lands unattributed rather than not at all. That is the right trade and it is
-    worth being explicit about: the alternative is losing the evidence, and a
-    retired system's guarantee — that no NEW event is ever attributed to it —
-    survives either way, because the resend carries no attribution.
+    ⚠ RECOGNITION ONLY. That is all this asserts, and the name says so: the
+    probe returns True, which means the SDK will *attempt* a degrade. Whether
+    the attempt SUCCEEDS is a property of the ladder, which lives in the SDK —
+    and it is asserted end-to-end by
+    ``test_the_sdk_actually_recovers_from_every_attribution_refusal`` below.
+    Until R3 the ladder could not recover from any of these, so this test's
+    older prose — which promised recovery — described something no version of
+    the SDK then did.
     """
     org, admin, system_id = declared
     retired = admin.post("/v1/systems", json=_payload("legacy-bot"))
@@ -745,6 +814,83 @@ def test_every_attribution_refusal_is_one_the_sdk_can_degrade_from(declared, cli
         assert response.status_code == 422, f"{label}: {response.text}"
         assert probe(response), f"the SDK would brick its spool on {label}"
 
+
+def test_the_sdk_actually_recovers_from_every_attribution_refusal(
+        declared, client, tmp_path):
+    """RECOVERY, END TO END — the shipped SDK against the shipped router.
+
+    The test above proves the SDK RECOGNISES each refusal. Recognising it is
+    only half: a strip that removes nothing makes the resend byte-identical to
+    the request that just failed, which `_strip_provenance` correctly refuses to
+    send — so the batch would still re-queue forever, having merely looked at
+    the 422 first. Until R3's rung existed, that was the SDK's actual behaviour
+    on every one of these.
+
+    Each case therefore ends where it has to end: a 202, the events chained, and
+    the spool EMPTY.
+    """
+    org, admin, live = declared
+    retired = admin.post("/v1/systems", json=_payload("legacy-bot"))
+    retired_id = retired.json()["id"]
+    admin.post(f"/v1/systems/{retired_id}/retire")
+
+    for label, bad in (("retired", _spooled(retired_id)),
+                       ("undeclared", _spooled(str(uuid.uuid4())))):
+        healthy = _spooled(live)
+        posted, spool, _endpoint = _degrade_through_the_sdk(
+            tmp_path / label, client, org["auth"], [healthy, bad])
+
+        assert len(posted) == 2, f"{label}: expected one refusal and one resend"
+        assert spool.due(10) == [], f"{label}: the batch re-queued — a spool brick"
+        # 🔴 #256, AT THE ONLY LAYER THAT CAN PROVE IT. The healthy system's
+        # event keeps its attribution: only the named system's is dropped, and
+        # nothing is latched, so the next batch is not degraded either.
+        #
+        # Keyed by event_id rather than by position: what the spool hands back
+        # is the spool's business, and an assertion that quietly depended on it
+        # would be anchored to an order rather than to an event.
+        resent = {event["event_id"]: event for event in posted[-1]}
+        assert resent[healthy["event_id"]]["event_metadata"]["system_id"] == live
+        assert "system_id" not in resent[bad["event_id"]]["event_metadata"], label
+        assert not _sdk_dispatch()._no_provenance, (
+            f"{label}: one refused system latched the whole endpoint")
+
+    with SessionLocal() as db:
+        stored = db.execute(text(
+            "SELECT event_metadata FROM audit_logs WHERE org_id = :o"),
+            {"o": org["org_id"]}).scalars().all()
+    attributions = sorted((m or {}).get("system_id") or "" for m in stored)
+    assert attributions == ["", "", live, live], attributions
+
+
+def test_a_malformed_attribution_degrades_through_the_capability_branch(
+        declared, client, tmp_path):
+    """THE FAIL-SAFE, WHERE IT IS ACTUALLY REACHED.
+
+    `schemas._system_id_is_a_system_identifier` refuses a bad SHAPE without
+    quoting the value — it must, since the value is by definition not a UUID and
+    could be anything a caller put there. So the message names no id, and the
+    SDK reads it as what it looks like: this endpoint cannot hold an attribution.
+    It strips endpoint-wide and latches.
+
+    That is a coarser outcome than the semantic branch, and it is the RIGHT one
+    here: a shape this bad means nothing about the batch can be trusted to name
+    a system. The SDK never produces it — `client._checked_system_id` refuses
+    the spelling at configure time — so the only way in is a hand-edited spool,
+    which is exactly what this drives.
+    """
+    org, _admin, live = declared
+    malformed = _spooled(live)
+    malformed["event_metadata"]["system_id"] = "not-a-uuid"
+    posted, spool, endpoint = _degrade_through_the_sdk(
+        tmp_path, client, org["auth"], [malformed])
+
+    assert spool.due(10) == [], "the batch re-queued — a spool brick"
+    assert "system_id" not in posted[-1][0]["event_metadata"]
+    dispatch = _sdk_dispatch()
+    assert list(dispatch._no_provenance) == [
+        (endpoint, dispatch._DEGRADED_SYSTEM_ID)], dispatch._no_provenance
+    dispatch._no_provenance.clear()
 
 def test_a_genuinely_malformed_payload_is_still_not_degradable(declared, client):
     """THE CONTROL, and the reason the probe is narrow.
@@ -765,22 +911,29 @@ def test_the_allowlist_only_grew_so_the_ladder_stays_nested(declared, client):
     """WHAT R3 IS ALLOWED TO RELY ON, ASSERTED HERE RATHER THAN THERE.
 
     `dispatch._DEGRADE_LADDER` escalates one rung at a time on the assumption
-    that the key sets a backend can refuse are NESTED — {} ⊂ {policy_tag_raw} ⊂
-    {policy_tag_raw, ruleset_*} — which holds only because the ingest allowlist
-    has never had a key taken away. R3 adds `system_id` as a third rung and
-    inherits that assumption.
+    that the key sets a backend can refuse are NESTED — {} ⊂ {system_id} ⊂
+    {system_id, policy_tag_raw} ⊂ {system_id, policy_tag_raw, ruleset_*} —
+    which holds only because the ingest allowlist has never had a key taken
+    away. R3 added `system_id` as the FIRST rung, because it is the newest key
+    and therefore the one the most backends refuse, and inherits that
+    assumption.
 
     This phase is what keeps it true, so this is where it is guarded, and it is
     guarded BEHAVIOURALLY: one event carrying every degradable key at once must
-    be accepted. A backend that knows `system_id` therefore necessarily knows
+    be accepted, in the ladder's own order. A backend that knows `system_id` therefore necessarily knows
     the older keys, which is precisely the nesting the ladder rests on. A source
     grep for the string would pass on a key that only appears in a comment.
     """
     org, _admin, system_id = declared
     event = _attributed(system_id)
+    every_rung = [key for _name, keys, _why in _sdk_dispatch()._DEGRADE_LADDER
+                  for key in keys]
+    assert every_rung[0] == "system_id", every_rung
     event["event_metadata"].update({"policy_tag_raw": "HIPAA",
                                     "ruleset_version": "2026.08.4",
                                     "ruleset_hash": "b" * 64})
+    assert set(every_rung) <= set(event["event_metadata"]), (
+        "a rung this event does not carry: %s" % every_rung)
     response = client.post("/v1/logs/batch", headers=org["auth"], json=[event])
     assert response.status_code == 202, response.text
     assert response.json()["receipts"][0]["status"] == "accepted"

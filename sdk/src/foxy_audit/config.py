@@ -63,6 +63,20 @@ class FoxyConfig:
     salt_sidecar_path: str = ""
     spool_path: str = ""
     client_id: str = ""
+    # The declared AI system this process's events are attributed to (R3), as
+    # `GET /v1/systems` spells it. Empty (the default) = no attribution, and
+    # that is a first-class state rather than a weaker one: an event with no
+    # `system_id` is the event this SDK has always sent, byte for byte.
+    #
+    # ⚠ RESOLVED HERE, VALIDATED IN `FoxyClient.__init__`. This classmethod is a
+    # pure resolver that must never raise — the module docstring promises that
+    # importing and decorating is always safe — while a malformed id has to be
+    # LOUD, because it is deterministic: it costs every event in the process its
+    # attribution, for the life of the process, and nothing downstream can tell
+    # that apart from a system that simply produced no traffic. Splitting the
+    # two keeps both properties; `client._checked_system_id` says why loud
+    # rather than the quiet fallback `mode` and `response_scan` take.
+    system_id: str = ""
     audit_required: bool = False
     mode: str = DEFAULT_MODE
     # Whether `mode` was CHOSEN or is just the default. Load-bearing for P4 §B:
@@ -90,6 +104,7 @@ class FoxyConfig:
         salt_sidecar_path: str | None = None,
         spool_path: str | None = None,
         client_id: str | None = None,
+        system_id: str | None = None,
         audit_required: bool | None = None,
         mode: str | None = None,
         response_scan: str | None = None,
@@ -125,6 +140,16 @@ class FoxyConfig:
             ttl = DEFAULT_ORG_POLICY_TTL
         if ttl <= 0:
             ttl = DEFAULT_ORG_POLICY_TTL
+        # ⚠ ONLY A STRING IS STRIPPED, and this classmethod is why. A non-string
+        # `system_id=` would raise AttributeError HERE, out of a pure resolver
+        # the module docstring promises can always be run — and it would raise
+        # the wrong exception type from the wrong place, several frames above
+        # the door that is supposed to answer for it. Passed through instead,
+        # so `client._checked_system_id` refuses it by name.
+        raw_system_id = (system_id if system_id is not None
+                         else os.getenv("FOXY_SYSTEM_ID", ""))
+        if isinstance(raw_system_id, str):
+            raw_system_id = raw_system_id.strip()
         return cls(
             api_key=key.strip(),
             endpoint=ep.rstrip("/"),
@@ -140,6 +165,14 @@ class FoxyConfig:
             # FoxyClient persists a generated identity in the local spool when
             # no explicit identity is supplied. Empty here is intentional.
             client_id=client_id or os.getenv("FOXY_CLIENT_ID", ""),
+            # Stripped of surrounding whitespace and otherwise UNTOUCHED: not
+            # lower-cased, not un-braced, not re-dashed. The ledger accepts
+            # exactly one spelling and the caller already has it — it is what
+            # `GET /v1/systems` returned them — so repairing a near-miss here
+            # would send an id nobody typed, which is the objection `_typed_tag`
+            # makes to trimming a policy tag, and it would swallow the typo the
+            # validation in FoxyClient exists to surface.
+            system_id=raw_system_id,
             audit_required=(audit_required if audit_required is not None
                             else os.getenv("FOXY_AUDIT_REQUIRED", "false").lower() in {"1", "true", "yes"}),
             mode=resolved_mode,
