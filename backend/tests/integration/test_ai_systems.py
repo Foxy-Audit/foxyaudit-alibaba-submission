@@ -653,6 +653,26 @@ def test_a_check_violation_is_not_reported_as_a_name_conflict():
 
 # ──────── gate round 1 · the audit records WHAT IT WAS, not just which ───────
 
+def test_a_declaration_records_the_classification_it_declared(admin):
+    """#253 · `data_classification` is a `_GOVERNANCE_FIELDS` member, so an
+    UPDATE records its previous value — but a system declared `regulated` and
+    never edited left no record of that classification anywhere in the trail,
+    only in the row's current state. The declaration is the governance act; it
+    may not be the vaguer of the two."""
+    _, client = admin
+    created = client.post("/v1/systems",
+                          json=_payload(data_classification="regulated")).json()
+
+    entry = next(a for a in client.get("/v1/account/audit").json()
+                 if a["action"] == "system.create")
+    assert entry["detail"]["data_classification"] == "regulated", entry["detail"]
+    assert entry["detail"]["system_id"] == created["id"]
+    # the three that were already recorded stay recorded
+    assert entry["detail"]["risk_tier"] == created["risk_tier"]
+    assert entry["detail"]["environment"] == created["environment"]
+    assert entry["detail"]["lifecycle_status"] == created["lifecycle_status"]
+
+
 def test_an_update_records_the_previous_governance_values(admin):
     """"Someone lowered the risk tier on the mortgage bot — from what?" is the
     question this registry exists to answer, and field names alone cannot."""

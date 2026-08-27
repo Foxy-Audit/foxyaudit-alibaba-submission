@@ -461,8 +461,16 @@ def create_system(
     account_audit.record_account_action(
         db, org_id=admin.org_id, actor_email=admin.email, action="system.create",
         target=system.name,
+        # ⚠ `data_classification` is recorded here because `_GOVERNANCE_FIELDS`
+        # treats it as governance, so `system.update` records its PREVIOUS
+        # value. Without it a system declared `regulated` and never edited left
+        # no record of that classification anywhere in the trail — only in the
+        # row's current state — which made the update path more careful than the
+        # create path about the same field. Backwards: the declaration IS the
+        # governance act. (#253)
         detail={"system_id": str(system.id), "risk_tier": system.risk_tier,
                 "environment": system.environment,
+                "data_classification": system.data_classification,
                 "lifecycle_status": system.lifecycle_status},
     )
     db.commit()

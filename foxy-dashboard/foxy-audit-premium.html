@@ -1597,6 +1597,104 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
   .vbar,.vtick{transition:none;}
 }
 
+/* ════════ R4 · THE AI-SYSTEM REGISTRY ════════
+   The page a customer declares their AI products on. Three rules shape it.
+
+   1 · NO STATUS HUE ON A LIFECYCLE. draft/active/retired are three points on a
+   life; not one of them is a claim about behaviour. Painting `active` with
+   --safe-bg would borrow this surface's word for "clean / verified" and say it
+   about a system nobody has graded — colour asserting what the row does not
+   state, which is the reasoning that kept --warn-bg off the P6d alerts tile.
+   So the three chips are three steps of the ONE neutral ramp, and what the step
+   tracks is how much the state constrains what can still be done with the row:
+   `active` constrains nothing (--muted, the quietest), `draft` says not yet in
+   force (--ink2), `retired` says nothing more can ever be done here (--ink, the
+   loudest, because it is the fact that changes what the row's buttons offer).
+
+   2 · MEASURED BOTH WAYS. Each chip is one token pair used in both directions —
+   the fill is the ink of the pair and the ink is the fill — so ink-on-chip and
+   chip-on-card are THE SAME NUMBER and neither can drift without the other.
+   Against --surf: active 5.18 dark / 5.33 light · draft 10.45 / 7.81 ·
+   retired 15.79 / 14.46. --warn-bg was the first choice for `draft` and is
+   what proved the rule: its ink clears 6.47:1 while the pill itself measures
+   1.89:1 on the light card and dissolves into it. test_r4_systems_ui.py
+   measures both directions for all three.
+
+   3 · EVERY CHIP CARRIES A WORD and declares a real border, so High Contrast —
+   which drops the fill to Canvas and keeps border width and style — leaves the
+   state readable. Same mechanism the verdict pills already rely on.
+
+   Risk tier, data classification and environment are DECLARED PROPERTIES, not
+   states, so they take no hue at all: the value that changes an obligation
+   (production · regulated · high · critical) is set in --ink at weight 800 and
+   the rest in --muted. Weight survives forced-colors where hue does not.
+
+   4 · THE BASE RULE CARRIES A FILL, and that is not a tidy-up waiting to happen:
+   `active` is the base, so a lifecycle value this build has never heard of gets
+   a fill, an edge and its own word instead of dissolving into the card the way
+   a class-less chip would. Do not move the default onto a `.syschip.active`
+   modifier. */
+.syschip{
+  display:inline-flex;align-items:center;border-radius:20px;padding:3px 9px;
+  font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.4px;
+  text-transform:uppercase;border:var(--border-sm);white-space:nowrap;
+  background:var(--muted);color:var(--surf);
+}
+.syschip.draft  {background:var(--ink2);color:var(--surf);}
+.syschip.retired{background:var(--ink); color:var(--surf);}
+
+.sysdata{font-family:var(--mono);font-size:10px;letter-spacing:.3px;
+  text-transform:uppercase;color:var(--muted);white-space:nowrap;}
+.sysdata.lead{color:var(--ink);font-weight:800;}
+.sysname{font-size:12px;font-weight:700;color:var(--ink);}
+.syspurpose{font-size:10.5px;color:var(--muted);line-height:1.5;margin-top:3px;max-width:36ch;}
+.sysowner{font-family:var(--mono);font-size:10px;color:var(--ink2);word-break:break-word;}
+/* A retired declaration is history, so its name steps back one — to --ink2,
+   which is 10.45:1 dark and 7.81:1 light on the card. NEVER --muted2: this is
+   live text on a row somebody is reading, not an inactive control. */
+.sysrow.retired .sysname{color:var(--ink2);}
+.syscell{vertical-align:top;}
+/* ⚠ A FLOOR, SO EIGHT COLUMNS SCROLL RATHER THAN SQUEEZE — AND IT STOPS ABOVE
+   THE STACK BREAKPOINT, WHICH IS THE WHOLE POINT.
+
+   Measured at a real 375px in a sized iframe (headless --window-size=375 is
+   nearer 500 on this host): the table did not overflow at all, it compressed
+   the purpose to roughly a word a line. A legibility failure no overflow guard
+   can catch, because there is no overflow.
+
+   But `enhanceTables()` already wraps every .dtbl in a `.tbl-scroll` and adds
+   `.stackable`, and at 560px and below the table stops being a table — each row
+   becomes a card with its <th> text as the label. A floor applied there would
+   force a 760px-wide card stack and put a scrollbar under a layout that exists
+   precisely so there is nothing to scroll. So the floor lives ABOVE that
+   breakpoint and hands over to the stack below it. Re-measured after adding it:
+   document and body scroll are both 0 at 375px and at 1440px. */
+@media(min-width:561px){
+  #sysTableWrap .dtbl{min-width:760px;}
+}
+.sysact{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;}
+.sysact .btn{margin-top:0;}
+
+/* The page's standing statement — the one sentence that makes this a registry
+   and not a table of rows. It is true, so it is set as a fact and not sold. */
+.sysclaim{font-family:var(--mono);font-size:10.5px;line-height:1.75;color:var(--muted);
+  border-top:var(--border-sm);margin-top:16px;padding-top:13px;}
+.sysclaim b{color:var(--ink);font-weight:800;}
+
+.sysform{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:0 18px;}
+.sysform .wide{grid-column:1/-1;}
+.syshelp{font-size:10px;color:var(--muted);line-height:1.5;margin-top:5px;}
+.sysreq{color:var(--fox2);font-weight:800;}
+.sysformrow{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:18px;}
+.sysformrow .btn{margin-top:0;}
+#sysErr{font-size:11px;color:var(--breach-ink);line-height:1.55;margin-top:12px;}
+
+/* The empty state teaches, so it reads left-aligned as prose rather than as a
+   centred three-word shrug, and its paragraphs get a real measure. */
+#sysEmpty{align-items:flex-start;text-align:left;padding:24px 2px 6px;}
+#sysEmpty .empty-d{max-width:64ch;}
+@media(max-width:620px){ .syspurpose{max-width:none;} }
+
 /* ════════ G9 · #154 · Windows High Contrast (forced-colors: active) ═════════
    MEASURED, NOT PORTED. The admin console's block was read for its principle —
    "give every control that draws its own edge an edge that survives" — and for
@@ -1751,6 +1849,10 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
     <div class="dock-item" data-page="policy" onclick="go('policy',this)">
       <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.6 4.1v9.8L12 21l-7.6-4.1V7.1z"/><circle cx="12" cy="12" r="2.7"/></svg></span>
       <span>Policy</span>
+    </div>
+    <div class="dock-item" data-page="systems" onclick="go('systems',this)">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6l8.4 4.4v9.4L12 20.8 3.6 16.4V7z"/><path d="M12 11.6l8.4-4.6M12 11.6v9.2M12 11.6L3.6 7"/></svg></span>
+      <span>Systems</span>
     </div>
     <div class="dock-item" data-page="export" onclick="go('export',this)">
       <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10.4l4 4 4-4"/><path d="M4.6 18.6v2.4h14.8v-2.4"/></svg></span>
@@ -2256,6 +2358,149 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
           <div style="margin-top:5px;"><b>Never stored:</b> the raw prompt or the raw response — neither reaches Foxy, and neither appears in an export or on the chain.</div>
           <div style="margin-top:5px;"><b>Sent to the judge:</b> those same hashes and counts. The judge grades metadata; it never sees content.</div>
           <div style="margin-top:9px;"><a href="https://foxyaudit.tech/privacy.html" style="color:var(--fox2);" target="_blank" rel="noopener">Privacy Policy</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═════════════ AI SYSTEMS (R4) ═════════════
+         The inventory a customer DECLARES. Reads are open to every member;
+         declare / edit / retire are admin-only server-side, so the controls are
+         REMOVED for a member rather than disabled — this file settled that in
+         the locked overlay's `wait` row and again in P4's member branch: a
+         disabled control still says there is something here for you.
+
+         ⚠ NOTHING ON THIS PAGE COUNTS EVENTS. `/v1/logs` has no `system_id`
+         filter and there is no per-system aggregation endpoint, so an event
+         count, a "12 events" figure or a "see this system's evidence" link
+         would be a number this page cannot obtain. The standing note below says
+         so in the product's own words instead of implying a broken feature. -->
+    <div class="page" id="page-systems">
+      <div class="pg-head"><span class="pg-wm" aria-hidden="true">SYSTEMS</span>
+        <div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn pri sm" id="sysDeclareBtn" type="button" style="display:none;" onclick="foxSystems.declare()">Declare an AI system</button>
+        </div>
+      </div>
+
+      <!-- The declare / edit form. Inline and progressive, not a modal: nine
+           labelled fields is not a task that needs interruption or protected
+           focus, and the register it writes into is the context you want to
+           keep seeing while you fill it in. -->
+      <div class="clay pad" id="sysPanel" style="display:none;margin-bottom:14px;">
+        <div class="stitle"><div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" fill="#000"/></svg></span></div><div class="txt" id="sysPanelTitle">Declare an AI system</div></div></div>
+        <div id="sysPanelLead" style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:2px;">Describe one AI product you operate. Everything here is context about the system — never a prompt, a response or a credential.</div>
+        <div class="sysform">
+          <div>
+            <label class="flabel" for="sysName">Name <span class="sysreq">*</span></label>
+            <input class="cin" id="sysName" maxlength="120" autocomplete="off">
+            <div class="syshelp">Unique among the systems you are running. Retiring a system frees its name again.</div>
+          </div>
+          <div>
+            <label class="flabel" for="sysOwner">Owner email</label>
+            <input class="cin" id="sysOwner" type="email" maxlength="320" autocomplete="off">
+            <div class="syshelp">Who answers for this system. Defaults to you.</div>
+          </div>
+          <div class="wide">
+            <label class="flabel" for="sysPurpose">What it is for <span class="sysreq">*</span></label>
+            <input class="cin" id="sysPurpose" maxlength="256" autocomplete="off">
+            <div class="syshelp">One line an auditor would understand — the job this system does, not how it is built.</div>
+          </div>
+          <div>
+            <label class="flabel" for="sysProvider">Provider</label>
+            <select class="cin" id="sysProvider">
+              <option value="openai">OpenAI</option>
+              <option value="azure_openai">Azure OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="google">Google</option>
+              <option value="aws_bedrock">AWS Bedrock</option>
+              <option value="self_hosted">Self-hosted</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="flabel" for="sysModel">Model</label>
+            <input class="cin" id="sysModel" maxlength="128" autocomplete="off">
+            <div class="syshelp">The model identifier, as your provider writes it. Letters, digits and <span style="font-family:var(--mono);">_ . : / -</span> only.</div>
+          </div>
+          <div>
+            <label class="flabel" for="sysEnvironment">Environment</label>
+            <select class="cin" id="sysEnvironment">
+              <option value="production">Production</option>
+              <option value="staging">Staging</option>
+              <option value="development">Development</option>
+            </select>
+          </div>
+          <div>
+            <label class="flabel" for="sysClassification">Data classification</label>
+            <select class="cin" id="sysClassification">
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="regulated">Regulated</option>
+            </select>
+            <div class="syshelp">Choose <b>Regulated</b> when this system handles data a regime governs — health records, payment data, anything under GDPR.</div>
+          </div>
+          <div>
+            <label class="flabel" for="sysRisk">Risk tier</label>
+            <select class="cin" id="sysRisk">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+            <div class="syshelp">How much harm a wrong answer does — not how likely one is.</div>
+          </div>
+          <div>
+            <!-- ⚠ TWO OPTIONS, AND THE THIRD IS MISSING ON PURPOSE. `POST
+                 /v1/systems` takes DeclarableLifecycle ('draft' | 'active'):
+                 a born-retired row is refused by the API because nothing could
+                 ever un-retire it and no DELETE exists to remove it. Offering
+                 the option here would be offering a 422. -->
+            <label class="flabel" for="sysLifecycle">Status</label>
+            <select class="cin" id="sysLifecycle">
+              <option value="active">Active — in service now</option>
+              <option value="draft">Draft — declared, not yet running</option>
+            </select>
+            <div class="syshelp">A system is retired from the register, never declared retired.</div>
+          </div>
+        </div>
+        <div id="sysErr" style="display:none;" role="alert"></div>
+        <div class="sysformrow">
+          <button class="btn pri sm" id="sysSave" type="button" onclick="foxSystems.save()">Declare system</button>
+          <button class="btn ghost sm" type="button" onclick="foxSystems.cancel()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="clay pad">
+        <div class="stitle"><div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l9 5v10l-9 5-9-5V7z" fill="#000"/></svg></span></div><div class="txt">Declared AI systems</div></div></div>
+        <div id="sysMemberNote" style="display:none;font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px;">Declaring, editing and retiring a system is a workspace admin's job. You can read the register.</div>
+        <div style="overflow-x:auto;" id="sysTableWrap">
+          <table class="dtbl">
+            <thead><tr><th>System</th><th>Owner</th><th>Runs on</th><th>Environment</th><th>Data</th><th>Risk</th><th>Status</th><th></th></tr></thead>
+            <tbody id="sysBody"><tr><td colspan="8" style="padding:8px 10px;"><div class="skel line" style="width:58%"></div></td></tr></tbody>
+          </table>
+        </div>
+
+        <!-- ⚠ THE HONEST EMPTY STATE. A workspace with nothing declared is the
+             NORMAL first state, not an error and not a gap to fill with an
+             example row. There is no sample system here and there must never be
+             one: a registry whose first row Foxy invented would be exactly the
+             inferred inventory this feature exists to refuse. It teaches what a
+             declaration IS and why declaring beats inferring, and it says
+             plainly that empty is where everyone starts. -->
+        <div class="empty" id="sysEmpty" style="display:none;">
+          <div class="empty-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.2v9.6L12 21l-8-4.2V7.2z"/><path d="M12 12l8-4.2M12 12v9M12 12L4 7.8"/></svg></div>
+          <div class="empty-t">No AI systems declared yet</div>
+          <div class="empty-d">A declared system is one of the AI products you operate — a mortgage assistant, a fraud screener, an internal helpdesk — described the way an auditor asks about it: who owns it, what it is for, which model it runs on, how sensitive its data is, and how much harm a wrong answer does.</div>
+          <div class="empty-d">Foxy will not work this list out from your traffic. An inventory we guessed would be our opinion about your estate; a declaration is a statement you made, and a statement is the thing an auditor can hold you to.</div>
+          <div class="empty-d">An empty register is where every workspace starts. Nothing is wrong here.</div>
+          <button class="btn pri sm" id="sysEmptyBtn" type="button" style="display:none;margin-top:6px;" onclick="foxSystems.declare()">Declare your first AI system</button>
+          <div class="empty-d" id="sysEmptyMember" style="display:none;">A workspace admin declares the first one.</div>
+        </div>
+
+        <div class="sysclaim">
+          <b>Foxy does not infer this list.</b> Every row is something a named person in your workspace declared.<br>
+          An event carries a system only when the SDK sends one, which it can do from <b>1.14.0</b> onward. Anything already in your ledger — and any call that did not name a system — has no system attached and will not gain one; declaring a system does not backfill. This page reports no per-system event counts, because nothing can filter the ledger by system yet.
         </div>
       </div>
     </div>
@@ -3191,7 +3436,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
 /* CSRF double-submit: echo the foxy_csrf cookie in X-CSRF-Token on every non-GET request */
 (function(){const _f=window.fetch;const tok=()=>{const m=document.cookie.match('(^|;)\\s*foxy_csrf\\s*=\\s*([^;]+)');return m?decodeURIComponent(m[2]):'';};window.fetch=function(input,init){try{const method=((init&&init.method)||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD'){const t=tok();if(t){init=init||{};const h=new Headers(init.headers||{});if(!h.has('X-CSRF-Token'))h.set('X-CSRF-Token',t);init.headers=h;}}}catch(e){}return _f.call(this,input,init);};})();
 const PAGE_TITLE={dashboard:'Home',analytics:'Threats',ledger:'Ledger',verify:'Verify',
-  policy:'Policy',export:'Export',keys:'Access',billing:'Billing',settings:'Settings',
+  policy:'Policy',systems:'Systems',export:'Export',keys:'Access',billing:'Billing',settings:'Settings',
   notifications:'Notifications',upgrade:'Upgrade'};
 function go(page,navEl){
   const title=PAGE_TITLE[page]||page;
@@ -6063,7 +6308,8 @@ async function loadLoginHistory(scope){
 
   var CTX={
     dashboard:['Overview','Home'], analytics:['Threat analytics','Threats'], ledger:['Audit ledger','Ledger'],
-    verify:['Verify a record','Verify'], policy:['Policy ruleset','Policy'], export:['Compliance passport','Export'],
+    verify:['Verify a record','Verify'], policy:['Policy ruleset','Policy'],
+    systems:['Declared AI systems','Systems'], export:['Compliance passport','Export'],
     keys:['API keys & SDK','Access'], billing:['Usage & billing','Billing'], settings:['Settings','Settings']
   };
   window.setTopbarContext=function(page){
@@ -8358,5 +8604,304 @@ async function loadLoginHistory(scope){
   });
 })();
 </script>
+<!-- ═══ R4 · the AI-system registry ═══
+     list · declare · edit · retire, against /v1/systems.
+
+     ⚠ EVERY MUTATION GOES THROUGH `fetch`, NEVER A `<form action=>`. This SPA
+     patches window.fetch twice — the CSRF header, and the global step-up retry
+     on a 403 — and a form post bypasses both. There is no <form> element on
+     this page for exactly that reason.
+
+     ⚠ RETIREMENT IS TERMINAL. No un-retire endpoint exists and PUT 409s on both
+     edges of 'retired', by design: reviving an id would make one id name two
+     operating periods with a gap the registry cannot describe. The confirmation
+     therefore says permanent, says the evidence stays, says the name comes
+     back, and asks for the name to be typed — a dialog a stray Enter can clear
+     is not a dialog about something irreversible. -->
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var api=function(p,o){return fetch(p,Object.assign({credentials:'same-origin'},o||{}));};
+  var esc=function(x){return String(x==null?'':x).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+  var toast=function(m){ try{ showToast(m); }catch(e){} };
+  var val=function(id){ var el=$(id); return el?String(el.value||''):''; };
+
+  var PROVIDER={openai:'OpenAI',azure_openai:'Azure OpenAI',anthropic:'Anthropic',
+    google:'Google',aws_bedrock:'AWS Bedrock',self_hosted:'Self-hosted',other:'Other'};
+  /* The declared values that change an obligation. These take --ink at weight
+     800; everything else takes --muted. Weight, not hue — red, amber and green
+     are reserved for status on this surface, and a critical-risk system that is
+     behaving correctly is not a warning. */
+  var LEAD={production:1,regulated:1,high:1,critical:1};
+  /* The API's own defaults (AiSystemCreate). The form opens on THESE rather
+     than on whatever option happens to be first, so an untouched select never
+     records a provider the customer did not choose. */
+  var DEFAULTS={name:'',owner_email:'',purpose:'',provider:'other',model_name:'',
+    environment:'production',data_classification:'internal',risk_tier:'medium',
+    lifecycle_status:'active'};
+  var FIELDS={name:'sysName',owner_email:'sysOwner',purpose:'sysPurpose',
+    provider:'sysProvider',model_name:'sysModel',environment:'sysEnvironment',
+    data_classification:'sysClassification',risk_tier:'sysRisk',
+    lifecycle_status:'sysLifecycle'};
+  /* Optional in the API and rejected when blank (min_length=1), so an empty box
+     means "say nothing about this", never "store an empty string". */
+  var OPTIONAL={owner_email:1,model_name:1};
+
+  var _rows=[], _admin=false, _editing=null, _loaded=false;
+
+  /* The server's answer to "may I", asked ONCE — not a local copy of
+     require_role('admin'), and not re-asked per press. Same shape as the
+     billing page's who(): a promise, so a click landing before it resolves
+     waits instead of racing. */
+  var _me=null;
+  function me(){
+    if(!_me)_me=api('/v1/auth/me').then(function(r){ return r.ok?r.json():null; })
+                                  .catch(function(){ return null; });
+    return _me;
+  }
+
+  async function why(r){
+    /* The server's own words, never the value that was submitted. A 422 from
+       FastAPI carries a LIST in `detail`, so reading `detail` as a string
+       renders "[object Object]" at the one moment a person needs to be told
+       what is wrong. */
+    try{
+      var e=await r.json(), d=e.detail;
+      if(typeof d==='string'&&d)return d;
+      if(Array.isArray(d)&&d.length){
+        var f=d[0], where=(f.loc&&f.loc.length)?f.loc[f.loc.length-1]:'';
+        return (f.msg||'That value was not accepted')+(where?(' — '+where):'');
+      }
+    }catch(e){}
+    return 'The server refused that (HTTP '+r.status+').';
+  }
+
+  function label(map,v){ return map[v]||v||'—'; }
+  function datum(v){ return '<span class="sysdata'+(LEAD[v]?' lead':'')+'">'+esc(v||'—')+'</span>'; }
+
+  /* `active` takes the base rule and emits no modifier, which is also the
+     fallback for a lifecycle value this build does not know about: it still
+     gets a fill, an edge and its own word, rather than dissolving into the card
+     the way a class-less chip would. */
+  function chipClass(v){ return (v==='draft'||v==='retired')?(' '+v):''; }
+
+  function rowHtml(s){
+    var retired=!!s.retired;
+    var runs=label(PROVIDER,s.provider)+(s.model_name?(' · '+s.model_name):'');
+    /* No Edit and no Retire on a retired row. Retire has no meaning twice over,
+       and edit is declined deliberately even though the API allows it: a
+       retired declaration is the statement that was in force over a finished
+       period, and offering a pencil against it invites rewriting history to
+       suit the present. The router refuses the rename-to-dodge-a-constraint
+       version of this for the same reason. */
+    var act=(!_admin||retired)?'':
+      '<div class="sysact">'
+      +'<button class="btn ghost sm" type="button" onclick="foxSystems.edit(\''+esc(s.id)+'\')">Edit</button>'
+      +'<button class="btn ghost sm" type="button" onclick="foxSystems.retire(\''+esc(s.id)+'\')">Retire</button>'
+      +'</div>';
+    return '<tr class="sysrow'+(retired?' retired':'')+'">'
+      +'<td class="syscell"><div class="sysname">'+esc(s.name)+'</div>'
+        +'<div class="syspurpose">'+esc(s.purpose)+'</div></td>'
+      +'<td class="syscell"><div class="sysowner">'+esc(s.owner_email)+'</div></td>'
+      +'<td class="syscell"><span class="sysdata" style="text-transform:none;">'+esc(runs)+'</span></td>'
+      +'<td class="syscell">'+datum(s.environment)+'</td>'
+      +'<td class="syscell">'+datum(s.data_classification)+'</td>'
+      +'<td class="syscell">'+datum(s.risk_tier)+'</td>'
+      +'<td class="syscell"><span class="syschip'+chipClass(s.lifecycle_status)+'">'
+        +esc(s.lifecycle_status)+'</span></td>'
+      +'<td class="syscell">'+act+'</td></tr>';
+  }
+
+  function applyRole(){
+    var d=$('sysDeclareBtn'); if(d)d.style.display=_admin?'':'none';
+    var m=$('sysMemberNote'); if(m)m.style.display=_admin?'none':'';
+  }
+
+  function render(){
+    var body=$('sysBody'), wrap=$('sysTableWrap'), empty=$('sysEmpty');
+    if(!body||!wrap||!empty)return;
+    if(!_rows.length){
+      /* The table is HIDDEN, not filled with a placeholder row. There is no
+         sample system anywhere in this file and there must never be one. */
+      wrap.style.display='none'; empty.style.display='';
+      var b=$('sysEmptyBtn'); if(b)b.style.display=_admin?'':'none';
+      var mm=$('sysEmptyMember'); if(mm)mm.style.display=_admin?'none':'';
+      return;
+    }
+    wrap.style.display=''; empty.style.display='none';
+    body.innerHTML=_rows.map(rowHtml).join('');
+  }
+
+  function problem(text){
+    var wrap=$('sysTableWrap'), empty=$('sysEmpty'), body=$('sysBody');
+    if(!body)return;
+    if(wrap)wrap.style.display='';
+    if(empty)empty.style.display='none';
+    /* "We could not ask" and "you have none" are different facts. This one is
+       reported as itself rather than falling through to the empty state. */
+    body.innerHTML='<tr><td colspan="8" style="padding:14px 10px;">'
+      +'<div class="empty" style="padding:8px 0;"><div class="empty-t">Could not load the register</div>'
+      +'<div class="empty-d">'+esc(text)+' Your declared systems are still there — this is a connection problem.</div>'
+      +'</div></td></tr>';
+  }
+
+  window.loadSystems=async function(){
+    if(!$('sysBody'))return;
+    var who=await me();
+    _admin=!!(who&&who.role==='admin');
+    applyRole();
+    try{
+      var r=await api('/v1/systems');
+      if(!r.ok){ problem(await why(r)); return; }
+      var data=await r.json();
+      _rows=Array.isArray(data)?data:[];
+      _loaded=true;
+      render();
+    }catch(e){ problem('The server did not answer.'); }
+  };
+
+  // ── the declare / edit panel ──────────────────────────────────────────────
+  function fill(src){
+    Object.keys(FIELDS).forEach(function(k){
+      var v=(src&&src[k]!=null)?src[k]:DEFAULTS[k];
+      // setFieldValue, never `el.value=` — the house rule, and it dispatches
+      // the bubbling change every listener on this page expects.
+      window.setFieldValue(FIELDS[k], v);
+    });
+  }
+
+  function openPanel(system){
+    var p=$('sysPanel'); if(!p)return;
+    _editing=system||null;
+    $('sysPanelTitle').textContent=system?('Edit '+system.name):'Declare an AI system';
+    $('sysPanelLead').textContent=system
+      ? 'This rewrites the declaration, never the ledger. Evidence already attributed to this system keeps pointing at the same id and the same chain hashes.'
+      : 'Describe one AI product you operate. Everything here is context about the system — never a prompt, a response or a credential.';
+    $('sysSave').textContent=system?'Save changes':'Declare system';
+    fill(system);
+    hideErr();
+    p.style.display='';
+    try{
+      var calm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      p.scrollIntoView({behavior:calm?'auto':'smooth',block:'nearest'});
+    }catch(e){}
+    var n=$('sysName'); if(n)n.focus();
+  }
+
+  function hideErr(){ var e=$('sysErr'); if(e){ e.style.display='none'; e.textContent=''; } }
+  function showErr(text){
+    var e=$('sysErr'); if(!e)return;
+    e.textContent=text; e.style.display='';
+    e.scrollIntoView({block:'nearest'});
+  }
+
+  function collect(){
+    var out={};
+    Object.keys(FIELDS).forEach(function(k){ out[k]=val(FIELDS[k]).trim(); });
+    return out;
+  }
+
+  window.foxSystems={
+    declare:function(){ openPanel(null); },
+
+    edit:function(id){
+      var s=_rows.filter(function(x){ return x.id===id; })[0];
+      if(!s)return;
+      openPanel(s);
+    },
+
+    cancel:function(){
+      var p=$('sysPanel'); if(p)p.style.display='none';
+      _editing=null; hideErr();
+      var b=$('sysDeclareBtn'); if(b&&b.style.display!=='none')b.focus();
+    },
+
+    save:async function(){
+      hideErr();
+      var v=collect();
+      if(!v.name){ showErr('Give the system a name.'); $('sysName').focus(); return; }
+      if(!v.purpose){ showErr('Say what this system is for.'); $('sysPurpose').focus(); return; }
+
+      var payload={}, editing=_editing;
+      if(editing){
+        /* Only what CHANGED. The API reads an omitted field as "leave it
+           alone", and `system.update`'s audit entry lists the field names it
+           was sent — so posting all nine would record nine governance changes
+           for a corrected typo and make the trail useless. */
+        Object.keys(v).forEach(function(k){
+          var was=(editing[k]==null)?'':String(editing[k]);
+          if(v[k]===was)return;
+          if(v[k]===''){
+            // Cleared. `model_name` is nullable, so null actually clears it;
+            // owner_email is NOT NULL server-side, so a cleared box is left
+            // alone rather than sent as a value the API would refuse.
+            if(k==='model_name')payload[k]=null;
+            return;
+          }
+          payload[k]=v[k];
+        });
+        if(!Object.keys(payload).length){ toast('Nothing changed.'); window.foxSystems.cancel(); return; }
+      }else{
+        Object.keys(v).forEach(function(k){
+          if(OPTIONAL[k]&&v[k]==='')return;   // absent, never an empty string
+          payload[k]=v[k];
+        });
+      }
+
+      var btn=$('sysSave'), was=btn.textContent;
+      btn.disabled=true; btn.textContent='Saving…';
+      try{
+        var r=await api(editing?('/v1/systems/'+encodeURIComponent(editing.id)):'/v1/systems',
+          {method:editing?'PUT':'POST',headers:{'content-type':'application/json'},
+           body:JSON.stringify(payload)});
+        if(!r.ok){ showErr(await why(r)); return; }
+        toast(editing?('"'+v.name+'" updated'):('"'+v.name+'" declared'));
+        window.foxSystems.cancel();
+        await window.loadSystems();
+      }catch(e){ showErr('Could not reach the server. Nothing was saved.'); }
+      finally{ btn.disabled=false; btn.textContent=was; }
+    },
+
+    retire:async function(id){
+      var s=_rows.filter(function(x){ return x.id===id; })[0];
+      if(!s)return;
+      /* ⚠ THE COPY IS THE FEATURE. There is no un-retire endpoint and there
+         never will be, so this may not read like an archive that can be
+         reopened. Three true things, in this order: it is permanent; the
+         evidence stays exactly where it is; the name comes back. */
+      var typed=await window.foxConfirm({
+        title:'Retire '+s.name+'?',
+        body:'Retiring is permanent. Nothing brings this system back — not this page, not the API. '
+            +'If you run it again you declare a new system, under a new id.\n\n'
+            +'What stays: every event already attributed to this system keeps its place in the chain, '
+            +'exactly as recorded. Retiring is not deleting, and nothing is removed from your evidence.\n\n'
+            +'What changes: no new event can name this system, and the name "'+s.name+'" becomes free again — '
+            +'you can declare a new system under it.',
+        confirm:'Retire permanently',
+        danger:true,
+        input:{label:'Type "'+s.name+'" to confirm',maxlength:120}
+      });
+      if(typed===null)return;                       // cancelled, or Escape
+      if(String(typed).trim()!==s.name){
+        toast('That is not the system’s name. Nothing was retired.');
+        return;
+      }
+      try{
+        var r=await api('/v1/systems/'+encodeURIComponent(s.id)+'/retire',{method:'POST'});
+        if(!r.ok){ toast('Could not retire it — '+await why(r)); return; }
+        toast('"'+s.name+'" is retired. This cannot be undone.');
+        await window.loadSystems();
+      }catch(e){ toast('Could not reach the server. Nothing was retired.'); }
+    }
+  };
+
+  var _go=window.go;
+  if(typeof _go==='function'){
+    window.go=function(page,el){ _go(page,el); if(page==='systems')window.loadSystems(); };
+  }
+})();
+</script>
+
 </body>
 </html>
