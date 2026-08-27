@@ -415,29 +415,40 @@ def account_export(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
-    """Self-serve, machine-readable export of everything this workspace holds —
-    org profile, users, policy, keys (metadata only, never the secret), invoices,
-    anchors, declared AI systems, the account-action trail, and the full
-    hash-chain ledger. Admin only.
-    Content-blind: the ledger carries only hashes + verdicts, never prompt or
-    response text.
+    """Self-serve, machine-readable export of the workspace data a customer would
+    recognise as their own: org profile, users, policy, API-key metadata (never
+    the secret), invoices, anchors, declared AI systems, the account-action
+    trail, and the full hash-chain ledger. Admin only. Content-blind: the ledger
+    carries only hashes + verdicts, never prompt or response text.
 
-    ⚠ THE FIRST LINE IS A COMPLETENESS CLAIM, AND IT HAS TO STAY TRUE.
-    `ai_systems` was missing for one release of R1 and the claim was false while
-    it was. That table holds `owner_email` — PERSONAL DATA about someone who
-    need not be a `User` row at all, so the users section does not cover them —
-    which is exactly what a subject-access request is about. Anything added to
-    this workspace's schema belongs here, or this docstring has to stop saying
-    "everything".
+    ⚠ THAT LIST IS THE CLAIM, AND IT IS NOT "EVERYTHING". IT USED TO SAY SO.
+    Two earlier wordings were false: "everything this workspace holds", and then
+    the stronger "anything added to this workspace's schema belongs here". 23
+    models carry an `org_id`; this exports 8 of them. The second wording was also
+    wrong to WANT, not merely inaccurate — four of the absent tables hold values
+    a hard rule forbids serialising (`user_sessions.token_hash`,
+    `verification_codes.code_hash`, `auth_handoff_tokens.token_hash`,
+    `sso_connections.client_secret`), and a rule that mandates exporting a
+    session token hash is not a rule worth keeping.
 
-    That rule then caught `account_actions`, which had been absent since this
-    endpoint was written. It is the workspace's own record of who changed what,
-    it carries `actor_email`, and from R1 it also carries the previous values of
-    governance fields — a subject-access request is precisely the thing it
-    answers. Its `detail` is exported whole because every writer of it records
-    THAT a secret changed and never the secret (`routers/policies.py` says so at
-    the one call site that touches keys); if that ever stops being true, this is
-    the second place it leaks.
+    ⚠ THE FORWARD RULE, CORRECTLY SCOPED — it stays, because it is what exposed
+    the gap. A table added FROM HERE that holds data the customer would
+    recognise as their own, and that is not auth plumbing and not a secret,
+    belongs in this bundle. `ai_systems` and `account_actions` were both added
+    under it: the first holds `owner_email`, personal data about someone who
+    need not be a `User` row at all, so the users section did not cover them;
+    the second is the workspace's own record of who changed what.
+
+    ⚠ THE TABLES STILL ABSENT ARE FILED AS #252, NOT FORGOTTEN. `login_events`
+    (holds `email`), `export_jobs`, `notifications`, `webhook_subscriptions`,
+    `sso_connections`, `usage_daily` and the rest each need their own shape
+    decision and possibly a bound — that is a phase, not a line, and guessing at
+    it here would put a second false claim where the first one was.
+
+    `account_actions.detail` is exported whole because every writer records THAT
+    a secret changed and never the secret (`routers/policies.py` says so at the
+    one call site that touches keys); if that ever stops being true, this is the
+    second place it leaks.
 
     ⚠ NOT BOUNDED, deliberately — see the query below.
     """

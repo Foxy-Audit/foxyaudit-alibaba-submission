@@ -1489,3 +1489,166 @@ def test_no_writer_of_the_action_trail_records_a_secret():
     assert not offenders, (
         f"an account-action detail may carry a secret, and it is now exported: "
         f"{offenders}")
+
+
+# ───── gate round 5 · the idempotent retire must not hold its row lock ──────
+
+def test_a_repeated_retire_does_not_block_other_writers_on_that_row(admin, login):
+    """The already-retired branch took `SELECT … FOR UPDATE` and returned without
+    ending the transaction, so `get_db` held the lock until it closed the session
+    — after the response was built. A polled or double-clicked retire therefore
+    blocked every concurrent PUT and retire on that row for the whole request.
+
+    ⚠ Asserting the second request's STATUS proves nothing: it is 200 either way,
+    which is what made this quiet. This asserts it is not BLOCKED — that it
+    finishes while the first request is still in flight.
+
+    ⚠ The seam is `_serialize`, which both versions call after the lock is taken.
+    Deliberately not a helper introduced by the fix: the J1 lesson is that a
+    harness keyed on the thing the mutation removes proves nothing. With the fix
+    the commit precedes `_serialize`, so the sleep below happens with the lock
+    already released; without it the lock is still held.
+    """
+    import threading
+    import time
+
+    from app.routers import systems
+
+    org, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    assert client.post(f"/v1/systems/{created['id']}/retire").status_code == 200
+
+    real_serialize = systems._serialize
+    holder_in_flight = threading.Event()
+    calls = {"n": 0}
+    lk = threading.Lock()
+
+    def _slow_first(row):
+        with lk:
+            calls["n"] += 1
+            mine = calls["n"]
+        out = real_serialize(row)
+        if mine == 1:
+            holder_in_flight.set()
+            time.sleep(2.0)          # still inside the first request
+        return out
+
+    poller = login(org["admin_email"], org["admin_password"])
+    writer = login(org["admin_email"], org["admin_password"])
+    done = {}
+
+    systems._serialize = _slow_first
+    try:
+        def hold():
+            poller.post(f"/v1/systems/{created['id']}/retire")
+            done["holder"] = time.monotonic()
+
+        def other():
+            holder_in_flight.wait(5)
+            writer.put(f"/v1/systems/{created['id']}",
+                       json={"owner_email": "someone@bank.example"})
+            done["writer"] = time.monotonic()
+
+        threads = [threading.Thread(target=hold), threading.Thread(target=other)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+    finally:
+        systems._serialize = real_serialize
+
+    assert set(done) == {"holder", "writer"}, f"a request never returned: {done}"
+    assert done["writer"] < done["holder"], (
+        "the second writer was blocked until the idempotent retire finished — "
+        f"the FOR UPDATE lock is still held past the decision (writer finished "
+        f"{done['writer'] - done['holder']:+.2f}s relative to the holder)")
+
+
+def test_the_idempotent_retire_ends_its_transaction(admin):
+    """The mechanism, asserted at the source. The behavioural guard above depends
+    on a real interleaving; this one says what has to be true for it."""
+    import inspect
+
+    from app.routers import systems
+
+    src = inspect.getsource(systems.retire_system)
+    tail = src[src.index("ALREADY RETIRED"):]
+    assert "db.commit()" in tail, "the already-retired path never ends its transaction"
+    assert "db.expunge(system)" in tail, (
+        "without expunge the commit expires the row and _serialize re-queries it "
+        "on a transaction whose RLS scope the commit just cleared")
+
+
+def test_a_repeated_retire_still_returns_the_row_unchanged(admin):
+    """Ending the transaction must not have changed what the caller gets back."""
+    _, client = admin
+    created = client.post("/v1/systems", json=_payload()).json()
+    first = client.post(f"/v1/systems/{created['id']}/retire").json()
+    second = client.post(f"/v1/systems/{created['id']}/retire").json()
+    assert second == first, (first, second)
+    assert second["retired"] is True
+    actions = [a["action"] for a in client.get("/v1/account/audit").json()]
+    assert actions.count("system.retire") == 1, actions
+
+
+# ───── gate round 5 · the completeness claim must describe today ────────────
+
+def test_the_export_docstring_does_not_overclaim():
+    """R1d strengthened this sentence to "anything added to this workspace's
+    schema belongs here". It asserted over a gap that was already there: 23
+    models carry an org_id and the bundle exports 8. The rule is what made the
+    gap visible and is worth keeping — the sentence describing TODAY is what had
+    to become true.
+
+    Measured against the model registry, so it cannot drift back into a claim
+    nobody rechecks.
+    """
+    import inspect
+
+    from app.db import Base
+    from app.routers import account
+
+    doc = account.account_export.__doc__
+    src = inspect.getsource(account.account_export)
+
+    org_scoped = {c.__name__ for c in Base.__subclasses__()
+                  if "org_id" in {col.name for col in c.__table__.columns}}
+    exported = {n for n in org_scoped if n in src}
+    assert len(exported) < len(org_scoped), (
+        "every org-scoped table is now exported — if that is ever true, this guard "
+        "and the docstring both need rewriting")
+
+    headline = doc.split("IT USED TO SAY SO")[0]
+    for overclaim in ("everything this workspace holds",
+                      "anything added to this workspace's schema belongs here"):
+        assert overclaim not in headline, (
+            f"the headline claim is false again: {overclaim!r}")
+    assert "#252" in doc, "the tables still absent are no longer pointed at"
+
+
+def test_the_export_never_promises_to_carry_a_secret():
+    """The old rule would have mandated exporting `user_sessions.token_hash`.
+    That is not a documentation nit: it is a rule that, followed, breaks a hard
+    rule of this repo."""
+    from app.routers import account
+
+    doc = account.account_export.__doc__
+    for forbidden in ("user_sessions.token_hash", "verification_codes.code_hash",
+                      "auth_handoff_tokens.token_hash", "sso_connections.client_secret"):
+        assert forbidden in doc, (
+            f"{forbidden} is no longer named as a reason the old rule was wrong")
+    assert "not auth plumbing and not a secret" in doc, (
+        "the forward rule lost the carve-out that keeps it safe to follow")
+
+
+def test_the_bundle_still_contains_what_the_docstring_lists(admin):
+    """The corrected sentence is only worth anything if it is checked against the
+    bundle rather than trusted."""
+    import json
+
+    _, client = admin
+    client.post("/v1/systems", json=_payload())
+    bundle = json.loads(client.get("/v1/account/export").content)
+    for section in ("organization", "users", "policy", "api_keys", "invoices",
+                    "anchors", "ai_systems", "account_actions", "ledger"):
+        assert section in bundle, f"{section} is claimed but absent"

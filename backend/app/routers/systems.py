@@ -586,4 +586,24 @@ def retire_system(
         )
         db.commit()
         db.refresh(system)
+        return _serialize(system)
+
+    # ⚠ ALREADY RETIRED — NOTHING TO WRITE, SO END THE TRANSACTION HERE.
+    #
+    # Returning straight from this branch left the `SELECT … FOR UPDATE` taken
+    # above held until `get_db` closed the session, which is after the response
+    # has been built and sent. A polled or double-clicked retire therefore
+    # blocked every concurrent PUT and retire on that row for the whole request,
+    # and dropped the `last_seen_at` refresh `require_user` had staged. The lock
+    # is right; holding it past the decision is not.
+    #
+    # `commit`, not `rollback`, so that staged session refresh persists — there
+    # is nothing else pending on this path.
+    #
+    # `expunge` first because `expire_on_commit` defaults to True: without it the
+    # commit would expire this row and `_serialize` would silently re-query it,
+    # on a transaction whose RLS scope the commit has just cleared. Detaching
+    # keeps the values already loaded and touches the database no further.
+    db.expunge(system)
+    db.commit()
     return _serialize(system)
