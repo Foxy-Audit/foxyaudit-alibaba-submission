@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -29,7 +30,7 @@ from ..chain import (
 )
 from ..config import get_settings
 from ..db import get_db
-from ..models import AuditLog, OrgPolicy, Organization, OrganizationSequence
+from ..models import AiSystem, AuditLog, OrgPolicy, Organization, OrganizationSequence
 from ..policy_snapshot import (
     capture_policy_snapshot, judge_policy_config, policy_snapshot_hash,
 )
@@ -37,6 +38,10 @@ from ..schemas import (
     ActivityDay, GradingCounts, LogIngest, LogListItem, LogListResponse,
     StatsResponse,
 )
+# The one spelling of the terminal lifecycle, imported rather than repeated so
+# this router and the registry that writes it cannot drift apart. `systems` does
+# not import this module, so the dependency is one-way.
+from .systems import RETIRED
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -61,6 +66,84 @@ _UNKNOWN = (
     | (AuditLog.gemini_verdict["reason"].astext.like("evaluator_unavailable:%"))
     | (AuditLog.gemini_verdict["reason"].astext == "evaluator_unavailable")
 )
+
+
+def _validate_system_attributions(db: Session, org: Organization, items: list) -> None:
+    """Refuse an event attributed to a system this org may not attribute to (R2).
+
+    `system_id` arrives SHAPE-CHECKED but unbound: `schemas.LogIngest` has no
+    database, so all it could say is "that is the spelling of a UUID". Here it
+    becomes an ATTRIBUTION — a claim that one of this customer's declared AI
+    systems produced this event — and there are exactly two ways for the claim
+    to be false.
+
+    ⚠ NOT DECLARED AND NOT YOURS ARE ONE BRANCH, ON PURPOSE. A foreign tenant's
+    id must be indistinguishable from one that was never declared, or POST
+    /v1/logs/batch becomes an existence oracle over other customers' estates:
+    guess a UUID, watch the answer change. `routers/systems.py` answers 404
+    rather than 403 for the same reason — what mattered there was
+    indistinguishability, not the number. Here the number cannot be 404 (see
+    below), so the property is carried by the two cases sharing a code path,
+    which is stronger than two messages somebody has to keep in step.
+
+    ⚠ 422 CARRYING THE ALLOWLIST'S PHRASE — NOT A NEW PHRASE, AND NOT A 404.
+    `dispatch._rejects_unsupported_fields` recognises exactly one rejection: a
+    422 whose body contains "unsupported fields". And `payload: List[LogIngest]`
+    is refused as ONE unit, so a message the SDK does not recognise means no
+    strip-and-retry, then `raise_for_status`, then `spool.retry` re-queuing the
+    whole batch — forever. Ten events lost to an eleventh naming a system
+    somebody retired last week. A 404 would do the same while also reading as a
+    missing endpoint.
+
+    ⚠ WHICH SYSTEM, AND WHY. A bare "unsupported fields" sends an operator to
+    the SDK version, which is the wrong place entirely: the SDK is fine, the id
+    is well-formed, and a human retired the system on purpose. Naming the id is
+    safe here and only here — it has passed the shape check, so it is provably
+    36 characters of hex and hyphens and can carry nothing of its own.
+
+    ⚠ NEW ITEMS ONLY. A duplicate is already chained, so refusing its resend
+    would brick a spool over an event this ledger already holds, and no new
+    attribution is being made either way. Retirement closes what a system may
+    still RECORD; it never reaches back into what it already did.
+
+    ⚠ `AiSystem.org_id == org.id` IS THE ISOLATION, AND NO BEHAVIOURAL TEST CAN
+    GUARD IT. `require_org` runs `auth._scope_org`, which drops to the confined
+    `foxy_app` role, and `ai_systems` is a posture-A table — so with the clause
+    deleted, RLS still hides the other tenant's row and the cross-tenant test
+    still passes. That is the design working, not a licence to drop the clause
+    (staff and worker paths never take that role), so it is asserted at the
+    SOURCE by
+    test_the_attribution_check_filters_by_org_itself_and_does_not_lean_on_rls.
+    """
+    spellings = sorted({(item.event_metadata or {}).get("system_id")
+                        for item in items} - {None})
+    if not spellings:
+        return
+    # Canonical spelling is enforced upstream, so this mapping is 1:1 and the
+    # sorted order carries into it — the same bad batch always names the same
+    # system first.
+    wanted = {uuid.UUID(spelling): spelling for spelling in spellings}
+    declared = dict(db.execute(
+        select(AiSystem.id, AiSystem.lifecycle_status)
+        .where(AiSystem.org_id == org.id, AiSystem.id.in_(list(wanted)))
+    ).all())
+    for system_id, spelling in wanted.items():
+        lifecycle = declared.get(system_id)
+        if lifecycle is None:
+            raise HTTPException(
+                status_code=422,
+                detail="event_metadata contains unsupported fields: system_id "
+                       f"{spelling} names no AI system in this workspace. "
+                       "Declare it with POST /v1/systems, or send the event "
+                       "without an attribution.")
+        if lifecycle == RETIRED:
+            raise HTTPException(
+                status_code=422,
+                detail="event_metadata contains unsupported fields: system_id "
+                       f"{spelling} names an AI system that has been RETIRED, "
+                       "and a retired system accepts no new events. Its existing "
+                       "evidence is untouched. Attribute this event to a system "
+                       "still in service, or declare a new one.")
 
 
 @router.post("/v1/logs/batch", status_code=HTTP_202_ACCEPTED)
@@ -144,6 +227,43 @@ def ingest_batch(
             for _excluded_key in ("ruleset_version", "ruleset_hash", "policy_tag_raw"):
                 stored_metadata.pop(_excluded_key, None)
                 requested_metadata.pop(_excluded_key, None)
+            # ⚠ `system_id` IS NOT ON THAT LIST, AND THE DIFFERENCE IS THE
+            # DECISION, NOT AN OVERSIGHT.
+            #
+            # The keys above describe the RULES or the SPELLING, so two posts of
+            # one event_id differing only there are the same event. `system_id`
+            # is IDENTITY-BEARING: it names which of the customer's AI systems
+            # produced this interaction. Two posts claiming two different
+            # systems are a real disagreement about the evidence, and popping it
+            # would answer the second with a 202 "duplicate" while the ledger
+            # went on holding the first — a client told its attribution landed
+            # when it did not. `policy_tag` is still compared for exactly that
+            # reason and this is the same reason.
+            #
+            # But the deadlock argument that put the other three here applies to
+            # it UNCHANGED: it is client-supplied, so it persists in the stored
+            # row; R3 adds it to the SDK's degrade ladder; and a row stored WITH
+            # an attribution whose spool entry outlives its ack (a crash before
+            # the POST is acknowledged) is later resent WITHOUT one to a backend
+            # that has been rolled back below R2. If the comparison counted it,
+            # that resend could never match its own stored row — 409 forever,
+            # taking the other nine events in the batch down on every retry.
+            #
+            # Both are true, so the rule is ASYMMETRIC rather than a pop:
+            # compared when BOTH sides carry it, ignored when only one does.
+            # Present-on-one is precisely the degrade shape — stripped on
+            # resend, or degraded-then-recovered, which is the same case
+            # backwards. Present-on-both-and-different is precisely the identity
+            # shape. No case needs both readings, so neither has to give.
+            #
+            # It is not a transitive relation — {A} matches {}, {} matches {B},
+            # {A} does not match {B} — and it does not need to be. The
+            # comparison is always THIS stored row against THIS request, and a
+            # duplicate never rewrites the stored row, so the attribution an
+            # auditor reads stays the one that was chained.
+            if ("system_id" in stored_metadata) != ("system_id" in requested_metadata):
+                stored_metadata.pop("system_id", None)
+                requested_metadata.pop("system_id", None)
             if existing and any((
                 existing.prompt_hash != item.prompt_hash,
                 existing.response_hash != item.response_hash,
@@ -167,6 +287,13 @@ def ingest_batch(
             })
         else:
             new_items.append(item)
+
+    # Placed with the conflict check above rather than after the billing gate,
+    # because it is the same KIND of thing: a statement about the payload, which
+    # is true or false before the org's account state is consulted. A customer
+    # whose instrumentation still names a system somebody retired last week
+    # should hear that, not hear about their card.
+    _validate_system_attributions(db, org, new_items)
 
     now = datetime.now(timezone.utc)
     # trial_expired → subscription_inactive → the evaluation pair, in that order.

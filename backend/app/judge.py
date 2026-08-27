@@ -25,6 +25,26 @@ _MIN_REASON_LEN = 3
 # The allowlist is CUSTOMER OBSERVABILITY KEYS ONLY. Everything a judge needs to
 # grade is above it in the projection; everything else in event_metadata is
 # ledger bookkeeping that a third party has no reason to hold.
+#
+# ⚠ `system_id` (R2) IS DELIBERATELY ABSENT, and the reason is not "a UUID is
+# harmless". Two halves:
+#
+#   * It buys a verdict NOTHING. Nothing in this projection tells a judge what
+#     the system IS — not its purpose, its risk tier or its data classification
+#     — so an opaque id is a symbol the grader cannot reason from.
+#   * It costs a CORRELATION HANDLE. Unlike request_id / trace_id / session_id,
+#     which are per-request or per-conversation, this value is stable for the
+#     whole life of a declared system. Sending it would let a provider partition
+#     one customer's traffic into their individual AI products and build a
+#     longitudinal profile of each — "this bank's mortgage bot, 40k
+#     interactions, these PII-signal rates". The linkage is the payload; the
+#     digits carry nothing, and that is exactly why the digits are not the
+#     question.
+#
+# If system-aware grading is ever wanted, the shape is to project the system's
+# DECLARED ATTRIBUTES (risk tier, data classification) — grading signal with no
+# identifier attached — and that is a decision with its own phase, not a side
+# effect of widening ingest. Pinned by test_system_id.py.
 SAFE_EVENT_METADATA = {
     "request_id", "trace_id", "session_id", "provider", "model", "id",
     "choice_count", "tool_names", "retrieval_refs", "client_seq_gap",

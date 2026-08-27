@@ -111,7 +111,39 @@ class LogIngest(BaseModel):
                    # SAME DEPLOY ORDER AS THE TWO KEYS ABOVE, for the same
                    # reason: the whole REQUEST is rejected, so an SDK sending
                    # this to a backend without it loses the entire batch.
-                   "policy_tag_raw"}
+                   "policy_tag_raw",
+                   # WHICH of the customer's declared AI systems produced this
+                   # event (R2) — the id of an `ai_systems` row an admin
+                   # registered through POST /v1/systems. Optional at every
+                   # layer: an event that omits it is byte-for-byte the event
+                   # this backend accepted yesterday.
+                   #
+                   # Content-blind, and for a stronger reason than any key
+                   # above: it is not derived from the interaction at all. It
+                   # names a DECLARATION the customer already made to us about
+                   # their own estate, so it puts nothing in the ledger that the
+                   # ledger could not already join to.
+                   #
+                   # ⚠ SHAPE HERE, OWNERSHIP IN routers/logs.py. This validator
+                   # has no database, so all it can say is "that is the spelling
+                   # of an id". Whether the id names a LIVE system belonging to
+                   # THIS org is decided at ingest, where the org is known —
+                   # `_validate_system_attributions`. Both refusals answer with
+                   # the phrase below, for the reason the phrase exists.
+                   #
+                   # SAME DEPLOY ORDER AS THE THREE KEYS ABOVE, for the same
+                   # reason: the whole REQUEST is rejected, so an SDK sending
+                   # this to a backend without it loses the entire batch. R2
+                   # deploys before R3 ships, and that is not negotiable.
+                   #
+                   # ⚠ AND THIS LIST ONLY EVER GROWS. The SDK's degrade ladder
+                   # (dispatch._DEGRADE_LADDER) escalates one rung at a time on
+                   # the assumption that the key sets a backend can refuse are
+                   # NESTED — true only because a key is never taken away, so a
+                   # backend that knows `system_id` necessarily knows the three
+                   # above it. Adding a key keeps that true; removing one breaks
+                   # a live SDK's retry logic, not just this contract.
+                   "system_id"}
         unknown = set(value) - allowed
         if unknown:
             raise ValueError("event_metadata contains unsupported fields")
@@ -182,6 +214,70 @@ class LogIngest(BaseModel):
         if canonical_policy_tag(raw) != self.policy_tag:
             raise ValueError("event_metadata contains unsupported fields: "
                              "policy_tag_raw is not a spelling of policy_tag")
+        return self
+
+    @model_validator(mode="after")
+    def _system_id_is_a_system_identifier(self):
+        """`system_id` names a declared AI system, and spells it exactly one way.
+
+        SHAPE ONLY. This class has no database, so all it can decide is whether
+        the value is the spelling of an id; whether that id names a system that
+        EXISTS, belongs to THIS org and is not RETIRED is decided in
+        routers/logs.py, which has both the session and the org. The split is
+        deliberate — the cheap refusal stays cheap, and the org filter stays
+        next to the org.
+
+        THE CANONICAL SPELLING, NOT MERELY "PARSES AS A UUID". `uuid.UUID` also
+        accepts `{...}`, `urn:uuid:...`, and undashed or upper-case hex, so five
+        different strings name one system. This value is CHAIN-BOUND — it rides
+        in event_metadata, hashed since V2 — and it is what per-system reporting
+        will group by, so five spellings of one id would be five chain hashes
+        for one attribution and five systems on that surface.
+
+        Refused rather than normalised, and that is the same rule
+        `policy_tag_raw` is held to one validator above: silently storing
+        something other than what the caller sent would put a spelling in the
+        evidence that nobody typed. The caller already has the canonical form —
+        it is what GET /v1/systems returned them.
+
+        ⚠ THE VALUE IS NEVER QUOTED BACK. A rejection here is by definition a
+        rejection of something that is NOT a UUID, so it can be any string the
+        caller put there — the same echo `main._validation_error_handler` strips
+        out of `input`, arriving through the message instead. The ownership
+        refusals in routers/logs.py DO name the id, and may: by then it has
+        passed this check and is provably 36 characters of hex and hyphens.
+
+        THE PHRASE IS REUSED, for the reason the docstring above spells out at
+        length — `dispatch._rejects_unsupported_fields` matches "unsupported
+        fields" to decide whether to strip and retry, and a message only the
+        backend knows means no retry, then `raise_for_status`, then
+        `spool.retry` re-queuing the whole batch forever. The remedy is
+        identical to the other rungs' (drop system_id, resend), so a second
+        phrase would buy nothing and cost the spool.
+        """
+        # ⚠ ABSENT AND `null` ARE NOT THE SAME THING, so this asks whether the
+        # KEY is there rather than whether `.get` came back None. An explicit
+        # JSON null is a present key carrying a value that is not an id, and
+        # reading it as "no attribution" would chain `{"system_id": null}` into
+        # event_metadata: a row claiming the field while holding nothing, which
+        # `_validate_system_attributions` then never looks at and per-system
+        # reporting has to invent a meaning for. R1's `update_system` refuses an
+        # explicit null one layer up for the same reason — Optional means
+        # "omitted", and a null that is read as a default is a value nobody
+        # chose. Absent is absent; anything present is judged.
+        metadata = self.event_metadata or {}
+        if "system_id" not in metadata:
+            return self
+        raw = metadata["system_id"]
+        parsed = None
+        if isinstance(raw, str):
+            try:
+                parsed = uuid.UUID(raw)
+            except ValueError:
+                parsed = None
+        if parsed is None or str(parsed) != raw:
+            raise ValueError("event_metadata contains unsupported fields: "
+                             "system_id is not an AI system id")
         return self
 
     @field_validator("prompt_hash", "response_hash")
