@@ -25,6 +25,7 @@ from sqlalchemy import Date, cast, func, select
 from sqlalchemy.orm import Session
 
 from .. import account_audit, billing_state, ip_allow
+from ..anchor import latest_anchor
 from ..auth import require_role, require_step_up_user, require_user, resolve_org
 from ..config import get_settings
 from ..db import get_db
@@ -34,6 +35,21 @@ from ..models import (
     SsoConnection, StripeEvent, UsageDaily, User, WebhookSubscription,
 )
 from .logs import limiter          # the app's single Limiter instance
+# ⚠ THE LEDGER PROJECTION IS IMPORTED, NOT RE-WRITTEN, AND THAT IS THE FIX FOR
+# #269 RATHER THAN A TIDY-UP. This bundle used to carry its own nine-column
+# picture of `audit_logs` while `verifier/foxy_verify.py` recomputes the hash
+# over seventeen inputs — so the DSAR bundle could not be verified at all, and
+# (because the verifier read `data.get("logs", [])`) reported `[OK] chain
+# intact` over it having checked nothing. Two hand-maintained projections of one
+# chain-bound table is the defect; one projection, shared with the export the
+# verifier is documented against, is what stops it coming back. Adding a
+# chain-hashed column now reaches BOTH exports or NEITHER.
+#
+# It does not weaken the "every section is an explicit field list" rule this
+# endpoint depends on: `_export_row` is exactly such a list, over a table that
+# holds no credential column, going to the same workspace that can already
+# fetch it from GET /v1/logs/export.
+from .logs import _anchor_export, _export_row
 
 log = logging.getLogger("foxy.account")
 router = APIRouter()
@@ -594,7 +610,20 @@ def account_export(
     in-app notifications, outbound webhook and SSO configuration (never their
     credentials), the daily usage rollup, the export history, and billing-event
     metadata (never the provider's raw payload). Admin only. Content-blind: the
-    ledger carries only hashes + verdicts, never prompt or response text.
+    ledger carries only hashes, bounded labels, counts and timestamps, never
+    prompt or response text.
+
+    ⚠ AND SINCE #269 THE LEDGER IS ACTUALLY VERIFIABLE, WHICH IT WAS NOT.
+    `verifier/foxy_verify.py` recomputes each chain hash over seventeen inputs.
+    This bundle carried nine columns and no top-level `org_id`, so pointing the
+    verifier at the file a customer had just been handed recomputed NOTHING —
+    and, because the verifier read `data.get("logs", [])` and this section is
+    named `ledger`, it printed `[OK] chain intact` over zero rows. Two halves,
+    both fixed: the verifier now REFUSES a file it cannot read (exit 2, never
+    `[OK]`) and reads `ledger` as well as `logs`; this section is now the same
+    `_export_row` projection `GET /v1/logs/export` ships, plus `org_id` and the
+    `anchor` receipt at the top level. A rename alone would have turned a silent
+    pass into a loud failure — better, and still not verification.
 
     ⚠ THAT LIST IS THE CLAIM, AND IT IS NOT "EVERYTHING". IT USED TO SAY SO.
     Two earlier wordings were false: "everything this workspace holds", and then
@@ -826,10 +855,16 @@ def account_export(
         "account_actions": [{"actor_email": a.actor_email, "action": a.action,
                              "target": a.target, "detail": a.detail,
                              "created_at": _iso(a.created_at)} for a in actions],
-        "ledger": [{"seq": r.seq, "prompt_hash": r.prompt_hash, "response_hash": r.response_hash,
-                    "policy_tag": r.policy_tag, "agent": r.agent, "chain_hash": r.chain_hash,
-                    "grading_status": r.grading_status, "gemini_verdict": r.gemini_verdict,
-                    "created_at": _iso(r.created_at)} for r in logs],
+        # ⚠ #269: THE SAME PROJECTION AS GET /v1/logs/export, NOT A SUMMARY OF IT.
+        # The nine columns this used to carry could not be verified: the chain
+        # hash is taken over seventeen inputs, thirteen of which were absent, so
+        # `verifier/foxy_verify.py` pointed at this bundle recomputed nothing.
+        # Every field added here is a hash, a bounded label, a count or a
+        # timestamp — `event_metadata` is allowlisted and length-capped at ingest
+        # (`schemas.LogIngest._metadata_is_content_blind`) and `local_verdict` is
+        # derived from it — so content-blindness is unchanged: no prompt or
+        # response text exists in this table to export.
+        "ledger": [_export_row(r) for r in logs],
         # ── added closing #252 ────────────────────────────────────────────
         # Sign-in activity, and the sharpest of the omissions: `email`, `ip` and
         # `user_agent` are stored RAW here (unlike traffic_events, where both are
@@ -881,9 +916,18 @@ def account_export(
                            "received_at": _iso(s.received_at),
                            "processed_at": _iso(s.processed_at)} for s in stripes],
     }
-    # First key in the file, because it is what tells a reader how to read the
-    # rest — and derived from the bundle rather than written beside it.
-    bundle = {"export_scope": _export_scope(bundle), **bundle}
+    # ⚠ #269: `org_id` AND `anchor` ARE VERIFIER INPUTS, NOT DECORATION.
+    # `org_id` is the FIRST field of the hashed event, so a bundle without it at
+    # the top level recomputes every row against `None` and every row fails —
+    # the chain would read as tampered when nothing had been touched. `anchor`
+    # is the receipt the offline anchor check compares against; without it a
+    # bundle that plainly carries anchor rows under `anchors` was told "no
+    # anchor receipt in this export". Both are already in this workspace's own
+    # data (`organization.id`, the `anchors` section); neither adds a category.
+    bundle = {"export_scope": _export_scope(bundle),
+              "org_id": str(admin.org_id),
+              "anchor": _anchor_export(latest_anchor(db, admin.org_id)),
+              **bundle}
     fname = f"foxy-account-export-{admin.org_id}.json"
     return Response(content=json.dumps(bundle, indent=2, default=str),
                     media_type="application/json",
