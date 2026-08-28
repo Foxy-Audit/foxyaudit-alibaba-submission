@@ -231,6 +231,22 @@ AUDIT_LABELS = {
     "system.create": "Declared an AI system",
     "system.update": "Updated an AI system",
     "system.retire": "Retired an AI system",
+    # Register #249 split key rotation into two acts that destroy different
+    # amounts, so they get two labels rather than one action with the difference
+    # buried in `detail` - which `audit_rows` does not render at all.
+    #
+    # "an API key", singular and indefinite, because POST /v1/keys/rotate is
+    # machine Bearer auth with no human present and now replaces ONLY the
+    # credential that made the call. It used to revoke every active key in the
+    # workspace and answer 200, which is what #249 was; a label reading
+    # "Rotated the API key" would quietly carry that old, wrong singular
+    # forward onto an org that holds four.
+    #
+    # "every", spelled out, on the 2FA-gated dashboard path - that one still
+    # revokes the lot, deliberately, and a customer reading their own history
+    # after three services stopped working needs the row to say so.
+    "key.rotate": "Rotated an API key",
+    "key.regenerate": "Regenerated every API key",
 }
 
 AUDIT_EMPTY = ("No account changes recorded yet",

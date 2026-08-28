@@ -13,7 +13,7 @@ OpenAI Responses API.
 | POST   | `/v1/logs`             | Ingest metadata → chain → 202 → background Gemini   |
 | GET    | `/v1/verify`           | Recompute the chain, detect tampering                |
 | POST   | `/v1/passport`         | Generate a compliance passport (HTML report)         |
-| POST   | `/v1/keys/rotate`      | Rotate the org's API key (invalidates the old one)   |
+| POST   | `/v1/keys/rotate`      | Rotate the CALLING key (siblings keep working)      |
 | POST   | `/v1/webhooks/stripe`  | Stripe subscription webhook (auto-provisions orgs)   |
 
 All endpoints except `/v1/webhooks/stripe` require `Authorization: Bearer <org_api_key>`.
@@ -67,8 +67,11 @@ python scripts/verify_chain.py        # per-row PASS/FAIL table
 - **RLS:** `auth.require_org` sets `app.current_org` via `set_config(..., true)`
   per transaction; the `org_isolation` policy (with `FORCE`) scopes every
   `audit_logs` query to the calling tenant.
-- **Key rotation:** `POST /v1/keys/rotate` generates a new key, overwrites the
-  hash — the old key is immediately invalid. Copy the new key on the spot.
+- **Key rotation:** `POST /v1/keys/rotate` (machine Bearer auth) replaces **only
+  the key that made the call** — the org's other services and environments keep
+  working. Copy the new key on the spot. Burning every key in the workspace is a
+  separate, deliberate act and lives behind `/v1/keys/regenerate/*`, which needs
+  a dashboard admin session plus an emailed 2FA code.
 - **Stripe billing:** `POST /v1/webhooks/stripe` auto-provisions orgs on
   checkout completion and tracks subscription status changes.
 - **Compliance passport:** `POST /v1/passport` renders a content-blind report
