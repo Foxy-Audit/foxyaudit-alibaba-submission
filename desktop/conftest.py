@@ -116,6 +116,63 @@ def no_egress():
         urllib.request.OpenerDirector.open = real_open
 
 
+@pytest.fixture(autouse=True)
+def drain_posted_events():
+    """Let the Qt event loop turn between tests. THE SUITE SEGFAULTS WITHOUT IT.
+
+    ⚠ WHY: A UNIT SUITE NEVER CALLS `app.exec()`, SO POSTED EVENTS NEVER EXPIRE.
+    Every `deleteLater()`, every `QTimer.singleShot`, and every signal a worker
+    thread emits POSTS an event to the main thread's queue instead of running
+    inline. In the shipped app the event loop turns constantly, so those land
+    microseconds later while the objects that own them are still alive. Here
+    nothing turned the loop unless a test happened to call `processEvents()`
+    itself, so the queue accumulated across the whole run — and Python garbage-
+    collected the objects behind those events long before anything delivered
+    them. The first `processEvents()` after that walks into freed memory:
+
+        QApplication.processEvents()
+          QCoreApplicationPrivate::sendPostedEvents
+            QObject::event(QEvent*)                <- a queued QMetaCallEvent
+              PyQtSlotProxy::qt_metacall
+                PyQtSlot::call
+                  _PyEval_EvalFrameDefault         <- SIGSEGV
+
+    (That stack is from gdb on a real core dump; faulthandler only ever printed
+    `<invalid frame>`, because by then the stack is corrupt.)
+
+    ⚠ THIS IS NOT ABOUT THE FILE THAT CRASHED, AND MEASURING THAT MATTERS.
+    `test_settings_threading.py` sorts last and is the first thing late in the
+    run that pumps, so it took the blame — but on ubuntu-latest, over five runs
+    each:
+
+        pytest desktop -q                                    SIGSEGV 5/5
+        pytest desktop -q  --ignore=<that file>               SIGSEGV 0/5
+        pytest desktop -q  --ignore=<that file>  + ONE pump   SIGSEGV 5/5
+        pytest desktop -q  with this fixture                  SIGSEGV 0/5
+
+    The third line is the one that settles it: the other 937 tests poison the
+    queue EVERY TIME, and were green only because nothing pumped after them. A
+    green run without this fixture is a latent one — any future test file
+    sorting after them that touches the event loop dies the same way.
+
+    ⚠ WINDOWS NEVER SEES IT and that is not luck: a use-after-free only crashes
+    once the freed block is reused, which needs the allocation churn of a few
+    hundred widget-building tests plus glibc's allocator. Local Windows runs
+    961/1 green on the identical tree.
+
+    ONE pass, and that is measured rather than assumed. `settle()` below pumps
+    twice because delivering a `DeferredDelete` can post another one, so a second
+    pass looked obviously right here too — but the full suite is 0/5 either way,
+    and a mutation that removed the second call could not be made to fail. An
+    unguardable line that changes nothing is a line to delete.
+    """
+    yield
+    from PyQt6.QtWidgets import QApplication      # imported here so a Qt-free
+    app = QApplication.instance()                 # test never pays for it
+    if app is not None:
+        app.processEvents()
+
+
 #: Every worker set `DashboardWindow` tracks. Named here rather than spelled out
 #: at each call site so a new one cannot be added to `closeEvent` and forgotten
 #: by the tests that wait on it.

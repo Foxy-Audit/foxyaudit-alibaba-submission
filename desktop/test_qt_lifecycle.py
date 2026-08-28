@@ -66,6 +66,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
+
 _HERE = Path(__file__).resolve().parent
 _TESTS = sorted(_HERE.glob("test_*.py"))
 
@@ -185,3 +188,81 @@ def test_no_test_builds_its_qapplication_inside_the_test_body():
         "a QApplication built inside a test body dies when that function "
         "returns:\n  " + "\n  ".join(offenders))
 
+
+# ══ #244c · the event queue must be drained BETWEEN tests ═══════════════════
+#
+# The other rule that ends the process rather than a test, and the second one
+# this file has had to pin. A unit suite never calls `app.exec()`, so a posted
+# event sits in the main thread's queue until something pumps. Left there across
+# a 962-test run, the objects behind those events are garbage-collected, and the
+# next `processEvents()` — wherever it happens to be — delivers a queued
+# metacall into freed memory and takes the interpreter with it (SIGSEGV, exit
+# 139, `<invalid frame>`). `conftest.drain_posted_events` gives the loop the turn
+# the shipped app has continuously; the docstring there carries the measurements.
+#
+# ⚠ GUARDED BEHAVIOURALLY, NOT STRUCTURALLY, and that is the difference from the
+# exit-127 guards above. Those must read the source because the failure they
+# describe is a coin flip decided by collection order. This one is not: the
+# drain either happened between these two tests or it did not, and the pair
+# below reads the actual queue.
+
+#: Written by the queued slot. Module-level because the whole point is that the
+#: delivery happens BETWEEN the two tests, not inside either of them.
+_DELIVERED: list[str] = []
+_ARMED: list[str] = []
+#: The sender is kept alive on purpose. This pair measures whether the QUEUE was
+#: drained, and holding the sender keeps object lifetime out of the answer.
+_KEEP: list[QObject] = []
+
+
+class _Sentinel(QObject):
+    ping = pyqtSignal(str)
+
+
+@pytest.fixture(scope="module")
+def app():
+    # RETURNED, never dropped — the rule the rest of this file guards.
+    from PyQt6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
+
+
+def test_a_queued_event_is_left_pending_for_the_next_test(app):
+    """Post a queued metacall and deliberately DO NOT pump.
+
+    `Qt.ConnectionType.QueuedConnection` posts the call to the main thread's
+    event queue instead of running it inline — the same thing `deleteLater()`,
+    `QTimer.singleShot` and every worker-thread `emit` do, without needing a
+    thread to demonstrate it.
+
+    ANTI-VACUITY IS THE SECOND ASSERTION: if the connection were direct the slot
+    would have run already, nothing would be pending, and the companion test
+    below would pass without anything having been drained.
+    """
+    sentinel = _Sentinel()
+    sentinel.ping.connect(_DELIVERED.append, Qt.ConnectionType.QueuedConnection)
+    sentinel.ping.emit("armed")
+    _KEEP.append(sentinel)
+    assert _DELIVERED == [], (
+        "the emit ran inline, so nothing is queued and the guard below would "
+        "be vacuous")
+    _ARMED.append("armed")
+
+
+def test_the_queue_was_drained_before_this_test_began(app):
+    """The assertion: something turned the event loop between the two tests.
+
+    Fails with `_DELIVERED == []` if `conftest.drain_posted_events` is removed
+    or made a no-op — verified by deleting the fixture and running this file.
+
+    ⚠ IT NEEDS ITS PAIR. Selecting this test alone (`-k`, or an `-x` run that
+    stopped earlier) leaves `_ARMED` empty, and the first assertion says so
+    rather than letting the guard pass on a queue nobody ever armed.
+    """
+    assert _ARMED == ["armed"], (
+        "the arming test did not run — this guard is a PAIR and cannot be "
+        "selected on its own")
+    assert _DELIVERED == ["armed"], (
+        "a queued event survived into the next test: nothing drained the Qt "
+        "event queue between them. Across a full run those pile up, their "
+        "owners are collected, and the next processEvents() segfaults "
+        "(register #244c). See conftest.drain_posted_events.")
