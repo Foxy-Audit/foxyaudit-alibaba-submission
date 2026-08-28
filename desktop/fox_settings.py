@@ -17,6 +17,7 @@ under the geometry/* keys — plain coordinates, no secrets.
 from __future__ import annotations
 
 import json
+from collections import namedtuple
 
 from PyQt6.QtCore import QByteArray, QPoint, QSettings, QSize
 
@@ -39,29 +40,62 @@ PROVIDER_DEFAULTS = {
 }
 
 
-def _respawn(store: QSettings) -> QSettings:
-    """A second QSettings pointing at the SAME place as `store`.
+#: Where a store points, as four plain values — everything `_respawn` needs and
+#: nothing that belongs to a thread. Read ONCE, by `FoxSettings.__init__`, on
+#: whichever thread built the store, then carried to workers as data.
+StoreSpec = namedtuple("StoreSpec", "file_name format organization application")
+
+
+def _store_spec(store) -> "StoreSpec | None":
+    """Snapshot where `store` points — ON THE CALLING THREAD.
+
+    ⚠ The four accessors below are the whole of register #244. `QSettings` is
+    reentrant across INSTANCES, not one instance across threads, so asking a
+    store where it points is only safe from the thread that owns it. This
+    function exists so that question is asked exactly once, at construction,
+    and never again from a worker.
+
+    Returns None for anything that is not a real `QSettings` — a test double
+    has no C++ store to reopen and no threading rule to break, so `clone()`
+    shares it, exactly as `FoxyClient._fresh_settings` already does for a
+    settings object that has no `clone()` at all.
+    """
+    if not isinstance(store, QSettings):
+        return None
+    return StoreSpec(store.fileName(), store.format(),
+                     store.organizationName(), store.applicationName())
+
+
+def _respawn(spec: StoreSpec) -> QSettings:
+    """A second QSettings pointing at the SAME place `spec` was taken from.
 
     Two shapes to cover, and getting either wrong sends the copy somewhere
     else entirely: a file-backed store (what tests inject — an ini path) is
     reopened by `fileName()` + `format()`, and the app's own registry/native
     store is reopened by its organization and application names. Anything
-    unrecognised falls back to the store we were handed rather than to a
-    guessed default, because sharing one instance across threads is a
-    correctness risk while pointing at the WRONG store is a data-loss one.
+    unrecognised still resolves to the app's OWN store rather than to a
+    half-identified one, because pointing at the WRONG store is a data-loss
+    risk — that ordering of harms is unchanged from the version this replaces,
+    and so is every branch below it.
+
+    ⚠ THERE IS DELIBERATELY NO `except Exception: return store` HERE, AND THAT
+    IS THE FIX. The old fallback existed because this decision was made from
+    LIVE accessor calls: a store that raised left nothing to go on, and a
+    guessed default would have written the user's settings somewhere else. It
+    ranked that data-loss risk above the correctness risk of sharing one
+    instance across threads — a fair ranking, but it made the crash the
+    DEFAULT outcome of any failure. Reading the shape on the owning thread
+    removes both horns at once: the shape is already known, so nothing here
+    can misidentify it, and this function is no longer HANDED the shared
+    instance, so it cannot return it. Handing that instance to a worker was
+    never a fallback; it is the crash (#244, and the five CI aborts of #242).
     """
-    try:
-        name = store.fileName()
-        fmt = store.format()
-        if fmt in (QSettings.Format.IniFormat, QSettings.Format.NativeFormat) \
-                and name and ("/" in name or "\\" in name) \
-                and not name.startswith("\\HKEY"):
-            return QSettings(name, fmt)
-        org = store.organizationName() or ORG
-        app = store.applicationName() or APP
-        return QSettings(org, app)
-    except Exception:                   # noqa: BLE001 — never break a request
-        return store
+    name, fmt = spec.file_name, spec.format
+    if fmt in (QSettings.Format.IniFormat, QSettings.Format.NativeFormat) \
+            and name and ("/" in name or "\\" in name) \
+            and not name.startswith("\\HKEY"):
+        return QSettings(name, fmt)
+    return QSettings(spec.organization or ORG, spec.application or APP)
 
 
 # ────────────────────────────────────────────────────────── FoxSettings ──
@@ -76,6 +110,19 @@ class FoxSettings:
         # and makes the suite order-dependent.
         self._s = settings if settings is not None else QSettings(ORG, APP)
         self._secrets = secrets if secrets is not None else default_secret_store()
+        # ⚠ HERE, and never lazily inside `clone()`. `clone()` is called from
+        # `FoxyClient._fresh_settings` ON A WORKER THREAD, so a snapshot taken
+        # there would run `_store_spec`'s four accessors against the GUI
+        # thread's own QSettings — which IS the defect (#244), only written out
+        # more carefully. `__init__` is the one moment the object is provably
+        # unshared: nothing can hold a reference to a FoxSettings that has not
+        # finished being constructed, so whichever thread runs this line is the
+        # thread that owns `self._s`. In the app that is the GUI thread — every
+        # production construction site is a widget constructor (omni_fox.py,
+        # dashboard.py, clay_chat_popup.py, settings_dialog.py, auth_windows.py)
+        # — and in a clone it is the worker, whose QSettings was built one line
+        # earlier on that same thread. Either way the owner is the reader.
+        self._spec = _store_spec(self._s)
 
     def clone(self) -> "FoxSettings":
         """A same-store copy with its own QSettings, for another thread.
@@ -94,8 +141,17 @@ class FoxSettings:
         carried over by reference, because a keychain client is not the thing
         QSettings' threading rule is about and re-creating it per request would
         mean a keyring round trip on every call.
+
+        ⚠ This runs ON THE CALLING (worker) THREAD and touches `self._s` not at
+        all — only `self._spec`, four immutable values read at construction by
+        the thread that owns the store. That is the whole of #244's repair:
+        `_respawn` is handed DATA, never the GUI thread's object.
         """
-        return type(self)(_respawn(self._s), self._secrets)
+        if self._spec is None:
+            # Not a QSettings — a test double. Nothing to reopen, and no
+            # threading rule to break, so sharing the instance is honest.
+            return type(self)(self._s, self._secrets)
+        return type(self)(_respawn(self._spec), self._secrets)
 
     # ── secret plumbing (keychain-first, one-time migration from QSettings) ──
     # The legacy QSettings copy is removed ONLY when the secret has landed in a

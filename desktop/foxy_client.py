@@ -494,17 +494,27 @@ class FoxyClient(QObject):
         keychain and real QSettings even when a test had injected its own.
         `clone()` keeps the property that motivated this — a genuinely new
         QSettings per thread — while pointing it at the store the caller gave
-        us.
+        us. Since #244 it does so from a snapshot of the store's shape taken on
+        the thread that OWNS that store, so nothing on this thread ever calls an
+        accessor on the GUI thread's QSettings.
         """
-        try:
-            return self.settings.clone()
-        except AttributeError:
-            # A settings object without clone() — a test double, say. Sharing
-            # the one instance is the lesser risk: at worst a threading
-            # hazard, where the old fallback silently read a DIFFERENT store.
+        clone = getattr(self.settings, "clone", None)
+        if clone is None:
+            # A settings object without clone() — a test double, say. It is not
+            # a QSettings, so sharing the one instance breaks no threading rule,
+            # and the old fallback (which silently read a DIFFERENT store) was
+            # strictly worse.
             return self.settings
-        except Exception:
-            return self.settings
+        # ⚠ NOT wrapped in `except Exception: return self.settings`. That arm
+        # was `_respawn`'s hazard one level up: on any failure it handed THIS
+        # worker thread the GUI thread's own FoxSettings — precisely the object
+        # #244 exists to stop crossing, and precisely the stack the #242
+        # faulthandler dumps died in. `clone()` no longer reads the shared store
+        # at all, so the only thing left here that can raise is QSettings
+        # construction itself; a request that fails is the strictly smaller harm
+        # than a heap-corrupting data race, and `ApiWorker.run` already turns it
+        # into a `failed` signal the UI knows how to show.
+        return clone()
 
     def _credentials(self) -> tuple[str, str]:
         """Read (backend_url, org_key) as ONE consistent pair.
