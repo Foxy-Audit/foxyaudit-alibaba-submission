@@ -65,8 +65,8 @@ def compute_chain_hash(*, org_id, prompt_hash, response_hash, token_count,
         if chain_version >= 3:
             event["chain_version"] = chain_version
         # V4 binds the digest of the row's LOCAL, deterministic verdict (the one
-        # decided at ingest). The AI judge's grade arrives later and is NOT bound
-        # — see verdict_hash_hex below for what that means for a reader.
+        # decided at ingest). The later, asynchronous grade is NOT bound — see
+        # verdict_hash_hex below for what that means for a reader.
         if chain_version >= 4:
             event["verdict_hash"] = verdict_hash
         blob = json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -173,8 +173,16 @@ def verdict_hash_hex(verdict):
     verdict body is tamper-evident too.
 
     `local_verdict` is the LOCAL, deterministic verdict — decided by policy rules
-    at ingest. `gemini_verdict` is the AI judge's later, advisory grade; it is not
+    at ingest. `gemini_verdict` is the row's later, advisory grade; it is not
     hashed and this tool does not check it.
+
+    ⚠ NEITHER COLUMN NAME IS EVIDENCE THAT A MODEL PRODUCED THE VERDICT IN IT.
+    `gemini_verdict` is named for the first provider this product shipped with; a
+    verdict stored there may have been produced with no model called at all. Read
+    `graded_by` on the verdict body — "ai", "rules", "host_enforcement" or "none"
+    — and treat its absence as "not recorded", never as "no AI". On
+    `local_verdict` that field is inside the bytes this digest covers, so the
+    authorship claim on a V4 row is tamper-evident like everything else here.
     """
     canonical = json.dumps(verdict, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

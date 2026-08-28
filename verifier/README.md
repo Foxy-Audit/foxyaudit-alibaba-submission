@@ -99,11 +99,28 @@ Only the SHA-256 hashes of your prompt/response are ever stored — never the ra
 metadata at the moment it was recorded. That is what `verdict_hash` covers, and editing
 it afterwards breaks the chain.
 
-`gemini_verdict` is the **AI judge's** later grade. It is not bound, and cannot be: the
-chain hash is fixed when the row is written, and the judge grades asynchronously
-afterwards. Binding it would mean re-hashing rows after the fact — which would invalidate
-every row after them. So the chain covers what the system *decided*; the model's opinion
-sits beside it, clearly labelled, and this script does not check it.
+`gemini_verdict` is the row's later grade. It is not bound, and cannot be: the chain hash
+is fixed when the row is written, and grading happens asynchronously afterwards. Binding
+it would mean re-hashing rows after the fact — which would invalidate every row after
+them. So the chain covers what the system *decided*; the later grade sits beside it,
+labelled, and this script does not check it.
+
+### Who graded a row — read `graded_by`, do not assume
+
+⚠ **`gemini_verdict` is named for the first provider this product shipped with. The name
+is not evidence that a model produced what is in it** — a verdict stored there may have
+been reached with no model called at all. Every verdict says which:
+
+| `graded_by` | What it means |
+|---|---|
+| `"ai"` | a model answered; `judge_provider` / `judge_model` name it |
+| `"rules"` | the deterministic metadata engine graded the row and no model was called. Where that is because a judge could not be reached, `evaluator_unavailable_reason` says why (`no_api_key`, `no_byok_key`, `byok_key_undecryptable`, or the failure type) |
+| `"host_enforcement"` | the row is a prompt your own host blocked or redacted before it left. Nothing was sent, so there was no model response to grade |
+| `"none"` | nothing graded the row — either no evaluator ran, or one answered and its answer was refused as self-contradictory |
+| *absent* | the row predates the field. It records **no claim** about who graded it, and nothing was written in afterwards to invent one |
+
+On `local_verdict` this field sits inside the bytes `verdict_hash` covers, so on a
+`chain_version` 4 row an authorship claim cannot be edited without this script noticing.
 
 ## Optional: prove *which* text a commitment covers
 

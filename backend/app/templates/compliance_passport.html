@@ -351,6 +351,40 @@ code.cmd{font-family:'DejaVu Sans Mono',Consolas,'Courier New',monospace;
       Where no events were captured it reads 100% against a total of zero — read it with the
       total beside it, never alone.
     </p>
+
+    {# #228 · what produced the verdicts the figures above are built from. Read
+       out of each event's own stored verdict, not out of this deployment's
+       settings: which judge grades is a per-tenant choice, so a configured
+       provider key is not evidence that any particular event was graded by a
+       model. #}
+    <h3 style="margin:12px 0 4px;font-size:9.5pt;">What graded these events</h3>
+    <dl class="kv">
+      <dt>Graded by an AI model</dt><dd>{{ ai_graded_events }}</dd>
+      <dt>Graded by deterministic rules only</dt><dd>{{ rules_graded_events }}</dd>
+      {% if grader_unrecorded_events %}
+      <dt>Grader not recorded</dt><dd>{{ grader_unrecorded_events }}</dd>
+      {% endif %}
+    </dl>
+    <p class="fine">
+      {% if rules_graded_events and ai_graded_events == 0 %}
+      <strong>No event in this period was graded by an AI model.</strong> Every verdict behind the
+      figures above came from the deterministic metadata rules, which reason over hashes, counts
+      and policy tags and state plainly that semantic content was not evaluated. That is a
+      statement about what happened, not a fault: grading falls back to those rules whenever no
+      judge could be reached for this workspace.
+      {% elif rules_graded_events %}
+      Events graded by deterministic rules were graded without any model being called — those
+      rules reason over hashes, counts and policy tags and do not evaluate semantic content. The
+      two lines are counted apart because they are different kinds of evidence, and a compliance
+      rate built on both should be read knowing the mix.
+      {% elif ai_graded_events %}
+      Every graded event in this period was graded by a model, named on the event's own verdict.
+      {% endif %}
+      {% if grader_unrecorded_events %}
+      Events recorded before this workspace began storing the grader carry no such statement, and
+      nothing here infers one for them.
+      {% endif %}
+    </p>
   </section>
 
   {# ══════════════════════════ ENFORCEMENT ══════════════════════════ #}
@@ -371,9 +405,12 @@ code.cmd{font-family:'DejaVu Sans Mono',Consolas,'Courier New',monospace;
       <dt>Evaluator Could Not Determine</dt><dd>{{ unknown_evaluator_events }}</dd>
     </dl>
     <p class="fine">
-      “Evaluator could not determine” is an honest unknown — the AI judge returned no usable
-      verdict (unavailable, or quarantined as self-contradictory). These events are
-      <strong>never counted as a compliant pass</strong>.
+      “Evaluator could not determine” is an honest unknown — a judge was reached but returned no
+      usable verdict, or none could be reached and no deterministic verdict replaced it. These
+      events are <strong>never counted as a compliant pass</strong>. Read it beside “What graded
+      these events” in §01: a zero here does <strong>not</strong> mean an AI model determined
+      the rest, because an unreachable judge is normally replaced by a deterministic verdict,
+      which is a determination and is counted there.
     </p>
     {% if policies_enforced %}
     <table style="margin-top:9px;">

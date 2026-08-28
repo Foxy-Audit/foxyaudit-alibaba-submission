@@ -134,10 +134,34 @@ prompts and responses are ever stored - never the raw text.
 WHICH VERDICT VERSION 4 BINDS. local_verdict is the deterministic verdict decided
 by policy rules on the row's metadata at the moment it was recorded; that is what
 verdict_hash covers, and editing it afterwards breaks the chain. gemini_verdict
-is the AI judge's later grade - not bound, and it cannot be, because the chain
-hash is fixed when the row is written and the judge grades asynchronously
-afterwards. The chain covers what the system DECIDED; the model's opinion sits
-beside it, labelled, and this script does not check it.
+is the row's later, asynchronous grade - not bound, and it cannot be, because the
+chain hash is fixed when the row is written and grading happens afterwards. The
+chain covers what the system DECIDED; the later grade sits beside it, labelled,
+and this script does not check it.
+
+WHO GRADED EACH ROW - read graded_by, do not assume. gemini_verdict is named for
+the first provider this product shipped with; it is NOT evidence that a model
+produced it, and a row it holds may have been graded with no model involved at
+all. Every verdict says which:
+
+  graded_by = "ai"                a model answered, and judge_provider /
+                                  judge_model name it
+  graded_by = "rules"             the deterministic metadata engine graded this
+                                  row and no model was called. When that is
+                                  because a judge could not be reached,
+                                  evaluator_unavailable_reason says why
+  graded_by = "host_enforcement"  the row is a prompt your own host blocked or
+                                  redacted before it left. Nothing was sent, so
+                                  there was no model response to grade
+  graded_by = "none"              nothing graded this row - either no evaluator
+                                  ran, or one answered and its answer was refused
+                                  as self-contradictory
+  absent                          the row predates this field. It records no
+                                  claim about who graded it, and nothing has been
+                                  written in after the fact to invent one
+
+On local_verdict this field is inside what verdict_hash binds, so an authorship
+claim on a chain_version 4 row cannot be edited without this script noticing.
 
   Check                       When                        Proves
   --------------------------  --------------------------  ------------------------

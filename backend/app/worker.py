@@ -248,7 +248,36 @@ def _grade_one(db: Session, row) -> None:
         # grade — quarantine it as evaluator_unknown to keep the audit report honest.
         verdict = judge.validate(verdict)
         if verdict.decision == "unknown" and verdict.reason.startswith("evaluator_unavailable"):
-            verdict = policy_engine.evaluate(meta, policy_config)
+            # ── #228 · THE SUBSTITUTION STAYS. WHAT IT LEAVES BEHIND CHANGES. ──
+            #
+            # An unreachable judge must not leave the row ungraded — the
+            # deterministic engine is a real grade of this metadata and dropping
+            # it would be a safety regression, not a fix. What was wrong was that
+            # the swap was TOTAL: the rules verdict landed in the same column, in
+            # the same shape, under a confident decision, and every trace that no
+            # model had run went with the verdict it replaced. `judge_provider`
+            # stayed null, which is the only thing that ever distinguished this
+            # row from an AI-graded one — a null inside a JSON blob, identical to
+            # the null on a row whose judge answered incoherently.
+            #
+            # So the replacement now carries two facts forward:
+            #   graded_by="rules"                 from policy_engine — the
+            #                                     POSITIVE statement of authorship
+            #   evaluator_unavailable_reason      from the verdict being discarded
+            #                                     — WHY the AI never ran
+            #
+            # Both, rather than either: "graded by rules" without the reason is
+            # unactionable ("is my key broken, or does this deployment just not
+            # do AI grading?"), and the reason without the authorship is the old
+            # defect in a new coat — a fact about a verdict nobody can see.
+            #
+            # ⚠ The DECISION deliberately stays the rules engine's clean/breach.
+            # Forcing it back to `unknown` would drop every breach the metadata
+            # rules do catch, and this really is a grade — of the metadata, by
+            # rules, which is now exactly what it says.
+            verdict = policy_engine.evaluate(meta, policy_config).model_copy(
+                update={"evaluator_unavailable_reason":
+                        verdict.evaluator_unavailable_reason})
     # Scope RLS to this row's org before the write-back (no-op under a
     # BYPASSRLS/superuser role, required under a hardened one).
     db.execute(text("SELECT set_config('app.current_org', :oid, true)"),

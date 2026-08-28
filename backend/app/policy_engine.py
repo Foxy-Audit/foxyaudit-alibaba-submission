@@ -3,6 +3,15 @@
 Hashes cannot tell an evaluator whether a response contains unsafe advice or a
 data leak. This engine therefore makes only claims supported by metadata and
 marks the semantic part unknown unless an optional evaluator provides it.
+
+⚠ EVERY VERDICT THIS MODULE RETURNS SAYS SO ON ITS FACE (#228). `graded_by` is
+set at all three exits — "rules" for the metadata engine, "host_enforcement" for
+a host-side enforcement label — because these verdicts are stored in exactly the
+same column, and in the same shape, as an AI judge's grade. `worker._grade_one`
+substitutes an `evaluate()` verdict for an unavailable judge on every ordinary
+row, so on a deployment with no reachable provider key this module grades the
+entire ledger; without the field the resulting rows were indistinguishable from
+AI-graded ones and the product had no way to tell an auditor which it was.
 """
 
 from __future__ import annotations
@@ -75,6 +84,11 @@ def evaluate_enforcement(meta: dict[str, Any]) -> Verdict:
         risk_score=0,
         decision=decision,
         rules=rules,
+        # #228 · the host decided this, not a model — and there was no model
+        # response to decide about. Its own value rather than "rules": these
+        # verdicts are read back from labels the SDK recorded on the customer's
+        # host, where `rules` below is this process reasoning over metadata.
+        graded_by="host_enforcement",
     )
 
 
@@ -97,6 +111,7 @@ def evaluate(meta: dict[str, Any], policy_config: dict[str, Any] | None = None) 
             risk_score=min(100, 50 + 10 * len(rules)),
             decision="breach",
             rules=rules,
+            graded_by="rules",
         )
     return Verdict(
         policy_breach=False,
@@ -104,4 +119,5 @@ def evaluate(meta: dict[str, Any], policy_config: dict[str, Any] | None = None) 
         risk_score=0,
         decision="clean",
         rules=[],
+        graded_by="rules",
     )

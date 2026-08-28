@@ -332,6 +332,65 @@ class Verdict(BaseModel):
     judge_provider: str | None = None
     judge_model: str | None = None
 
+    # ── #228 · WHO produced this verdict, stated positively ───────────────────
+    #
+    # Before this field the record answered that question only by ABSENCE. When no
+    # provider key was reachable the judges returned an `evaluator_unavailable`
+    # verdict and the worker REPLACED it wholesale with the deterministic rules
+    # engine, so the stored row read `decision: "clean"` under a confident reason
+    # and nothing anywhere said a model had never run. The single tell was
+    # `judge_provider` being null INSIDE a JSON blob — a null a reader has to know
+    # to look for, and one that is equally null on a row a judge answered badly. On
+    # a product whose pitch is evidence, "an AI reviewed this" has to be
+    # falsifiable FROM THE RECORD, so the record now names its author, always.
+    #
+    # A CLOSED VOCABULARY, and every producer sets it explicitly:
+    #
+    #   "ai"                a model answered and its answer was taken as the grade
+    #                       (the gemini/openai success paths, and judge.combine,
+    #                       which merges only verdicts a model actually returned)
+    #   "rules"             policy_engine.evaluate — the deterministic metadata
+    #                       engine. What the worker substitutes when no judge could
+    #                       be reached, and what ingest decides synchronously
+    #   "host_enforcement"  policy_engine.evaluate_enforcement — the host's own
+    #                       blocked/redacted labels. Not a grade of a model
+    #                       response; there was no model response
+    #   "none"              NOTHING graded this row. Either the evaluator never ran
+    #                       (a _fallback verdict) or it answered incoherently and
+    #                       judge.validate refused the answer (_quarantine). Those
+    #                       two stay distinguishable from each other by `reason`
+    #                       (evaluator_unavailable: vs evaluator_unknown:) and by
+    #                       judge_provider, which _quarantine deliberately keeps
+    #
+    # ⚠ `None` MEANS "NOT RECORDED", AND IS NOT A CLAIM. Rows graded before this
+    # field existed carry null, and nothing backfills them: whether a model graded
+    # a historical row is not something the ledger recorded, and deriving it now
+    # and writing it down would be manufacturing evidence. It would also be unsafe
+    # — `local_verdict` is hashed (chain.verdict_hash_hex), so rewriting one breaks
+    # its row's verdict_hash. A reader gets three states, not two: graded by X,
+    # graded by nothing, and not recorded.
+    graded_by: str | None = Field(
+        default=None, pattern=r"^(ai|rules|host_enforcement|none)$")
+
+    # WHY no AI grade is on this row, when that is the case — the structured
+    # reason, not a prefix parsed back out of `reason`.
+    #
+    # judge_routing already distinguishes these (`JudgeRouting.problems`:
+    # no_byok_key, byok_encryption_unavailable, byok_key_undecryptable) and the
+    # provider modules add their own (no_api_key, plus the exception TYPE for a
+    # timeout / quota / transport failure). All of it used to reach `_fallback`,
+    # be formatted into "evaluator_unavailable:<reason>", and then be discarded
+    # whole the moment the worker swapped in the rules verdict.
+    #
+    # It rides through that substitution now, because "graded by rules" and
+    # "graded by rules BECAUSE THIS TENANT'S BYOK KEY WOULD NOT DECRYPT" are
+    # different facts and only the second is actionable by the customer reading
+    # their own export.
+    #
+    # Set ONLY on a verdict that is not an AI grade. Never contains key material:
+    # every value is a fixed label or an exception class name.
+    evaluator_unavailable_reason: str | None = None
+
 
 class LogResponse(BaseModel):
     log_id: uuid.UUID
@@ -464,7 +523,13 @@ class StatsResponse(BaseModel):
     breaches: int
     clean_rate: float | None     # percent, 0-100; None when no determinate grades exist
     avg_token_count: float
-    judge_model: str             # the real configured Gemini judge model
+    # ⚠ DEPLOYMENT CONFIGURATION, NOT A CLAIM ABOUT ANY EVENT (#228). Derived
+    # from whether this deployment holds platform provider keys, so it cannot
+    # answer "was this org's traffic graded by a model" — which judge grades is a
+    # per-tenant choice and a BYOK org on a keyless deployment is graded by a
+    # model this string knows nothing about. The two counters below answer that
+    # question, from the ledger.
+    judge_model: str
     avg_seconds_to_verdict: float | None   # avg graded_at - created_at; None if none graded
     grading: GradingCounts
     activity_7d: list[ActivityDay]
@@ -476,4 +541,12 @@ class StatsResponse(BaseModel):
     # count, not folded into `blocked`: that one means prompts stopped before
     # they reached a provider, and here the provider was called.
     response_blocked: int = 0
+    # ── #228 · authorship, counted from the RECORD ───────────────────────────
+    # Over graded rows, how many carry a verdict a model actually produced and
+    # how many carry a deterministic one. They do not have to sum to the graded
+    # count: rows graded before `graded_by` existed are in neither, because the
+    # ledger does not record who graded them and a count that guessed would be
+    # the defect these fields exist to end. Read them beside `grading.graded`.
+    ai_graded: int = 0
+    rules_graded: int = 0
 

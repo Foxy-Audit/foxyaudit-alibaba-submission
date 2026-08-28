@@ -111,12 +111,24 @@ def _build_system_prompt(policy_config: dict[str, Any] | None = None,
 
 
 def _fallback(reason: str) -> Verdict:
+    """The verdict for a judge that never ran. NOTHING graded this row.
+
+    #228: `reason` is also carried STRUCTURALLY, in
+    `evaluator_unavailable_reason`, not only formatted into the reason string.
+    The worker replaces this whole verdict with the deterministic engine's, and
+    a string prefix does not survive being replaced — a field does, so the row
+    that ends up stored can still say why no model graded it. Values are fixed
+    labels (no_api_key, no_byok_key, byok_key_undecryptable,
+    byok_encryption_unavailable) or an exception CLASS NAME; never key material.
+    """
     unavailable = f"evaluator_unavailable:{reason}"
     if get_settings().gemini_fail_closed:
-        return Verdict(policy_breach=True, reason=f"evaluator_unavailable:{reason}",
-                       risk_score=50, decision="unknown", rules=[])
-    return Verdict(policy_breach=False, reason=f"evaluator_unavailable:{reason}",
-                   risk_score=0, decision="unknown", rules=[])
+        return Verdict(policy_breach=True, reason=unavailable,
+                       risk_score=50, decision="unknown", rules=[],
+                       graded_by="none", evaluator_unavailable_reason=reason)
+    return Verdict(policy_breach=False, reason=unavailable,
+                   risk_score=0, decision="unknown", rules=[],
+                   graded_by="none", evaluator_unavailable_reason=reason)
 
 
 def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
@@ -168,6 +180,8 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
             # that knows a model actually answered, and which one. model_id is the
             # id sent on the wire, so the record cannot drift from the call.
             judge_provider="gemini", judge_model=model_id,
+            # #228 · and the same line is the only one that may claim "ai".
+            graded_by="ai",
         )
     except Exception as exc:  # network / quota / bad-JSON / version drift
         # Log the TYPE only. Google authenticates with the API key as a ?key=...

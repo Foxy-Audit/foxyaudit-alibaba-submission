@@ -173,6 +173,23 @@ def generate_passport(
     # thing this document must not do.
     response_blocked_events = 0
     unknown_evaluator_events = 0
+    # ── #228 · WHO GRADED THESE EVENTS ────────────────────────────────────────
+    # This document is what a customer hands an auditor, and until now it stated
+    # a compliance rate without ever saying what produced the verdicts behind it.
+    # On a deployment with no reachable provider key the worker grades every
+    # ordinary row with the deterministic rules engine, and the resulting
+    # "Evaluator Could Not Determine: 0" reads as "the AI judge determined all the
+    # rest" — the sharpest form of #228, because it is the one sentence a third
+    # party relies on. Counted from the RECORD (`gemini_verdict.graded_by`), never
+    # from whether this deployment happens to hold a provider key: the key is a
+    # deployment setting and grading is per-tenant, so the setting cannot answer
+    # the question for any particular event.
+    ai_graded_events = 0
+    rules_graded_events = 0
+    # Graded before graded_by existed, so the ledger simply does not record who
+    # graded them. NOT folded into either count above and never inferred: an
+    # honest "not recorded" is the only true thing to say about these rows.
+    grader_unrecorded_events = 0
     enforced_rule_counts: dict[str, int] = defaultdict(int)
     for row in rows:
         tag = row.policy_tag
@@ -206,6 +223,17 @@ def generate_passport(
                 or reason.startswith("evaluator_unavailable")
                 or reason.startswith("evaluator_unknown")):
             unknown_evaluator_events += 1
+        # Authorship, over the rows that actually carry a verdict. A pending or
+        # failed row is not "unrecorded" — it is not graded yet, and grading
+        # already has its own tallies elsewhere in this document.
+        if row.grading_status == "graded":
+            graded_by = verdict.get("graded_by")
+            if graded_by == "ai":
+                ai_graded_events += 1
+            elif graded_by == "rules":
+                rules_graded_events += 1
+            elif graded_by is None:
+                grader_unrecorded_events += 1
         snapshot = metadata.get("policy_snapshot")
         snapshot_hash = metadata.get("policy_snapshot_hash")
         if (isinstance(snapshot, dict) and isinstance(snapshot_hash, str)
@@ -307,6 +335,9 @@ def generate_passport(
         response_blocked_events=response_blocked_events,
         enforced_events=enforced_events,
         unknown_evaluator_events=unknown_evaluator_events,
+        ai_graded_events=ai_graded_events,
+        rules_graded_events=rules_graded_events,
+        grader_unrecorded_events=grader_unrecorded_events,
         policies_enforced=policies_enforced,
         policies=policies,
         policy_snapshots=policy_snapshot_rows,

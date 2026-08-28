@@ -87,6 +87,19 @@ def _quarantine(problems: list[str], source: Verdict | None = None) -> Verdict:
         # that is unreadable once the only record says "unknown" with no author.
         judge_provider=source.judge_provider if source else None,
         judge_model=source.judge_model if source else None,
+        # #228 · NOTHING graded this row. A model answered and was REFUSED, so
+        # its answer is not a grade — but this is a different kind of event from
+        # "the rules engine graded it", and a different kind again from "no
+        # evaluator ran": here one was reached and BILLED, and it misbehaved.
+        # The three stay separable — graded_by distinguishes rules from the two
+        # non-grades, and `reason` (evaluator_unknown: vs evaluator_unavailable:)
+        # plus the judge_provider kept two lines above distinguishes those two
+        # from each other. A model returning unusable verdicts is precisely what
+        # an operator needs to see, and it must never look like a deployment
+        # that simply has no key.
+        graded_by="none",
+        # Deliberately NOT set: the evaluator was available. It answered.
+        evaluator_unavailable_reason=None,
     )
 
 
@@ -154,6 +167,12 @@ def combine(first: Verdict, second: Verdict) -> Verdict:
         # not grade this event and must not appear to have.
         judge_provider=_join(verdict.judge_provider for verdict, _ in known),
         judge_model=_join(verdict.judge_model for verdict, _ in known),
+        # #228 · reached only when `known` is non-empty — i.e. at least one model
+        # returned a usable clean/breach — so this merge IS an AI grade. The
+        # early return above hands back `first` verbatim when no model answered,
+        # which carries that verdict's own graded_by="none" and its unavailable
+        # reason, so a double outage is not laundered into a grade here.
+        graded_by="ai",
     )
 
 

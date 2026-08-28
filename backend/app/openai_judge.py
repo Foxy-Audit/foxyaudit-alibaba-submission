@@ -83,12 +83,15 @@ def _build_system_prompt(policy_config: dict[str, Any] | None,
 
 
 def _fallback(reason: str) -> Verdict:
+    """The verdict for a judge that never ran — see gemini._fallback (#228)."""
     settings = get_settings()
     if settings.gemini_fail_closed:
         return Verdict(policy_breach=True, reason=f"evaluator_unavailable:{reason}",
-                       risk_score=50, decision="unknown", rules=[])
+                       risk_score=50, decision="unknown", rules=[],
+                       graded_by="none", evaluator_unavailable_reason=reason)
     return Verdict(policy_breach=False, reason=f"evaluator_unavailable:{reason}",
-                   risk_score=0, decision="unknown", rules=[])
+                   risk_score=0, decision="unknown", rules=[],
+                   graded_by="none", evaluator_unavailable_reason=reason)
 
 
 def _response_text(payload: dict[str, Any]) -> str:
@@ -182,6 +185,8 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
             # _fallback verdict leaves both None rather than naming a model that
             # was never called.
             judge_provider="openai", judge_model=model_id,
+            # #228 · and the same line is the only one that may claim "ai".
+            graded_by="ai",
         )
     except (urllib_error.URLError, TimeoutError, OSError, json.JSONDecodeError,
             AttributeError, KeyError, TypeError, ValueError) as exc:

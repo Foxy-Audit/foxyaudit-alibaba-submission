@@ -66,6 +66,13 @@ _UNKNOWN = (
     | (AuditLog.gemini_verdict["reason"].astext.like("evaluator_unavailable:%"))
     | (AuditLog.gemini_verdict["reason"].astext == "evaluator_unavailable")
 )
+# #228 · authorship, read from the stored verdict. Not `GROUP BY` on the JSON
+# path: SQLAlchemy binds the key as a parameter and Postgres will not match two
+# separately-bound expressions, so the group key never equals the select key.
+# Filtered aggregates keep both numbers on one scan of one row set, which is the
+# property that mattered.
+_GRADED_BY_AI = AuditLog.gemini_verdict["graded_by"].astext == "ai"
+_GRADED_BY_RULES = AuditLog.gemini_verdict["graded_by"].astext == "rules"
 
 
 def _validate_system_attributions(db: Session, org: Organization, items: list) -> None:
@@ -853,6 +860,19 @@ def stats(
     ).scalar_one()
     determinate = clean + breaches
     clean_rate = round(100.0 * clean / determinate, 1) if determinate else None
+
+    # #228 · WHO graded, from the ledger. `judge_model` below reads this
+    # DEPLOYMENT's provider settings and therefore cannot answer this — grading is
+    # a per-tenant routing decision, so a configured platform key is not evidence
+    # that any of THIS org's events reached a model, and a BYOK org on a keyless
+    # deployment is graded by a model that setting has never heard of. One
+    # statement, so the two numbers can never come from different row sets.
+    ai_graded, rules_graded = db.execute(
+        select(func.count().filter(_GRADED_BY_AI),
+               func.count().filter(_GRADED_BY_RULES))
+        .select_from(AuditLog)
+        .where(AuditLog.org_id == org.id, AuditLog.grading_status == "graded")
+    ).one()
     settings = get_settings()
     judge_models = []
     if settings.gemini_api_key:
@@ -868,4 +888,5 @@ def stats(
         grading=GradingCounts(**gc), activity_7d=activity,
         evaluator_unknown=evaluator_unknown,
         blocked=blocked, redacted=redacted, response_blocked=response_blocked,
+        ai_graded=ai_graded, rules_graded=rules_graded,
     )
