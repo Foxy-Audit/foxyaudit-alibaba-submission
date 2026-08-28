@@ -78,8 +78,15 @@ Run it
   [OK] anchor receipt matches the chain @ seq 512
        root a3f9c17e... (chain=sepolia)
 
-Exit code is 0 when intact, 1 when tampering or an anchor mismatch is found - so
-it drops straight into CI. Add --json for machine-readable output.
+Exit code is 0 when intact, 1 when tampering or an anchor mismatch is found, and
+2 when NOTHING WAS VERIFIED - so it drops straight into CI. Add --json for
+machine-readable output.
+
+It will never report success over a file it did not read. A file with no chain
+in it, an empty chain section, or rows missing the columns the hash is taken
+over is a [REFUSED] and exit 2, naming what the file actually contained and
+which export is verifiable. "0 rows verified" and "verified 0 rows because there
+were none to find" are different statements, and only one of them is honest.
 
 
 Live on-chain check (optional)

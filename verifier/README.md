@@ -31,8 +31,22 @@ python foxy_verify.py foxy-audit-logs.json
   root a3f9c17e… (chain=sepolia)
 ```
 
-Exit code is `0` when intact, `1` when tampering or an anchor mismatch is found — so it
-drops straight into CI. Add `--json` for machine-readable output.
+Exit code is `0` when intact, `1` when tampering or an anchor mismatch is found, and `2`
+when **nothing was verified** — so it drops straight into CI. Add `--json` for
+machine-readable output.
+
+### What it will not do
+
+**It will never report success over a file it did not read.** A file with no chain in it,
+an empty chain section, or rows missing the columns the hash is taken over is a
+`[REFUSED]` and exit `2`, naming what the file actually contained and which export *is*
+verifiable. *"0 rows verified"* and *"verified 0 rows because there were none to find"*
+are different statements and only one of them is honest, so this tool never prints `[OK]`
+for the second.
+
+It reads the chain under `logs` (what `GET /v1/logs/export` writes) or under `ledger`
+(what the GDPR bundle from `GET /v1/account/export` writes), so either file you are
+handed can be checked. Anything else is refused rather than passed.
 
 ### Live on-chain check (optional)
 

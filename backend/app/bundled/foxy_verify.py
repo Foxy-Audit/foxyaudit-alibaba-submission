@@ -22,7 +22,12 @@ Input: the JSON you download from the dashboard (GET /v1/logs/export?format=json
                   "verdict_hash": "…", "local_verdict": {…} }, … ]
     }
 
-Exit code 0 = intact, 1 = tampering / anchor mismatch. `--json` for machine output.
+The GDPR bundle from GET /v1/account/export carries the same rows under "ledger"
+instead of "logs"; both keys are read. ANY OTHER FILE IS REFUSED — see
+find_chain_section below for why the refusal is the point and the alias is not.
+
+Exit code 0 = intact, 1 = tampering / anchor / commitment mismatch, 2 = NOTHING
+WAS VERIFIED (unreadable file, or no chain in it). `--json` for machine output.
 """
 
 from __future__ import annotations
@@ -70,6 +75,79 @@ def compute_chain_hash(*, org_id, prompt_hash, response_hash, token_count,
     if agent:
         data_blob += f"|agent={agent}"
     return hashlib.sha256((data_blob + prev_hash).encode("utf-8")).hexdigest()
+
+
+# ─── what counts as a chain, and what is refused ──────────────────────────────
+
+#: The keys a Foxy export may carry its chain under, in the order they are tried.
+#: `logs` is what GET /v1/logs/export?format=json writes and what this tool is
+#: documented against; `ledger` is the same rows inside the GDPR bundle from
+#: GET /v1/account/export, which a customer will reasonably point this at.
+CHAIN_SECTION_KEYS = ("logs", "ledger")
+
+#: The fields a recompute reads with no default. A row missing any of them cannot
+#: be verified at all — and saying so is the only honest answer, because guessing
+#: a value would produce a hash mismatch, which this tool reports as TAMPERING.
+#: Accusing an export of tampering when the truth is "you gave me the wrong file"
+#: is the same class of lie as #269 itself, pointed the other way.
+REQUIRED_ROW_FIELDS = ("seq", "prompt_hash", "response_hash", "token_count",
+                       "policy_tag", "chain_hash")
+
+
+def find_chain_section(data):
+    """Name the key holding this file's chain, or None if it holds no chain at all.
+
+    ⚠ THIS FUNCTION EXISTS BECAUSE THE ABSENCE OF IT WAS A LIE. Until register
+    #269 every call site read `data.get("logs", [])`, so a JSON file with no
+    `logs` key verified clean, printed `[OK] chain intact - 0 rows verified from
+    genesis`, and exited 0. The verifier reported SUCCESS over a file it had
+    never read.
+
+    On this tool that is the worst possible failure. Everything Foxy sells rests
+    on "export your evidence and check it yourself, without trusting us" — so a
+    false `[OK]` tells a customer, an auditor or a regulator that a chain is
+    intact when nothing whatsoever was checked. A crash would have been safer.
+
+    ⚠ AND THE ALIAS IS NOT THE FIX. Accepting `ledger` removes the specific
+    collision that made it easy to hit (the DSAR bundle names its chain section
+    `ledger`, so running this on the file you were just handed produced exactly
+    that false pass). The FIX is that anything which is neither shape is REFUSED:
+    a new key, a truncated download, a wrong file, a hand-edited export with the
+    chain deleted. "0 rows verified" and "verified 0 rows because I could not
+    find any" are different statements, and only one of them is honest.
+    """
+    if not isinstance(data, dict):
+        return None
+    for key in CHAIN_SECTION_KEYS:
+        if isinstance(data.get(key), list):
+            return key
+    return None
+
+
+def chain_rows(data):
+    """The chain rows this file carries — empty when it carries no chain section."""
+    key = find_chain_section(data)
+    return data[key] if key else []
+
+
+def _refusal(detail, section=None):
+    """Nothing was verified, and the result says so instead of reporting a pass.
+
+    `ok` is False so no caller can mistake it for a verified chain, and `refused`
+    separates it from `ok=False` meaning TAMPERING FOUND — which is a finding
+    about the evidence, not about the file being the wrong one.
+    """
+    return {"ok": False, "refused": True, "count": 0, "first_broken_seq": None,
+            "detail": detail, "head": None, "head_seq": None, "section": section}
+
+
+#: Named in every refusal, because "this is not a chain" is only half an answer:
+#: the reader needs to know which artefact IS one.
+VERIFIABLE_ARTEFACTS = (
+    "Verifiable exports: GET /v1/logs/export?format=json (rows under \"logs\"), "
+    "the identical file inside ?format=bundle, or the GDPR bundle from "
+    "GET /v1/account/export (rows under \"ledger\")."
+)
 
 
 # ─── verification ─────────────────────────────────────────────────────────────
@@ -140,7 +218,7 @@ def verify_known_events(data, known_events, key):
     """
     checked = 0
     unprovable = []
-    for row in data.get("logs", []):
+    for row in chain_rows(data):
         event_id = row.get("event_id")
         known = known_events.get(str(event_id)) if event_id else None
         if not known:
@@ -162,50 +240,87 @@ def verify_known_events(data, known_events, key):
 
 def verify_export(data):
     """Recompute the whole chain from genesis and compare each row's stored hash.
-    Returns {ok, count, first_broken_seq, detail, head, head_seq}."""
+    Returns {ok, refused, count, first_broken_seq, detail, section, head, head_seq}.
+
+    Three outcomes, not two. `ok` means the chain was recomputed and matched;
+    `ok=False` means a row did not match — tampering; `refused=True` means no
+    chain was recomputed at all, which is neither and must never print [OK].
+    """
+    section = find_chain_section(data)
+    if section is None:
+        keys = sorted(data) if isinstance(data, dict) else []
+        saw = (", ".join(keys[:12]) + ("…" if len(keys) > 12 else "")) if keys else (
+            "a JSON " + type(data).__name__ + ", not an object")
+        return _refusal(
+            "nothing was verified: this file has no chain section. Looked for "
+            + " and ".join(f'"{k}"' for k in CHAIN_SECTION_KEYS)
+            + f"; the file carries {saw}. " + VERIFIABLE_ARTEFACTS)
+    if not data[section]:
+        return _refusal(
+            f'nothing was verified: the "{section}" section is present but empty, '
+            "so there is no chain to recompute. An export with no rows proves "
+            "nothing about a ledger; it is not an intact chain. "
+            + VERIFIABLE_ARTEFACTS, section=section)
+    for n, row in enumerate(data[section], 1):
+        if not isinstance(row, dict):
+            return _refusal(
+                f'nothing was verified: "{section}" entry {n} is a '
+                f"{type(row).__name__}, not a row object. " + VERIFIABLE_ARTEFACTS,
+                section=section)
+        missing = [f for f in REQUIRED_ROW_FIELDS if f not in row]
+        if missing:
+            return _refusal(
+                f'nothing was verified: "{section}" entry {n} is missing the '
+                f"field(s) a recompute needs: {', '.join(missing)}. This file "
+                "carries a chain section but not the columns the hash is taken "
+                "over, so no row in it can be checked. " + VERIFIABLE_ARTEFACTS,
+                section=section)
+
     org_id = data.get("org_id")
-    rows = sorted(data.get("logs", []), key=lambda r: r["seq"])
+    rows = sorted(data[section], key=lambda r: r["seq"])
     prev = GENESIS_HASH
     expected_seq = 1
     for row in rows:
         if row["seq"] != expected_seq:
-            return {"ok": False, "count": len(rows), "first_broken_seq": row["seq"],
+            return {"ok": False, "refused": False, "count": len(rows), "first_broken_seq": row["seq"],
                     "detail": f"sequence gap before seq {row['seq']}",
-                    "head": None, "head_seq": None}
+                    "section": section, "head": None, "head_seq": None}
         if row.get("prev_hash", GENESIS_HASH) != prev:
-            return {"ok": False, "count": len(rows), "first_broken_seq": row["seq"],
+            return {"ok": False, "refused": False, "count": len(rows), "first_broken_seq": row["seq"],
                     "detail": f"previous hash mismatch at seq {row['seq']}",
-                    "head": None, "head_seq": None}
+                    "section": section, "head": None, "head_seq": None}
         expected = _row_hash(org_id, row, prev)
         if expected != row.get("chain_hash"):
-            return {"ok": False, "count": len(rows), "first_broken_seq": row["seq"],
+            return {"ok": False, "refused": False, "count": len(rows), "first_broken_seq": row["seq"],
                     "detail": f"chain hash mismatch at seq {row['seq']}",
-                    "head": None, "head_seq": None}
+                    "section": section, "head": None, "head_seq": None}
         # The chain binds the verdict's DIGEST; this binds the digest to the body.
         # Without it, `local_verdict` could be rewritten and the chain still pass.
         if row.get("local_verdict") is not None:
             if verdict_hash_hex(row["local_verdict"]) != row.get("verdict_hash"):
-                return {"ok": False, "count": len(rows), "first_broken_seq": row["seq"],
+                return {"ok": False, "refused": False, "count": len(rows), "first_broken_seq": row["seq"],
                         "detail": f"local verdict does not match its bound hash at seq {row['seq']}",
-                        "head": None, "head_seq": None}
+                        "section": section, "head": None, "head_seq": None}
         prev = row["chain_hash"]
         expected_seq += 1
     anchor = data.get("anchor") or {}
     if rows and anchor.get("last_seq", 0) > rows[-1]["seq"]:
-        return {"ok": False, "count": len(rows), "first_broken_seq": None,
+        return {"ok": False, "refused": False, "count": len(rows), "first_broken_seq": None,
                 "detail": "export stops before the anchored checkpoint",
-                "head": None, "head_seq": None}
-    return {"ok": True, "count": len(rows), "first_broken_seq": None,
-            "detail": "chain intact",
-            "head": prev if rows else GENESIS_HASH,
-            "head_seq": rows[-1]["seq"] if rows else 0}
+                "section": section, "head": None, "head_seq": None}
+    # `rows` cannot be empty here: an empty section was refused above, so the
+    # head is always a real recomputed hash rather than GENESIS standing in for
+    # one. That substitution was how "0 rows verified" acquired a head at all.
+    return {"ok": True, "refused": False, "count": len(rows), "first_broken_seq": None,
+            "detail": "chain intact", "section": section,
+            "head": prev, "head_seq": rows[-1]["seq"]}
 
 
 def recompute_head_upto(data, upto_seq):
     """Independently recompute the chain head at ``upto_seq`` from genesis."""
     org_id = data.get("org_id")
     prev, last = GENESIS_HASH, None
-    for row in sorted(data.get("logs", []), key=lambda r: r["seq"]):
+    for row in sorted(chain_rows(data), key=lambda r: r["seq"]):
         if row["seq"] > upto_seq:
             break
         prev = _row_hash(org_id, row, prev)
@@ -305,9 +420,41 @@ def _load_sidecar(path):
     return merged
 
 
+def _wrap(text, width=72, indent=" " * 10):
+    """Fold a refusal onto the console without pulling in `textwrap`-free tricks.
+
+    stdlib only, like everything here; `textwrap` is stdlib, but this keeps the
+    output's exact shape obvious to anyone reading the file to check it.
+    """
+    line, out = "", []
+    for word in text.split():
+        if line and len(line) + 1 + len(word) > width:
+            out.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    if line:
+        out.append(line)
+    return ("\n" + indent).join(out)
+
+
+def _print_refusal(result):
+    """The one thing this tool must never do quietly.
+
+    A refusal is not a pass with a caveat and not an accusation of tampering, so
+    it gets its own marker and its own exit code (2). `[OK]` appears nowhere in
+    it — the string itself is what a reader skims for, and printing it beside
+    "0 rows" is exactly the lie #269 was.
+    """
+    print("[REFUSED] " + _wrap(result["detail"]))
+
+
 def _print_human(result, anchor_off, anchor_live, commitments=None):
     # ASCII-only markers so the tool never crashes on a non-UTF-8 console (Windows
     # cp1252, cp437, …) — it must run for anyone, anywhere.
+    if result.get("refused"):
+        _print_refusal(result)
+        return
     if result["ok"]:
         print(f"[OK]   chain intact - {result['count']} rows verified from genesis")
         if result["count"]:
@@ -374,6 +521,19 @@ def main(argv=None):
         return 2
 
     result = verify_export(data)
+    # ⚠ A REFUSAL STOPS HERE, AND STOPPING IS PART OF THE ANSWER. Running the
+    # anchor and known-content checks over a file with no chain would print two
+    # more lines of verdict about evidence nobody recomputed — and the offline
+    # anchor check, handed no rows, compares a receipt against None and reports
+    # a MISMATCH, which reads as tampering. Exit 2 = nothing was verified, kept
+    # distinct from 1 = something was verified and was wrong.
+    if result.get("refused"):
+        if args.json:
+            print(json.dumps({"chain": result, "anchor_offline": None,
+                              "anchor_onchain": None, "commitments": None}, indent=2))
+        else:
+            _print_refusal(result)
+        return 2
     commitment_result = None
     if args.commitment_key and args.events:
         try:

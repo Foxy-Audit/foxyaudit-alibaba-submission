@@ -445,3 +445,212 @@ def test_a_salted_event_verifies_end_to_end_from_the_sdk(tmp_path):
     loaded = fv._load_sidecar(str(path))
     assert fv.verify_known_events({"org_id": ORG, "logs": [row]}, loaded, key) == {
         "ok": True, "checked": 1, "unprovable": []}
+
+
+# ── #269: a file this tool cannot read is REFUSED, never passed ──────────────
+#
+# The reproduction, verbatim from the register — this is what shipped:
+#
+#     $ echo '{"ledger":[{"seq":1,"chain_hash":"x"}]}' > f.json
+#     $ python foxy_verify.py f.json
+#     [OK]   chain intact - 0 rows verified from genesis
+#     [--]   no anchor receipt in this export
+#     EXIT=0
+#
+# Three call sites read `data.get("logs", [])`, so a file with no `logs` key
+# verified clean over zero rows. On the one artefact whose entire purpose is
+# "check it yourself, without trusting us", reporting SUCCESS over a file that
+# was never read is the worst available failure.
+#
+# ⚠ EVERY CASE BELOW ASSERTS BOTH HALVES: a non-zero exit AND the absence of the
+# string "[OK]" from what a human actually sees. The exit code alone would leave
+# the sentence that lies to an auditor on screen; the text alone would leave a
+# green CI step. And they run through main(), so they execute the CLI a customer
+# runs rather than a function only the tests call.
+
+def _run_cli(tmp_path, payload, name="export.json"):
+    import contextlib
+    import io
+
+    path = tmp_path / name
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = fv.main([str(path)])
+    return code, out.getvalue()
+
+
+def test_the_register_269_reproduction_is_refused_and_not_reported_as_intact(tmp_path):
+    """The exact file from the register. It used to print [OK] and exit 0."""
+    code, out = _run_cli(tmp_path, {"ledger": [{"seq": 1, "chain_hash": "x"}]})
+    assert code == 2, out
+    assert "[OK]" not in out, f"a file it could not read still reported success:\n{out}"
+    assert "[REFUSED]" in out
+    assert "nothing was verified" in out
+
+
+def test_a_file_with_no_chain_section_at_all_is_refused(tmp_path):
+    code, out = _run_cli(tmp_path, {"org_id": ORG, "count": 0, "notes": "hello"})
+    assert code == 2
+    assert "[OK]" not in out
+    assert "no chain section" in out
+    # It says what it looked at, so the reader can see it was handed the wrong file.
+    assert "count" in out and "notes" in out
+
+
+def test_an_empty_chain_section_is_refused_rather_than_called_intact(tmp_path):
+    """"0 rows verified" and "verified 0 rows because there were none" are
+    different statements. Only one of them is honest, and it is not a pass."""
+    code, out = _run_cli(tmp_path, {"org_id": ORG, "count": 0, "logs": []})
+    assert code == 2
+    assert "[OK]" not in out
+    assert "present but empty" in out
+
+
+def test_a_json_file_that_is_not_even_an_object_is_refused(tmp_path):
+    code, out = _run_cli(tmp_path, [1, 2, 3])
+    assert code == 2
+    assert "[OK]" not in out
+
+
+def test_every_refusal_names_an_artefact_that_IS_verifiable(tmp_path):
+    """"This is not a chain" is half an answer. A reader holding the wrong file
+    needs to be told which one to fetch."""
+    for payload in ({"ledger": [{"seq": 1, "chain_hash": "x"}]},
+                    {"org_id": ORG, "logs": []},
+                    {"org_id": ORG}):
+        _, out = _run_cli(tmp_path, payload)
+        assert "/v1/logs/export" in out, out
+        assert "format=bundle" in out, out
+
+
+def test_a_refused_file_never_reports_a_head(tmp_path):
+    """The old code substituted GENESIS_HASH for the head when there were no
+    rows, which is how "0 rows verified" acquired a chain head to print."""
+    result = fv.verify_export({"org_id": ORG})
+    assert result["refused"] is True
+    assert result["ok"] is False
+    assert result["head"] is None and result["head_seq"] is None
+    assert result["count"] == 0
+
+
+def test_json_mode_refuses_too_and_says_nothing_about_an_intact_chain(tmp_path):
+    import contextlib
+    import io
+
+    path = tmp_path / "f.json"
+    path.write_text(json.dumps({"ledger": [{"seq": 1}]}), encoding="utf-8")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = fv.main([str(path), "--json"])
+    assert code == 2
+    payload = json.loads(out.getvalue())
+    assert payload["chain"]["refused"] is True
+    assert payload["chain"]["ok"] is False
+    assert payload["chain"]["detail"].startswith("nothing was verified")
+    assert "chain intact" not in out.getvalue()
+
+
+def test_a_refusal_does_not_also_accuse_the_anchor_receipt(tmp_path):
+    """A refusal stops. Running the offline anchor check over no rows compares a
+    receipt against None and reports a MISMATCH — which reads as tampering, on a
+    file nobody verified."""
+    code, out = _run_cli(tmp_path, {
+        "org_id": ORG, "ledger": [{"seq": 1, "chain_hash": "x"}],
+        "anchor": {"chain": "stub", "status": "confirmed", "root_hash": "0" * 64,
+                   "last_seq": 1, "tx_hash": "0xabc", "block_number": 1,
+                   "anchored_at": None, "contract": None}})
+    assert code == 2
+    assert "[FAIL]" not in out, f"a refusal accused the export of tampering:\n{out}"
+    assert "[OK]" not in out
+
+
+# ── #269, the other half: the DSAR bundle's key is read, and is not a bypass ──
+
+def test_the_dsar_bundles_ledger_key_is_read_as_a_chain(tmp_path):
+    """GET /v1/account/export names its chain section `ledger`. Running this on
+    the file a customer was just handed is the most natural action available, and
+    it is what produced the false pass."""
+    export = _make_export(_SPECS)
+    export["ledger"] = export.pop("logs")
+    result = fv.verify_export(export)
+    assert result["ok"] is True
+    assert result["refused"] is False
+    assert result["count"] == 3
+    assert result["section"] == "ledger"
+
+    code, out = _run_cli(tmp_path, export)
+    assert code == 0
+    assert "3 rows verified from genesis" in out
+
+
+def test_the_alias_is_not_a_way_to_smuggle_a_tampered_row_past(tmp_path):
+    """Accepting a second key would be worthless — worse than worthless — if the
+    rows under it were checked any less."""
+    export = _make_export(_SPECS)
+    export["ledger"] = export.pop("logs")
+    export["ledger"][1]["token_count"] = 999
+    result = fv.verify_export(export)
+    assert result["ok"] is False
+    assert result["refused"] is False           # tampering FOUND, not "unreadable"
+    assert result["first_broken_seq"] == 2
+
+    code, out = _run_cli(tmp_path, export)
+    assert code == 1, "a tampered ledger must exit 1, not the refusal code"
+    assert "[FAIL] CHAIN BROKEN at seq 2" in out
+
+
+def test_logs_wins_when_a_file_somehow_carries_both(tmp_path):
+    """`logs` is the documented input, so it decides. Stated rather than left to
+    dict ordering, because a file with both is exactly what a merge of the two
+    exports would produce."""
+    export = _make_export(_SPECS)
+    export["ledger"] = [{"seq": 1, "chain_hash": "junk"}]
+    assert fv.find_chain_section(export) == "logs"
+    assert fv.verify_export(export)["ok"] is True
+
+
+def test_a_ledger_row_missing_the_recompute_fields_is_refused_not_failed(tmp_path):
+    """⚠ THE CASE THAT MAKES THE ALIAS SAFE TO ADD. Before its own half of #269,
+    the DSAR ledger carried nine columns while the hash is taken over seventeen.
+    Reading that file as a chain would report CHAIN BROKEN — accusing an untouched
+    export of tampering because the reader was handed the wrong shape. "I cannot
+    check this" is the only true answer, and it is not a tamper finding."""
+    code, out = _run_cli(tmp_path, {"org_id": ORG, "ledger": [
+        {"seq": 1, "prompt_hash": "a" * 64, "response_hash": "b" * 64,
+         "policy_tag": "chat", "agent": None, "chain_hash": "c" * 64,
+         "grading_status": "pending", "gemini_verdict": None,
+         "created_at": "2026-08-28T00:00:00+00:00"}]})
+    assert code == 2
+    assert "[OK]" not in out
+    assert "[FAIL] CHAIN BROKEN" not in out, (
+        "a wrong-shaped export was reported as tampering rather than as unreadable")
+    assert "token_count" in out, "the refusal does not say which fields are missing"
+
+
+def test_the_known_content_check_reads_the_alias_too(tmp_path):
+    """All three `data.get("logs", [])` sites moved, not just the one in
+    verify_export. A sidecar check that silently iterated nothing would report
+    `checked: 0` as a pass — the same shape of lie, one function along."""
+    key, event_id = "customer-secret", "aaaaaaa5-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    data = {"org_id": ORG, "ledger": [_row(key, event_id)]}
+    assert fv.verify_known_events(
+        data, {event_id: {"prompt": "prompt", "response": "response"}}, key) == {
+        "ok": True, "checked": 1, "unprovable": []}
+
+
+def test_the_offline_anchor_check_reads_the_alias_too():
+    export = _make_export(_SPECS, anchor_at=3)
+    export["ledger"] = export.pop("logs")
+    anchor = fv.check_anchor_offline(export, fv.verify_export(export))
+    assert anchor["matches"] is True, (
+        "recompute_head_upto still looked for `logs`, so the receipt compared "
+        "against a head computed from nothing")
+
+
+def test_the_accepted_keys_are_a_closed_list():
+    """A third key must be a decision somebody makes, not something a plausible
+    name falls into. `data.get(<anything>)` is how #269 happened."""
+    assert fv.CHAIN_SECTION_KEYS == ("logs", "ledger")
+    assert fv.find_chain_section({"entries": [{"seq": 1}]}) is None
+    assert fv.find_chain_section({"logs": "not a list"}) is None
