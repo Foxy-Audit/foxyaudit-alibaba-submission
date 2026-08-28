@@ -466,11 +466,15 @@ EXPORT_EXCLUSIONS = {
         "gemini_verdict, one row per graded interaction — exporting it would "
         "roughly double the largest section and add nothing you do not have."),
     "traffic_events": (
-        "Server access log, written for platform operations and abuse "
-        "detection across all three sites. IP address and user agent are "
-        "irreversibly hashed rather than stored, URLs carry no query string, "
-        "and no request bodies, headers or secrets are kept. It grows per HTTP "
-        "request rather than per interaction."),
+        "Server access log, written for platform operations, abuse detection "
+        "and incident response across all three sites. It DOES record which "
+        "signed-in user made a request and which page they asked for, so it is "
+        "excluded on volume and purpose rather than because it is anonymous: "
+        "it grows per HTTP request rather than per interaction, and it is an "
+        "operations record rather than part of your audit evidence. IP address "
+        "and user agent are stored only as irreversible hashes, and no request "
+        "bodies, headers, query strings or secrets are kept. If you want your "
+        "own entries from it, ask us."),
     "org_sequences": (
         "Internal bookkeeping: a single row holding the next chain sequence "
         "number for this workspace, already implied by the ledger's last seq."),
@@ -514,6 +518,14 @@ EXPORT_WITHHELD_FIELDS = {
     "users": (("password_hash", "mfa_code_hash", "reset_token_hash"),
               "passwords, multi-factor codes and password-reset tokens",
               "Stored only as one-way hashes and never serialised anywhere."),
+    # ⚠ `policy` was missing entirely until #252b, while `org_policies` holds
+    # TWO Fernet-encrypted BYOK provider keys. `grep -c key_enc` over this file
+    # returned 0: the bundle withheld them correctly and said so nowhere, which
+    # is the same false claim as omitting a table, one layer down.
+    "policy": (("gemini_key_enc", "openai_key_enc"),
+               "the AI-provider keys you brought to this workspace",
+               "Held encrypted at rest with a key this service never returns, "
+               "and never decrypted outside the grading path."),
     "api_keys": (("key_hash",),
                  "the API key itself",
                  "Stored only as a one-way hash and shown exactly once, at "
@@ -543,12 +555,14 @@ EXPORT_WITHHELD_FIELDS = {
 #: Two earlier wordings were false the moment they were written.
 EXPORT_STATEMENT = (
     "This is the data Foxy Audit holds for this workspace that you would "
-    "recognise as your own. It is deliberately not every row in our database, "
-    "and it does not claim to be: every table we operate that carries an "
-    "org_id is named in exactly one of included_tables or excluded_tables "
-    "below, each exclusion with its reason, and every field held back from an "
-    "included section is named in withheld_fields with its reason. Nothing is "
-    "left out that is not named here."
+    "recognise as your own, summarised one section per table — not a dump of "
+    "every database column. Two things about it are exact rather than "
+    "editorial, and a test fails if either drifts: every table we operate that "
+    "carries an org_id is named in exactly one of included_tables or "
+    "excluded_tables below, each exclusion with its reason; and every "
+    "credential we hold for this workspace is named in withheld_fields, with "
+    "what it is and why it cannot be sent. If you need a field you do not see "
+    "here, ask us and we will tell you whether we hold it."
 )
 
 
@@ -593,17 +607,30 @@ def account_export(
     A rule that mandates exporting a session token hash is not a rule worth
     keeping.
 
-    ⚠ SO THE CLAIM IS NOW ABOUT THE LISTS, NOT ABOUT COMPLETENESS. `#252` closes
-    by classifying all 23 org-scoped tables rather than by exporting them: 16
-    are here, and the 7 that are not are named in `export_scope.excluded_tables`
-    IN THE BUNDLE, each with its reason, alongside the five columns withheld
-    from tables that ARE here. `EXPORT_STATEMENT` is the sentence a regulator
-    reads, and it is checkable — `included_tables` is derived from the sections
-    actually built, and a test walks the model registry to assert every
-    org-scoped table is named in exactly one of included_tables or
-    excluded_tables. A number or a list
-    written in prose is a claim nobody rechecks; this one cannot go stale
-    without a test going red.
+    ⚠ SO THE CLAIM IS ABOUT TABLES AND CREDENTIALS, NOT ABOUT COLUMNS. `#252`
+    closes by classifying all 23 org-scoped tables rather than by exporting
+    them: 16 are here, and the 7 that are not are named in
+    `export_scope.excluded_tables` IN THE BUNDLE, each with its reason.
+
+    ⚠ AND #252b HAD TO NARROW IT AGAIN, BECAUSE THE FIRST VERSION SAID "nothing
+    is left out that is not named here" AND THAT WAS FALSE. Measured per
+    section — model columns minus emitted minus declared-withheld — the bundle
+    drops 101 columns nobody names. Most are surrogate keys and internal
+    plumbing (`id`, `org_id`, `grading_attempts`, `paddle_customer_id`), but two
+    were not: `users.full_name`, the data subject's OWN NAME, and
+    `org_policies.gemini_key_enc` / `openai_key_enc`, two Fernet-encrypted BYOK
+    keys withheld correctly and named nowhere — `grep -c key_enc` over this file
+    returned 0. Naming all 101 would bury the four that matter under 97 rows of
+    `id` and serve no data subject, so the fields that a DSAR needs were added
+    instead and `EXPORT_STATEMENT` now claims only what the lists back: table
+    completeness and credential completeness, both test-enforced, plus an
+    explicit route for a subject who wants a column it does not carry.
+
+    `included_tables` is derived from the sections actually built. One test
+    walks the model registry to assert every org-scoped table is named in
+    exactly one of included_tables or excluded_tables; its twin walks the same
+    registry for the credential half. A list written in prose is a claim nobody
+    rechecks; neither of these can go stale without a test going red.
 
     ⚠ THE FORWARD RULE, CORRECTLY SCOPED — it stays, because it is what exposed
     the gap. A table added FROM HERE that holds data the customer would
@@ -676,7 +703,7 @@ def account_export(
         .order_by(AuditLog.seq.asc())
     ).scalars().all()
     # ⚠ EVERY ONE OF THESE CARRIES ITS OWN `org_id` FILTER, AND RLS IS NOT THE
-    # REASON THEY ARE SAFE. Four of them — login_events, payment_events,
+    # REASON THEY ARE SAFE. THREE of them — login_events, payment_events,
     # stripe_events — are posture C in the Database note: `org_id` is NULLABLE,
     # which structurally rules RLS out, so the clause below is the ONLY tenant
     # isolation on those rows. The rest are posture A, where a dropped clause
@@ -728,15 +755,46 @@ def account_export(
             "contact_email": org.contact_email,
             "monthly_log_quota": org.monthly_log_quota,
             "created_at": _iso(org.created_at),
+            # Added at #252b. Account state and the payment method summary are
+            # things a workspace would recognise as facts about itself, and
+            # `ip_allowlist` is customer-CONFIGURED — it is their rule, and the
+            # forward rule above says so. Provider identifiers
+            # (paddle/stripe ids, the badge token) stay out: those are handles
+            # into someone else's system, not facts about this workspace.
+            "approval_status": org.approval_status,
+            "trial_ends_at": _iso(org.trial_ends_at),
+            "suspended": org.suspended,
+            "suspended_reason": org.suspended_reason,
+            "deleted_at": _iso(org.deleted_at),
+            "ip_allowlist": org.ip_allowlist,
+            "card_on_file": org.card_on_file,
+            "card_brand": org.card_brand,
+            "card_last4": org.card_last4,
         } if org else None,
-        "users": [{"email": u.email, "role": u.role, "disabled": u.disabled,
-                   "mfa_enabled": u.mfa_enabled} for u in users],
+        # ⚠ `full_name` WAS MISSING UNTIL #252b, AND IT IS THE DATA SUBJECT'S OWN
+        # NAME. `PUT /v1/account/profile` lets them set it; the bundle then did
+        # not give it back. A subject-access request that omits the subject's
+        # name is the defect #252 is about, at its smallest and worst.
+        "users": [{"email": u.email, "full_name": u.full_name, "role": u.role,
+                   "disabled": u.disabled, "mfa_enabled": u.mfa_enabled,
+                   "created_at": _iso(u.created_at)} for u in users],
         "policy": {
             "pii_detection": policy.pii_detection, "prompt_injection": policy.prompt_injection,
             "regulated_data_mode": policy.regulated_data_mode,
             "max_token_threshold": policy.max_token_threshold,
             "enforcement_mode": policy.enforcement_mode,
             "notify_on_breach": policy.notify_on_breach,
+            # Added at #252b: the rest of what the workspace CONFIGURED. The
+            # notify addresses are personal data in their own right, and the
+            # judge settings are the customer's choice about who grades their
+            # evidence. The two `*_key_enc` columns are withheld and now SAID
+            # to be, in export_scope.
+            "confidence_threshold": policy.confidence_threshold,
+            "notify_email": policy.notify_email,
+            "notify_webhook_url": policy.notify_webhook_url,
+            "judge_provider": policy.judge_provider,
+            "judge_key_mode": policy.judge_key_mode,
+            "sdk_enforcement": policy.sdk_enforcement,
         } if policy else None,
         "api_keys": [{"name": k.name, "key_prefix": k.key_prefix, "status": k.status,
                       "created_at": _iso(k.created_at), "last_used_at": _iso(k.last_used_at),

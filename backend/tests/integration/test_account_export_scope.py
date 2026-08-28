@@ -27,17 +27,21 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from app.db import SessionLocal
+from sqlalchemy import text as sa_text
 from app.models import (
     LoginEvent, Notification, PaymentEvent, SsoConnection, StripeEvent,
     UsageDaily, UserSession, VerificationCode, WebhookSubscription,
 )
 
 
-#: The five values this repo's hard rule forbids serialising anywhere. #252
-#: found the fifth: `webhook_subscriptions.secret`, which the register's own
-#: list of four had missed.
+#: What this repo's hard rule forbids serialising anywhere. #252 found the fifth
+#: table — `webhook_subscriptions.secret`, missing from the register's list of
+#: four — and #252b found the sixth PATTERN: `_key_enc`, the Fernet-encrypted
+#: BYOK provider keys on `org_policies`. Its absence made
+#: `test_no_included_table_carries_a_secret_column_that_is_not_declared_withheld`
+#: compute an EMPTY set for that table and pass while proving nothing.
 BANNED_COLUMNS = ("token_hash", "code_hash", "password_hash", "key_hash",
-                  "client_secret", "secret")
+                  "client_secret", "secret", "_key_enc")
 
 
 @pytest.fixture
@@ -138,22 +142,47 @@ def test_the_statement_claims_only_what_the_lists_can_back(admin):
 
     for overclaim in ("everything this workspace holds",
                       "anything added to this workspace's schema belongs here",
-                      "every row"):
-        assert overclaim not in statement.replace("not every row", ""), (
+                      "nothing is left out that is not named here"):
+        assert overclaim not in statement.lower(), (
             f"the statement is false again: {overclaim!r}")
     for anchor in ("included_tables", "excluded_tables", "withheld_fields",
                    "org_id"):
         assert anchor in statement, f"the statement stopped naming {anchor}"
+    # ⚠ It must SAY it is a per-table summary. #252b's whole finding was that a
+    # sentence claiming field-level completeness is false by 101 columns.
+    assert "not a dump of every database column" in statement, (
+        "the statement stopped disclaiming column-level completeness, which is "
+        "the part of it that was false")
+    assert "ask us" in statement, (
+        "a subject who wants a field the bundle does not carry is given no route")
 
 
 # ══ the secrets ════════════════════════════════════════════════════════════
-def test_the_whole_document_carries_none_of_the_banned_values(admin):
-    """⚠ THE WHOLE DOCUMENT, NOT ONE SECTION. #249 added this for `api_keys`;
-    #252 adds seven sections, two of them drawn from tables that hold a live
-    credential, so the guard has to be about the serialised file.
+def _all_keys(node):
+    """Every key anywhere in the document, at any depth."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from _all_keys(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _all_keys(value)
 
-    Real values are seeded and searched for by VALUE — a key-name scan would
-    pass against a bundle that emitted the secret under a different key.
+
+def test_the_whole_document_carries_none_of_the_banned_values(admin):
+    """⚠ THE SERIALISED DOCUMENT. NOT A WALK OVER SECTION TYPES.
+
+    The first version of this guard iterated `bundle.items()` and skipped
+    anything that was not a `list`. That excluded exactly two sections —
+    `organization` and `policy`, both dicts — which are the two backed by tables
+    holding `api_key_hash` and the two `*_key_enc` BYOK keys. Mutating
+    `org.api_key_hash` into the `organization` dict shipped a live secret and
+    all 18 tests passed. A shape-aware walk is what created that hole, so the
+    check is now on the string that actually leaves the process, plus a
+    key-scan that recurses to any depth rather than stopping at the top level.
+
+    Values are seeded and searched for BY VALUE. A key-name scan alone would
+    pass against a bundle that emitted a secret under a different key.
     """
     org, client = admin
     org_id = uuid.UUID(org["org_id"])
@@ -162,16 +191,21 @@ def test_the_whole_document_carries_none_of_the_banned_values(admin):
     idp_secret = "idp_client_secret_" + uuid.uuid4().hex
     session_token = "sess_" + uuid.uuid4().hex
     step_up_code = "code_" + uuid.uuid4().hex
+    byok_gemini = "gAAAAA_byok_gemini_" + uuid.uuid4().hex
+    byok_openai = "gAAAAA_byok_openai_" + uuid.uuid4().hex
 
     db = SessionLocal()
     try:
         user_id = db.execute(
-            __import__("sqlalchemy").text(
-                "SELECT id FROM users WHERE org_id = :o LIMIT 1"),
+            sa_text("SELECT id FROM users WHERE org_id = :o LIMIT 1"),
+            {"o": str(org_id)}).scalar_one()
+        org_key_hash = db.execute(
+            sa_text("SELECT api_key_hash FROM organizations WHERE id = :o"),
             {"o": str(org_id)}).scalar_one()
     finally:
         db.close()
 
+    client.get("/v1/policies")            # materialise the policy row first
     _seed(
         org_id,
         WebhookSubscription(org_id=org_id, url="https://hooks.example.test/foxy",
@@ -185,22 +219,39 @@ def test_the_whole_document_carries_none_of_the_banned_values(admin):
         VerificationCode(org_id=org_id, user_id=user_id, purpose="step_up",
                          code_hash=step_up_code, expires_at=now + timedelta(minutes=10)),
     )
+    db = SessionLocal()
+    try:
+        db.execute(sa_text("UPDATE org_policies SET gemini_key_enc = :g, "
+                           "openai_key_enc = :o WHERE org_id = :i"),
+                   {"g": byok_gemini, "o": byok_openai, "i": str(org_id)})
+        db.commit()
+    finally:
+        db.close()
 
     raw = client.get("/v1/account/export").content.decode()
-    for value in (hook_secret, idp_secret, session_token, step_up_code):
-        assert value not in raw, f"a live credential reached the bundle: {value[:12]}…"
 
-    # ...and the columns are not present as keys either, which is the cheaper
-    # half and the one that catches a rename rather than a leak.
+    for label, value in (("webhook signing key", hook_secret),
+                         ("SSO client secret", idp_secret),
+                         ("session credential", session_token),
+                         ("step-up code", step_up_code),
+                         ("BYOK gemini key", byok_gemini),
+                         ("BYOK openai key", byok_openai),
+                         ("the org's own API key hash", org_key_hash)):
+        assert value not in raw, f"a live credential reached the bundle: {label}"
+
+    # ANTI-VACUITY: the seeding actually happened, so the absences above mean
+    # something. Without this the test passes against a bundle built from an
+    # empty database.
+    assert org_key_hash and len(org_key_hash) >= 32, "no org key hash was seeded"
     bundle = json.loads(raw)
-    for section, rows in bundle.items():
-        if section == "export_scope" or not isinstance(rows, list):
-            continue
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            for banned in BANNED_COLUMNS:
-                assert banned not in row, f"{section} emits {banned}"
+    assert bundle["sso_connections"], "the SSO row was not seeded"
+    assert bundle["webhook_subscriptions"], "the webhook row was not seeded"
+    assert bundle["policy"], "the policy row was not materialised"
+
+    # ...and no banned column name appears as a key ANYWHERE, at any depth.
+    for key in _all_keys(bundle):
+        for banned in BANNED_COLUMNS:
+            assert banned not in key, f"the bundle emits a key named {key!r}"
 
 
 def test_no_included_table_carries_a_secret_column_that_is_not_declared_withheld(admin):
@@ -224,6 +275,7 @@ def test_no_included_table_carries_a_secret_column_that_is_not_declared_withheld
     by_table = {c.__table__.name: c for c in Base.__subclasses__()}
     section_of = {t: s for s, t in EXPORT_SECTION_TABLES.items()}
 
+    found = {}
     for table in scope["included_tables"]:
         model = by_table.get(table)
         if model is None:
@@ -234,6 +286,21 @@ def test_no_included_table_carries_a_secret_column_that_is_not_declared_withheld
         assert secret_cols <= declared, (
             f"{table} is exported and holds {sorted(secret_cols - declared)}, "
             f"which is not declared in withheld_fields")
+        if secret_cols:
+            found[table] = sorted(secret_cols)
+
+    # ⚠ ANTI-VACUITY, AND IT IS NOT DECORATION. Before #252b, `BANNED_COLUMNS`
+    # omitted `_key_enc`, so `org_policies` computed an EMPTY `secret_cols` and
+    # this loop asserted `set() <= set()` — green, proving nothing, while two
+    # Fernet-encrypted BYOK keys sat in an exported table undeclared. An empty
+    # computed set must fail loudly rather than pass quietly. This is the second
+    # time this phase that a helper reported success by doing nothing.
+    assert len(found) >= 5, (
+        f"only {len(found)} included tables were found to hold a credential "
+        f"column: {found}. The banned-pattern list has stopped matching — check "
+        f"BANNED_COLUMNS before believing this passed.")
+    assert "org_policies" in found and any("_key_enc" in c for c in found["org_policies"]), (
+        f"the BYOK keys are no longer detected on org_policies: {found}")
 
 
 def test_every_withheld_field_is_absent_from_every_row_of_its_section(admin):
@@ -481,3 +548,78 @@ def test_the_shipped_bundle_names_no_internal_column_identifier(admin):
         assert token not in raw, (
             f"the bundle prints the internal identifier {token!r} — see this "
             f"test's docstring before relaxing the guard that catches it")
+
+def test_every_credential_we_hold_is_named_in_the_manifest(admin):
+    """THE FIELD HALF OF THE CLAIM — the table half's twin.
+
+    `EXPORT_STATEMENT` no longer says "nothing is left out that is not named
+    here", because that was false: measured per section (model columns minus
+    emitted minus declared-withheld) the bundle drops 101 columns nobody names,
+    almost all of them surrogate keys and internal plumbing. Naming all 101
+    would bury the ones that matter, so the sentence was narrowed to the two
+    properties the lists actually back — every org-scoped TABLE is classified,
+    and every CREDENTIAL is named.
+
+    This walks the registry for the second of those, so the sentence cannot
+    drift away from what the code builds any more than the first can.
+    """
+    from app.db import Base
+    from app.routers.account import (EXPORT_SECTION_TABLES,
+                                     EXPORT_WITHHELD_FIELDS)
+
+    _, client = admin
+    bundle = _bundle(client)
+    shipped = {w["section"] for w in bundle["export_scope"]["withheld_fields"]}
+    by_table = {c.__table__.name: c for c in Base.__subclasses__()}
+
+    checked = 0
+    for section, table in EXPORT_SECTION_TABLES.items():
+        model = by_table.get(table)
+        if model is None:
+            continue
+        secrets = {c.name for c in model.__table__.columns
+                   if any(b in c.name for b in BANNED_COLUMNS)}
+        if not secrets:
+            continue
+        checked += 1
+        declared = set(EXPORT_WITHHELD_FIELDS.get(section, ((), "", ""))[0])
+        assert secrets <= declared, (
+            f"{table} holds {sorted(secrets - declared)} and the manifest does "
+            f"not name it — the statement's credential claim is false")
+        assert section in shipped, (
+            f"{section} withholds a credential and export_scope does not say so")
+    assert checked >= 5, f"only {checked} sections were checked — see BANNED_COLUMNS"
+
+
+def test_the_bundle_gives_the_data_subject_their_own_name(admin):
+    """`users.full_name` was dropped and named nowhere until #252b.
+
+    `PUT /v1/account/profile` lets a person set their name; the bundle then did
+    not give it back. A subject-access request that omits the subject's name is
+    the same class of false claim as omitting a table, at its smallest — and,
+    for the person reading it, its worst."""
+    _, client = admin
+    assert client.put("/v1/account/profile",
+                      json={"full_name": "Ada Lovelace"}).status_code == 200
+
+    users = _bundle(client)["users"]
+    assert any(u.get("full_name") == "Ada Lovelace" for u in users), (
+        f"the subject's own name is not in their subject-access bundle: {users}")
+    assert all("created_at" in u for u in users), (
+        "when the account was created is part of the record")
+
+
+def test_the_workspaces_own_configuration_comes_back(admin):
+    """Added at #252b alongside `full_name`: things the customer CONFIGURED or
+    that are plain facts about their account state. Guarded so they cannot
+    quietly disappear the way `full_name` did."""
+    _, client = admin
+    client.get("/v1/policies")     # the row is written on first read, not signup
+    bundle = _bundle(client)
+    for field in ("approval_status", "trial_ends_at", "suspended",
+                  "suspended_reason", "ip_allowlist", "card_on_file",
+                  "card_brand", "card_last4", "deleted_at"):
+        assert field in bundle["organization"], f"organization dropped {field}"
+    for field in ("confidence_threshold", "notify_email", "notify_webhook_url",
+                  "judge_provider", "judge_key_mode", "sdk_enforcement"):
+        assert field in bundle["policy"], f"policy dropped {field}"
