@@ -64,8 +64,20 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         cl = request.headers.get("content-length")
         if cl is not None:
+            # ⚠ #262 · keyed on `scope["path"]`, the RAW routed path. This is not
+            # an authorization gate, so it was decided on its own merits: the
+            # dict above is keyed by ROUTE, and the route is what `scope["path"]`
+            # names. `request.url.path` is rebuilt from the client's `Host`
+            # header (PYSEC-2026-161), which would let a caller pick which
+            # ceiling applies to a request going somewhere else —
+            # `Host: h/v1/account/avatar?` on `POST /v1/logs/batch` reconstructs
+            # to exactly `/v1/account/avatar` and lifts ingest's cap from 2 MB to
+            # 5 MB — and, the other way, a `Host` ending `#` empties the path so
+            # a genuine 3 MB avatar meets the 2 MB default and 413s. Measured
+            # identical to the old expression for every well-formed request, on
+            # both the customer mount and /admin.
             limit = _BODY_LIMIT_OVERRIDES.get(
-                request.url.path, get_settings().max_request_bytes)
+                request.scope["path"], get_settings().max_request_bytes)
             try:
                 if int(cl) > limit:
                     return PlainTextResponse("Request body too large", status_code=413)

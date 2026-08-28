@@ -115,7 +115,26 @@ class TrafficMiddleware(BaseHTTPMiddleware):
         try:
             if not get_settings().traffic_tracking_enabled:
                 return
-            full_path = (request.scope.get("root_path", "") or "") + request.url.path
+            # ⚠ #262 · `scope["path"]`, the RAW routed path, not
+            # `request.url.path`. Accounting, not authorization, so it was
+            # decided separately — but nothing here wants a value the caller
+            # controls. MEASURED, because the root_path concatenation makes this
+            # the one of the four where a swap could silently change what gets
+            # counted: on starlette 0.49.3 (the pin) AND 1.3.1, a Mount sets
+            # root_path and leaves the path WHOLE, so `scope["path"]` and
+            # `request.url.path` are byte-identical for every well-formed request
+            # on both mounts, and this line records exactly what it recorded
+            # before. What it no longer records is attacker-chosen text: a
+            # crafted Host used to write `/v1/auth//v1/logs` — or, with a
+            # trailing `#`, the empty string — straight into traffic_events.path.
+            #
+            # ⚠ SEPARATE, PRE-EXISTING, NOT FIXED HERE: because the mount does
+            # NOT strip the prefix, this concatenation double-counts the admin
+            # site — `/admin/v1/auth/login` is recorded as
+            # `/admin/admin/v1/auth/login`, and `_SKIP_PATHS` therefore never
+            # matches an admin request. True before this change and after it;
+            # filed rather than folded into a security fix.
+            full_path = (request.scope.get("root_path", "") or "") + request.scope["path"]
             if full_path in _SKIP_PATHS:
                 return
             sess = request.scope.get("session") or {}

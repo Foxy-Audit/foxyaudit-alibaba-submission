@@ -27,9 +27,20 @@ _MAX_AGE = 60 * 60 * 24 * 180   # 180 days
 # Session-ESTABLISHING / token-based auth flows are exempt: they run pre-session
 # (login, mfa, forgot/reset) or authenticate via an unguessable single-use token
 # (handoff/redeem, google) — a stolen/planted session cookie can't forge those.
-# Paths are sub-app-relative (the /admin mount prefix is already stripped), so one
-# set covers both the customer and admin auth routers. NOTE: logged-in state changes
-# like /v1/auth/change-password and /v1/auth/users* deliberately stay protected.
+# NOTE: logged-in state changes like /v1/auth/change-password and /v1/auth/users*
+# deliberately stay protected.
+#
+# ⚠ CORRECTION (#262, MEASURED). This block used to say "paths are sub-app-relative
+# (the /admin mount prefix is already stripped), so one set covers both the customer
+# and admin auth routers." It does not. On starlette 0.49.3 (this repo's pin) AND on
+# 1.3.1, a `Mount` sets `root_path="/admin"` and leaves the path WHOLE, so inside
+# admin_api both `scope["path"]` and `request.url.path` are `/admin/v1/auth/login`
+# and NOTHING in this set matches an admin request. The set covers the customer API
+# only. That is harmless today — the flows listed here run pre-session, so with no
+# session cookie the cookie clause in `dispatch` is already False — but it is not
+# what the comment claimed, and nobody should add an admin path here expecting a
+# bare `/v1/...` spelling to work. Left as-is otherwise: #262 is not the place
+# to change which admin routes enforce CSRF.
 _EXEMPT_PATHS = frozenset({
     "/v1/auth/login", "/v1/auth/logout", "/v1/auth/mfa",
     "/v1/auth/forgot-password", "/v1/auth/reset-password",
@@ -44,9 +55,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         token = request.cookies.get(_COOKIE)
+        # ⚠ #262 · `scope["path"]` (the RAW routed path), never `request.url.path`.
+        # `request.url` is rebuilt from the client's `Host` header and re-parsed
+        # (PYSEC-2026-161, starlette 0.49.3 — the pin), so `Host:
+        # testserver/v1/auth/login?` makes the reconstructed path EXACTLY
+        # `/v1/auth/login` — a member of _EXEMPT_PATHS — with the real route
+        # pushed into the query. Measured: that bought a CSRF exemption on
+        # `POST /v1/keys` and minted an API key with no token at all. Routing is
+        # unaffected, so the exempt check and the dispatch must read the same
+        # value or they decide about different endpoints.
         enforce = (
             request.method not in _SAFE_METHODS
-            and request.url.path not in _EXEMPT_PATHS
+            and request.scope["path"] not in _EXEMPT_PATHS
             and any(c in request.cookies for c in _SESSION_COOKIES)
         )
         if enforce:

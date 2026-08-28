@@ -204,11 +204,27 @@ def _enforce_dashboard_gates(request: Request, org: Organization) -> None:
     The exempt-path check comes AFTER working out the lock, and stays that way:
     the escape hatches must be reachable in every locked state, not just the card
     one.
+
+    ⚠ #262 · IT READS `scope["path"]`, NOT `request.url.path`. `request.url` is
+    REBUILT from the client's `Host` header — `f"{scheme}://{host}{path}"` in
+    starlette 0.49.3, this repo's pin (PYSEC-2026-161) — and re-parsed, so a
+    `Host` carrying `/`, `?` or `#` moves the path boundary while ROUTING keeps
+    using the raw scope path. Measured, not reasoned: `Host: testserver/v1/auth/`
+    on `GET /v1/logs` made `request.url.path` == `/v1/auth//v1/logs`, this gate
+    exempted it, and a billing-locked org got 200 instead of 402. It fails the
+    other way too — a `Host` ending `#` truncates the path to `""`, which matches
+    no exempt prefix, and that took `/v1/logs/export` (the evidence #49 says a
+    lock may NEVER withhold) away from a locked customer.
+
+    `scope["path"]` is the path the router dispatched on, so the gate and the
+    dispatch cannot disagree — and that holds on any starlette version, which is
+    why the fix does not depend on anyone keeping the pin moving forward.
+    Guarded behaviourally by tests/integration/test_host_header_path_desync.py.
     """
     lock = billing_state.dashboard_lock(org)
     if lock is None:
         return
-    if request.url.path.startswith(_GATE_EXEMPT):
+    if request.scope["path"].startswith(_GATE_EXEMPT):
         return
     raise HTTPException(status_code=402,
                         detail={"code": lock.reason, "message": lock.message})
