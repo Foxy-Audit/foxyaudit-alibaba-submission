@@ -42,7 +42,8 @@ import autostart as autostart_mod
 import companion_prefs as cp
 from autostart import Autostart
 from fox_settings import FoxSettings, AI_PROVIDERS
-from foxy_client import FoxyClient, shutdown_workers, spawn_worker
+from foxy_client import (FoxyClient, settings_for_worker, shutdown_workers,
+                         spawn_worker)
 from foxy_tokens import matte_tokens as _matte_tokens
 from clay_chat_popup import GradientText, _IconButton
 import window_tracker
@@ -69,10 +70,18 @@ class _TestConnectionWorker(QThread):
 
     def run(self):
         try:
+            # ⚠ `settings_for_worker`, not `self._settings` (#244) — and this
+            # is the #244 crash shape at its sharpest. `done()` waits only
+            # 600 ms while `ai_providers.TIMEOUT` is 30 s, so a slow or
+            # unreachable provider outlives the dialog by up to fifty times the
+            # drain; the thread then goes on reading — and, on the legacy-key
+            # path, WRITING — a QSettings whose owner has gone. Same repair as
+            # the chat worker and as `FoxyClient._fresh_settings`: clone on
+            # THIS thread, which `run()` is the first code to execute on.
             reply = ai_providers.call_ai(
                 [{"role": "user", "content": "Say hi in three words."}],
                 "You are a connection test probe. Reply briefly.",
-                self._settings,
+                settings_for_worker(self._settings),
             )
             self.succeeded.emit(reply)
         except Exception as exc:

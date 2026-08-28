@@ -53,6 +53,7 @@ from PyQt6.QtGui import (
 )
 
 from fox_settings import FoxSettings
+from foxy_client import settings_for_worker
 from foxy_tokens import (
     PANEL_WASH as _PANEL_WASH,
     glass_tokens as _glass_tokens,
@@ -85,8 +86,19 @@ class _AICallWorker(QThread):
 
     def run(self):
         try:
+            # ⚠ `settings_for_worker`, not `self._settings` (#244). `call_ai`
+            # reads four values off this object — provider, key, model, url —
+            # and `api_key()` can also REMOVE the legacy plaintext copy, so
+            # this thread both reads and WRITES. Measured before the fix: four
+            # `value()` calls crossed onto the GUI thread's own QSettings, plus
+            # a `remove()` whenever a pre-keychain key was still lying in the
+            # store. `QSettings` is reentrant across instances, not one
+            # instance across threads. The clone is taken HERE because `run()`
+            # is the first code that executes on this thread — `__init__` ran
+            # on the GUI thread, and a clone built there would carry the defect.
             reply = ai_providers.call_ai(
-                self._history, self._system_prompt, self._settings)
+                self._history, self._system_prompt,
+                settings_for_worker(self._settings))
             self.succeeded.emit(reply)
         except Exception as exc:
             self.failed.emit(str(exc))

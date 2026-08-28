@@ -447,6 +447,38 @@ class FoxyHttp:
             pass  # only the Set-Cookie side effect matters
 
 
+# ── the thread hop, in one place ────────────────────────────────────────────
+def settings_for_worker(settings):
+    """The settings object a WORKER THREAD should read through — never the one
+    the GUI thread holds.
+
+    `QSettings` is reentrant across INSTANCES, not one instance across threads,
+    so anything running on a `QThread` that reads settings has to take its own
+    `clone()`. `FoxSettings.clone()` builds that clone from a snapshot of the
+    store's shape taken at construction, on the owning thread, so it never
+    calls an accessor on the shared store (register #244).
+
+    ⚠ CALL THIS FROM `run()`, NEVER FROM `__init__`. A worker's `__init__` runs
+    on the GUI thread, so a clone taken there is a QSettings built on one
+    thread and used on another — the same defect with a longer stack.
+
+    ⚠ AND IT IS NOT WRAPPED IN `except Exception: return settings`. That arm
+    used to live in `_fresh_settings`, and it was `_respawn`'s hazard one level
+    up: on any failure it handed the worker the GUI thread's own object —
+    precisely what must not cross, and precisely the stack the #242
+    faulthandler dumps died in. `clone()` no longer reads the shared store at
+    all, so the only thing left that can raise is QSettings construction
+    itself; a failed request or a failed AI call is the strictly smaller harm
+    than a heap-corrupting data race, and every caller here already turns an
+    exception into a `failed` signal the UI knows how to show.
+
+    A settings object with no `clone()` — a test double, say — comes back as it
+    is. There is no QSettings behind it, so there is no threading rule to break.
+    """
+    clone = getattr(settings, "clone", None)
+    return settings if clone is None else clone()
+
+
 # ── Qt client (signals for auth routing) ────────────────────────────────────
 class FoxyClient(QObject):
     """The app-wide client.  Reads backend URL + org key from FoxSettings at
@@ -498,23 +530,9 @@ class FoxyClient(QObject):
         the thread that OWNS that store, so nothing on this thread ever calls an
         accessor on the GUI thread's QSettings.
         """
-        clone = getattr(self.settings, "clone", None)
-        if clone is None:
-            # A settings object without clone() — a test double, say. It is not
-            # a QSettings, so sharing the one instance breaks no threading rule,
-            # and the old fallback (which silently read a DIFFERENT store) was
-            # strictly worse.
-            return self.settings
-        # ⚠ NOT wrapped in `except Exception: return self.settings`. That arm
-        # was `_respawn`'s hazard one level up: on any failure it handed THIS
-        # worker thread the GUI thread's own FoxSettings — precisely the object
-        # #244 exists to stop crossing, and precisely the stack the #242
-        # faulthandler dumps died in. `clone()` no longer reads the shared store
-        # at all, so the only thing left here that can raise is QSettings
-        # construction itself; a request that fails is the strictly smaller harm
-        # than a heap-corrupting data race, and `ApiWorker.run` already turns it
-        # into a `failed` signal the UI knows how to show.
-        return clone()
+        # `settings_for_worker` is the one implementation of this hop; the two
+        # AI workers in clay_chat_popup and settings_dialog take the same one.
+        return settings_for_worker(self.settings)
 
     def _credentials(self) -> tuple[str, str]:
         """Read (backend_url, org_key) as ONE consistent pair.

@@ -33,12 +33,30 @@ survives its test. It is also simply correct on its own: a unit suite that
 talks to the live backend is a suite whose results depend on whether the VM is
 up, and it was sending unauthenticated GETs to production on every CI run.
 
-⚠ WHAT THIS DOES **NOT** FIX, and is filed rather than papered over:
-`FoxyClient._fresh_settings` (foxy_client.py:500) reads `fileName()`,
-`format()`, `organizationName()` and `applicationName()` off the GUI thread's
-own `QSettings` from a worker thread — `_respawn`'s docstring admits the
-hazard while performing it. Egress-blocking removes the test suite's exposure;
-it does not remove the product's. See register #242.
+⚠ WHAT THIS DID NOT FIX — CLOSED SINCE, AND THE NOTE IS KEPT SO THE DIVISION
+STAYS LEGIBLE. This file removed the SUITE's exposure. The PRODUCT's was
+register #244: `FoxyClient._fresh_settings` -> `FoxSettings.clone()` ->
+`fox_settings._respawn` read `fileName()`, `format()`, `organizationName()`
+and `applicationName()` off the GUI thread's own `QSettings` from a worker,
+and `_respawn`'s docstring admitted the hazard while performing it. Two more
+workers did the same through `ai_providers.call_ai` —
+`clay_chat_popup._AICallWorker` and `settings_dialog._TestConnectionWorker`,
+the second of which also WROTE, via `api_key()`'s legacy-plaintext scrub.
+
+All three now take `foxy_client.settings_for_worker(...)` on the worker
+thread, and `FoxSettings` snapshots its store's shape at construction, on the
+owning thread, so `_respawn` is handed a `StoreSpec` and never a store.
+`test_settings_threading.py` drives each path on a real `QThread` against a
+QSettings that stamps every call with the thread that made it. Every
+`QThread` subclass in this tree was swept at that gate; only those three read
+settings, and there is no `QRunnable`, `QThreadPool`, `moveToThread` or
+`threading.Thread` anywhere in `desktop/`.
+
+⚠ SO DO NOT READ THIS FILE AS THE ONLY THING STANDING BETWEEN THE SUITE AND A
+SEGFAULT ANY MORE — but do not remove it either. It is independently correct
+(a unit suite must not dial production), it is what keeps a worker's lifetime
+in microseconds rather than seconds, and it does NOT cover `requests`, which
+`ai_providers` uses — see register #243, item 1.
 
 ⚠ LOOPBACK STAYS OPEN. `test_foxy_client.py` drives a real `ThreadingHTTPServer`
 on 127.0.0.1 and must keep working — that is the one place the suite is
