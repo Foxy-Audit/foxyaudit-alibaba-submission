@@ -30,7 +30,8 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import (
     AccountAction, AiSystem, ApiKey, AuditLog, ChainAnchor, ExportJob, Invoice,
-    Notification, Organization, OrgPolicy, User,
+    LoginEvent, Notification, Organization, OrgPolicy, PaymentEvent,
+    SsoConnection, StripeEvent, UsageDaily, User, WebhookSubscription,
 )
 from .logs import limiter          # the app's single Limiter instance
 
@@ -410,6 +411,163 @@ def account_audit_log(
 
 # ─────────────── full account / GDPR export (P2 · §H) ──────────────────────
 
+#: Bundle section -> the table it is drawn from. `export_scope.included_tables`
+#: is derived from THIS and from the sections actually built, so the manifest
+#: and the contents cannot drift apart — which is the whole of #252. A count or
+#: a list written in prose is a claim nobody rechecks; a list derived from the
+#: bundle is one that cannot go stale silently.
+EXPORT_SECTION_TABLES = {
+    "organization": "organizations",
+    "users": "users",
+    "policy": "org_policies",
+    "api_keys": "api_keys",
+    "invoices": "invoices",
+    "anchors": "chain_anchors",
+    "ai_systems": "ai_systems",
+    "account_actions": "account_actions",
+    "ledger": "audit_logs",
+    "login_events": "login_events",
+    "notifications": "notifications",
+    "webhook_subscriptions": "webhook_subscriptions",
+    "sso_connections": "sso_connections",
+    "usage_daily": "usage_daily",
+    "export_jobs": "export_jobs",
+    "payment_events": "payment_events",
+    "stripe_events": "stripe_events",
+}
+
+#: Every org-scoped table this bundle does NOT carry, with the reason, IN THE
+#: BUNDLE. An honest bundle beats a complete-looking one: a DSAR answered with a
+#: file that asserts completeness while silently omitting a category is a false
+#: statement in a compliance product, and that is exactly what #252 was.
+#:
+#: ⚠ THE FIRST THREE ARE THE REASON THE OBVIOUS RULE IS WRONG. "Anything with an
+#: org_id belongs in the export" would mandate serialising a session token hash,
+#: a step-up code hash and a hand-off token hash — a direct violation of this
+#: repo's hard rule. They are excluded because they hold a credential, not
+#: because they were overlooked.
+EXPORT_EXCLUSIONS = {
+    # (b) auth plumbing / credentials — MUST NOT be exported.
+    "user_sessions": (
+        "Auth plumbing. This table exists to hold a live session credential, "
+        "which is stored only as a one-way hash and is never serialised "
+        "anywhere. The sign-in activity it would otherwise describe is "
+        "exported in full under login_events."),
+    "verification_codes": (
+        "Auth plumbing. One-time step-up codes, stored only as a one-way "
+        "hash, consumed within minutes and never readable even by us."),
+    "auth_handoff_tokens": (
+        "Auth plumbing. Single-use, short-lived tokens that hand a browser "
+        "session to the desktop app, stored only as a one-way hash."),
+    # (c) org-scoped, but not data about the subject.
+    "audit_events": (
+        "Duplicate of data already in this bundle. It is an append-only "
+        "projection of the same grading verdict carried on every ledger row as "
+        "gemini_verdict, one row per graded interaction — exporting it would "
+        "roughly double the largest section and add nothing you do not have."),
+    "traffic_events": (
+        "Server access log, written for platform operations and abuse "
+        "detection across all three sites. IP address and user agent are "
+        "irreversibly hashed rather than stored, URLs carry no query string, "
+        "and no request bodies, headers or secrets are kept. It grows per HTTP "
+        "request rather than per interaction."),
+    "org_sequences": (
+        "Internal bookkeeping: a single row holding the next chain sequence "
+        "number for this workspace, already implied by the ledger's last seq."),
+    "evaluation_redemptions": (
+        "Platform issuance and anti-abuse record for evaluation offers, "
+        "keyed by a hashed email so one address cannot redeem twice. The "
+        "customer-facing result of a redemption is the plan_tier and "
+        "subscription_status already carried under organization."),
+    # Named although it carries no org_id at all, because a reader will ask.
+    "consent_events": (
+        "Not workspace data. Cookie-consent decisions from the public "
+        "marketing site carry no org_id, user_id or email — only a hashed IP "
+        "and user agent — so they cannot be attributed to this workspace or to "
+        "anyone in it."),
+}
+
+#: Sections that carry a row but deliberately withhold one column, and why.
+#: `api_keys` set this precedent long before #252: a table can hold a secret and
+#: still be exported, provided the secret is the part left out. That is what
+#: keeps `sso_connections` and `webhook_subscriptions` in the bundle rather than
+#: in the exclusions above — the table is customer configuration, and only the
+#: credential column is withheld.
+EXPORT_WITHHELD_FIELDS = {
+    # section: (the columns actually held back, what to TELL the reader, why)
+    #
+    # ⚠ THE COLUMN NAMES STAY HERE AND NEVER REACH THE BUNDLE. `test_keys.py`'s
+    # #249 guard scans the whole response for hash-column tokens, and its value
+    # is precisely that it is blunt: it catches the next person who emits one,
+    # whatever section they emit it from. Printing `key_hash` in a manifest
+    # would leak nothing and would blind that guard, which is a bad trade for a
+    # word a customer does not need. So the bundle says "the API key itself"
+    # and the structural test reads the tuple below.
+    #
+    # The first two predate #252 and were always correct — they are named here
+    # because the manifest is only honest if it lists every credential column
+    # held back, not just the ones this phase happened to touch.
+    "organization": (("api_key_hash",),
+                     "the workspace's legacy API key",
+                     "Stored only as a one-way hash; the key itself was shown "
+                     "once, at creation."),
+    "users": (("password_hash", "mfa_code_hash", "reset_token_hash"),
+              "passwords, multi-factor codes and password-reset tokens",
+              "Stored only as one-way hashes and never serialised anywhere."),
+    "api_keys": (("key_hash",),
+                 "the API key itself",
+                 "Stored only as a one-way hash and shown exactly once, at "
+                 "creation."),
+    "sso_connections": (("client_secret",),
+                        "your identity provider's client secret",
+                        "A live credential."),
+    "webhook_subscriptions": (("secret",),
+                              "the signing key for deliveries to your endpoint",
+                              "A live credential."),
+    "payment_events": (("payload",),
+                       "the raw webhook body as the payment provider sent it",
+                       "It is their record in their own shape, it may gain "
+                       "fields at their discretion, and they are a separate "
+                       "controller you can ask directly. What we hold about "
+                       "your billing is exported under invoices and "
+                       "organization."),
+    "stripe_events": (("payload",),
+                      "the raw webhook body as the payment provider sent it",
+                      "See payment_events."),
+}
+
+#: ⚠ THIS SENTENCE IS THE LEGAL EXPOSURE, NOT THE ROW COUNT. It is deliberately
+#: a claim about the LISTS rather than about completeness, because the lists are
+#: derived from the model registry and checked by
+#: `test_every_org_scoped_table_is_either_exported_or_named_as_excluded`.
+#: Two earlier wordings were false the moment they were written.
+EXPORT_STATEMENT = (
+    "This is the data Foxy Audit holds for this workspace that you would "
+    "recognise as your own. It is deliberately not every row in our database, "
+    "and it does not claim to be: every table we operate that carries an "
+    "org_id is named in exactly one of included_tables or excluded_tables "
+    "below, each exclusion with its reason, and every field held back from an "
+    "included section is named in withheld_fields with its reason. Nothing is "
+    "left out that is not named here."
+)
+
+
+def _export_scope(bundle_sections) -> dict:
+    """The manifest, derived from the sections actually built."""
+    return {
+        "statement": EXPORT_STATEMENT,
+        "included_tables": sorted(
+            EXPORT_SECTION_TABLES[s] for s in bundle_sections
+            if s in EXPORT_SECTION_TABLES),
+        "excluded_tables": [{"table": t, "reason": r}
+                            for t, r in sorted(EXPORT_EXCLUSIONS.items())],
+        # `held_back` is prose on purpose — see EXPORT_WITHHELD_FIELDS.
+        "withheld_fields": [{"section": s, "held_back": what, "reason": why}
+                            for s, (_cols, what, why) in sorted(
+                                EXPORT_WITHHELD_FIELDS.items())],
+    }
+
+
 @router.get("/v1/account/export")
 def account_export(
     admin: User = Depends(require_role("admin")),
@@ -418,39 +576,77 @@ def account_export(
     """Self-serve, machine-readable export of the workspace data a customer would
     recognise as their own: org profile, users, policy, API-key metadata (never
     the secret), invoices, anchors, declared AI systems, the account-action
-    trail, and the full hash-chain ledger. Admin only. Content-blind: the ledger
-    carries only hashes + verdicts, never prompt or response text.
+    trail, the full hash-chain ledger, and — since #252 — sign-in history,
+    in-app notifications, outbound webhook and SSO configuration (never their
+    credentials), the daily usage rollup, the export history, and billing-event
+    metadata (never the provider's raw payload). Admin only. Content-blind: the
+    ledger carries only hashes + verdicts, never prompt or response text.
 
     ⚠ THAT LIST IS THE CLAIM, AND IT IS NOT "EVERYTHING". IT USED TO SAY SO.
     Two earlier wordings were false: "everything this workspace holds", and then
-    the stronger "anything added to this workspace's schema belongs here". 23
-    models carry an `org_id`; this exports 8 of them. The second wording was also
-    wrong to WANT, not merely inaccurate — four of the absent tables hold values
-    a hard rule forbids serialising (`user_sessions.token_hash`,
-    `verification_codes.code_hash`, `auth_handoff_tokens.token_hash`,
-    `sso_connections.client_secret`), and a rule that mandates exporting a
-    session token hash is not a rule worth keeping.
+    the stronger "anything added to this workspace's schema belongs here". The
+    second was wrong to WANT, not merely inaccurate — four of the tables it
+    reached hold values a hard rule forbids serialising
+    (`user_sessions.token_hash`, `verification_codes.code_hash`,
+    `auth_handoff_tokens.token_hash`, `sso_connections.client_secret`), and a
+    fifth found while closing #252 does too (`webhook_subscriptions.secret`).
+    A rule that mandates exporting a session token hash is not a rule worth
+    keeping.
+
+    ⚠ SO THE CLAIM IS NOW ABOUT THE LISTS, NOT ABOUT COMPLETENESS. `#252` closes
+    by classifying all 23 org-scoped tables rather than by exporting them: 16
+    are here, and the 7 that are not are named in `export_scope.excluded_tables`
+    IN THE BUNDLE, each with its reason, alongside the five columns withheld
+    from tables that ARE here. `EXPORT_STATEMENT` is the sentence a regulator
+    reads, and it is checkable — `included_tables` is derived from the sections
+    actually built, and a test walks the model registry to assert every
+    org-scoped table is named in exactly one of included_tables or
+    excluded_tables. A number or a list
+    written in prose is a claim nobody rechecks; this one cannot go stale
+    without a test going red.
 
     ⚠ THE FORWARD RULE, CORRECTLY SCOPED — it stays, because it is what exposed
     the gap. A table added FROM HERE that holds data the customer would
     recognise as their own, and that is not auth plumbing and not a secret,
-    belongs in this bundle. `ai_systems` and `account_actions` were both added
-    under it: the first holds `owner_email`, personal data about someone who
-    need not be a `User` row at all, so the users section did not cover them;
-    the second is the workspace's own record of who changed what.
+    belongs in this bundle. Everything else belongs in `EXPORT_EXCLUSIONS` with
+    a reason. `ai_systems` and `account_actions` were both added under it: the
+    first holds `owner_email`, personal data about someone who need not be a
+    `User` row at all, so the users section did not cover them; the second is
+    the workspace's own record of who changed what.
 
-    ⚠ THE TABLES STILL ABSENT ARE FILED AS #252, NOT FORGOTTEN. `login_events`
-    (holds `email`), `export_jobs`, `notifications`, `webhook_subscriptions`,
-    `sso_connections`, `usage_daily` and the rest each need their own shape
-    decision and possibly a bound — that is a phase, not a line, and guessing at
-    it here would put a second false claim where the first one was.
+    ⚠ EVERY SECTION IS AN EXPLICIT FIELD LIST, AND THAT IS THE SAFETY PROPERTY,
+    not a style. A generic "serialise every column" helper would have shipped
+    `token_hash` the day someone pointed it at `user_sessions`, and would ship
+    the next secret column automatically. Adding a field here is a decision
+    somebody makes; it is never a default.
+
+    ⚠ WHAT IS NOT BOUNDED, AND WHY THAT IS STILL THE RIGHT CALL — MEASURED
+    THROUGH THIS ENDPOINT, NOT ESTIMATED. An empty bundle is 6.2 kB and a
+    `ledger` row costs 670 B. At the Max plan's 250,000 interactions a month,
+    one year of ledger is 3,000,000 rows and about 2.0 GB, built in memory and
+    returned in a single response. That is a PRE-EXISTING property of this
+    endpoint which #252 does not change and does not paper over: a DSAR that
+    OOMs the API is worse than one that is incomplete, and the ledger — not
+    anything added here — is where that risk lives. It is filed rather than
+    fixed in this phase because bounding it means paging or a job, which is a
+    different endpoint, and because truncating it silently would put back the
+    exact false claim #252 was.
+
+    Against that, the sections added here cost 264 B (login_events), 341 B
+    (notifications) and 256 B (usage_daily) a row, and on a deliberately
+    pessimistic model — 50 seats, 500 sign-ins each, twelve breaches a day
+    fanned out to every seat — come to 81 MB, about 4% of that ledger. None of
+    them changes the order of magnitude. The two that WOULD are excluded above:
+    `audit_events` is one row per graded interaction and would add ~970 MB of
+    the same verdict this bundle already carries under `gemini_verdict`, and
+    `traffic_events` grows per HTTP request rather than per interaction. A
+    truncated section inside a completeness claim is the defect this docstring
+    exists to prevent, so nothing here carries a LIMIT.
 
     `account_actions.detail` is exported whole because every writer records THAT
     a secret changed and never the secret (`routers/policies.py` says so at the
     one call site that touches keys); if that ever stops being true, this is the
     second place it leaks.
-
-    ⚠ NOT BOUNDED, deliberately — see the query below.
     """
     org = db.get(Organization, admin.org_id)
     users = db.execute(select(User).where(User.org_id == admin.org_id)).scalars().all()
@@ -478,6 +674,48 @@ def account_export(
     logs = db.execute(
         select(AuditLog).where(AuditLog.org_id == admin.org_id)
         .order_by(AuditLog.seq.asc())
+    ).scalars().all()
+    # ⚠ EVERY ONE OF THESE CARRIES ITS OWN `org_id` FILTER, AND RLS IS NOT THE
+    # REASON THEY ARE SAFE. Four of them — login_events, payment_events,
+    # stripe_events — are posture C in the Database note: `org_id` is NULLABLE,
+    # which structurally rules RLS out, so the clause below is the ONLY tenant
+    # isolation on those rows. The rest are posture A, where a dropped clause
+    # would be invisible to a behavioural cross-tenant test because
+    # `auth._scope_org` has already confined the role. Both cases are asserted
+    # at the SOURCE by
+    # `test_the_export_filters_by_org_itself_and_does_not_lean_on_rls`.
+    logins = db.execute(
+        select(LoginEvent).where(LoginEvent.org_id == admin.org_id)
+        .order_by(LoginEvent.created_at.asc())
+    ).scalars().all()
+    notes = db.execute(
+        select(Notification).where(Notification.org_id == admin.org_id)
+        .order_by(Notification.created_at.asc())
+    ).scalars().all()
+    hooks = db.execute(
+        select(WebhookSubscription)
+        .where(WebhookSubscription.org_id == admin.org_id)
+        .order_by(WebhookSubscription.created_at.asc())
+    ).scalars().all()
+    sso = db.execute(
+        select(SsoConnection).where(SsoConnection.org_id == admin.org_id)
+        .order_by(SsoConnection.created_at.asc())
+    ).scalars().all()
+    usage = db.execute(
+        select(UsageDaily).where(UsageDaily.org_id == admin.org_id)
+        .order_by(UsageDaily.day.asc())
+    ).scalars().all()
+    jobs = db.execute(
+        select(ExportJob).where(ExportJob.org_id == admin.org_id)
+        .order_by(ExportJob.created_at.asc())
+    ).scalars().all()
+    payments = db.execute(
+        select(PaymentEvent).where(PaymentEvent.org_id == admin.org_id)
+        .order_by(PaymentEvent.received_at.asc())
+    ).scalars().all()
+    stripes = db.execute(
+        select(StripeEvent).where(StripeEvent.org_id == admin.org_id)
+        .order_by(StripeEvent.received_at.asc())
     ).scalars().all()
 
     def _iso(v):
@@ -534,7 +772,60 @@ def account_export(
                     "policy_tag": r.policy_tag, "agent": r.agent, "chain_hash": r.chain_hash,
                     "grading_status": r.grading_status, "gemini_verdict": r.gemini_verdict,
                     "created_at": _iso(r.created_at)} for r in logs],
+        # ── added closing #252 ────────────────────────────────────────────
+        # Sign-in activity, and the sharpest of the omissions: `email`, `ip` and
+        # `user_agent` are stored RAW here (unlike traffic_events, where both are
+        # hashed), which makes this plainly personal data. Failed attempts are
+        # included: "somebody tried to sign in as me from this address" is the
+        # half of a sign-in trail a subject most needs.
+        "login_events": [{"email": e.email, "ip": e.ip, "user_agent": e.user_agent,
+                          "success": e.success,
+                          "created_at": _iso(e.created_at)} for e in logins],
+        # What this workspace was told, and whether anyone read it. Bodies are
+        # templated from policy tags, risk scores and colleague emails — checked
+        # at every writer; nothing here can carry prompt or response content.
+        "notifications": [{"kind": n.kind, "title": n.title, "body": n.body,
+                           "level": n.level, "target_type": n.target_type,
+                           "target_id": n.target_id, "read_at": _iso(n.read_at),
+                           "created_at": _iso(n.created_at)} for n in notes],
+        # Customer-configured integrations. `secret` and `client_secret` are the
+        # only columns withheld — the api_keys pattern, not a new one.
+        "webhook_subscriptions": [{"url": w.url, "events": w.events,
+                                   "active": w.active, "last_status": w.last_status,
+                                   "last_delivery_at": _iso(w.last_delivery_at),
+                                   "created_at": _iso(w.created_at)} for w in hooks],
+        "sso_connections": [{"email_domain": s.email_domain, "issuer": s.issuer,
+                             "client_id": s.client_id, "active": s.active,
+                             "created_at": _iso(s.created_at)} for s in sso],
+        # One row per day, so bounded by the workspace's age however busy it is.
+        "usage_daily": [{"day": _iso(u.day), "logs_count": u.logs_count,
+                         "tokens_sum": u.tokens_sum, "breach_count": u.breach_count,
+                         "graded_count": u.graded_count, "failed_count": u.failed_count,
+                         "pending_count": u.pending_count,
+                         "computed_at": _iso(u.computed_at)} for u in usage],
+        # Who extracted what, and when. NOT a recursion: `GET /v1/account/export`
+        # writes no ExportJob — only `POST /v1/exports` does — so this bundle
+        # records the compliance exports a human asked for and never itself.
+        # `file_ref` is omitted because the server keeps no archive and it is
+        # reserved; `params` is the range the requester chose.
+        "export_jobs": [{"requested_by": j.requested_by, "type": j.type,
+                         "params": j.params, "status": j.status,
+                         "created_at": _iso(j.created_at),
+                         "completed_at": _iso(j.completed_at)} for j in jobs],
+        # That a billing event happened, not the provider's copy of it. The raw
+        # `payload` is withheld and said so in export_scope: it is a third
+        # party's record in a shape we do not control and cannot make a claim
+        # about, and they are a separate controller you can ask directly.
+        "payment_events": [{"provider": p.provider, "type": p.type,
+                            "status": p.status, "received_at": _iso(p.received_at),
+                            "processed_at": _iso(p.processed_at)} for p in payments],
+        "stripe_events": [{"type": s.type, "status": s.status,
+                           "received_at": _iso(s.received_at),
+                           "processed_at": _iso(s.processed_at)} for s in stripes],
     }
+    # First key in the file, because it is what tells a reader how to read the
+    # rest — and derived from the bundle rather than written beside it.
+    bundle = {"export_scope": _export_scope(bundle), **bundle}
     fname = f"foxy-account-export-{admin.org_id}.json"
     return Response(content=json.dumps(bundle, indent=2, default=str),
                     media_type="application/json",

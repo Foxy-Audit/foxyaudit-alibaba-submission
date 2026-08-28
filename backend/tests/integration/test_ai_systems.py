@@ -1622,6 +1622,13 @@ def test_the_export_docstring_does_not_overclaim():
 
     Measured against the model registry, so it cannot drift back into a claim
     nobody rechecks.
+
+    ⚠ #252 CLOSED THE GAP BY CLASSIFYING, NOT BY EXPORTING EVERYTHING — 16 of
+    the 23 are now in the bundle and the other 7 are named in
+    `export_scope.excluded_tables` with a reason. So the assertion below still
+    holds and still should: if it ever fails, somebody has exported a table
+    whose reason to exist is a credential. The stronger, derived version of this
+    check lives in `test_account_export_scope.py`.
     """
     import inspect
 
@@ -1644,6 +1651,13 @@ def test_the_export_docstring_does_not_overclaim():
         assert overclaim not in headline, (
             f"the headline claim is false again: {overclaim!r}")
     assert "#252" in doc, "the tables still absent are no longer pointed at"
+    # Whitespace-normalised: this is prose in a wrapped docstring, and a
+    # contiguous-substring check would fail on where the line breaks land
+    # rather than on what the sentence says.
+    assert ("named in exactly one of included_tables or excluded_tables"
+            in " ".join(doc.split())), (
+        "the claim stopped being about the lists, which are the only part of it "
+        "anything checks")
 
 
 def test_the_export_never_promises_to_carry_a_secret():
@@ -1653,8 +1667,15 @@ def test_the_export_never_promises_to_carry_a_secret():
     from app.routers import account
 
     doc = account.account_export.__doc__
+    # ⚠ FIVE, NOT FOUR. #252's census found `webhook_subscriptions.secret` — a
+    # plaintext HMAC signing key — which every earlier list of "the four" had
+    # missed. Both it and `sso_connections.client_secret` sit in tables that ARE
+    # now exported, with only the credential column withheld; that is the
+    # `api_keys` pattern, and it is why the rule has to be scoped to the COLUMN
+    # rather than to the table.
     for forbidden in ("user_sessions.token_hash", "verification_codes.code_hash",
-                      "auth_handoff_tokens.token_hash", "sso_connections.client_secret"):
+                      "auth_handoff_tokens.token_hash", "sso_connections.client_secret",
+                      "webhook_subscriptions.secret"):
         assert forbidden in doc, (
             f"{forbidden} is no longer named as a reason the old rule was wrong")
     assert "not auth plumbing and not a secret" in doc, (
@@ -1670,5 +1691,9 @@ def test_the_bundle_still_contains_what_the_docstring_lists(admin):
     client.post("/v1/systems", json=_payload())
     bundle = json.loads(client.get("/v1/account/export").content)
     for section in ("organization", "users", "policy", "api_keys", "invoices",
-                    "anchors", "ai_systems", "account_actions", "ledger"):
+                    "anchors", "ai_systems", "account_actions", "ledger",
+                    # added closing #252
+                    "login_events", "notifications", "webhook_subscriptions",
+                    "sso_connections", "usage_daily", "export_jobs",
+                    "payment_events", "stripe_events", "export_scope"):
         assert section in bundle, f"{section} is claimed but absent"
