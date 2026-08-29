@@ -647,6 +647,88 @@ def test_a_ledger_row_missing_the_recompute_fields_is_refused_not_failed(tmp_pat
     assert "token_count" in out, "the refusal does not say which fields are missing"
 
 
+# ── REQUIRED_ROW_FIELDS: the constant that decides what "unreadable" means ──
+#
+# ⚠ THE LIST ABOVE IS A WATCHLIST, AND IT WAS UNGUARDED. `find_chain_section`
+# and `CHAIN_SECTION_KEYS` are pinned by a closed-list test; `REQUIRED_ROW_FIELDS`
+# was not, and the case above only ever omits `token_count`. Dropping any other
+# entry left every one of these tests green while the tool lost the ability to
+# say "I cannot check this file". Measured before this block existed: with
+# `response_hash` removed from the tuple, a ledger row without it stopped being
+# refused and `foxy_verify.py` died with an uncaught `KeyError: 'response_hash'`
+# traceback — a verdict degrading into a stack trace.
+#
+# It fails CLOSED, so #269 does not return: `chain_hash` is the one entry whose
+# loss is silent rather than loud, and it is the worse half — `row.get(
+# "chain_hash")` returns None, the recompute disagrees, and the tool reports
+# CHAIN BROKEN. That is an accusation of tampering levelled at an untouched
+# export because the reader was handed the wrong shape, which is the exact lie
+# the constant's own docstring exists to prevent.
+
+#: ⚠ WRITTEN OUT HERE, NOT READ FROM THE MODULE. Parametrising over
+#: `fv.REQUIRED_ROW_FIELDS` would shrink to nothing the moment the constant did
+#: — zero cases, green run, the defect being tested for. This list is taken from
+#: `_row_hash`, which reads `prompt_hash`, `response_hash`, `token_count`,
+#: `policy_tag` and `seq` with no default, plus the `chain_hash` every row is
+#: compared against and the `seq` the sort key needs.
+_RECOMPUTE_READS_WITH_NO_DEFAULT = ("seq", "prompt_hash", "response_hash",
+                                    "token_count", "policy_tag", "chain_hash")
+
+
+def test_the_required_field_list_is_exactly_what_a_recompute_reads():
+    """The closed list, in the shape of `test_the_accepted_keys_are_a_closed_list`.
+
+    Equality, not `issuperset`: an entry too many refuses files the tool could
+    have verified, and an entry too few is what the cases below catch.
+    """
+    assert fv.REQUIRED_ROW_FIELDS == _RECOMPUTE_READS_WITH_NO_DEFAULT, (
+        "REQUIRED_ROW_FIELDS no longer matches what a recompute reads. Adding a "
+        "field to the hash recipe means adding it here; removing one from this "
+        "tuple means the rows missing it are no longer refused.")
+
+
+@pytest.mark.parametrize("field", _RECOMPUTE_READS_WITH_NO_DEFAULT)
+def test_a_row_missing_one_required_field_is_refused_and_never_crashes(field, tmp_path):
+    """One field at a time, over an otherwise VALID export.
+
+    The existing ledger-shape case omits five fields at once, so it stays green
+    while five of the six entries are dropped from the constant. This drops
+    exactly one, which is the only shape that can tell them apart.
+    """
+    export = _make_export(_SPECS)
+    del export["logs"][1][field]
+
+    result = fv.verify_export(export)
+    assert result["refused"] is True, (
+        f"a row missing {field!r} was not refused: {result['detail']!r}. The "
+        f"recompute reads that field with no default, so what came back is "
+        f"either a crash or a verdict about a file that was never read.")
+    assert result["ok"] is False
+    assert field in result["detail"], (
+        f"the refusal does not name the missing field: {result['detail']!r}")
+
+    code, out = _run_cli(tmp_path, export)
+    assert code == 2, f"expected the refusal exit code, got {code}:\n{out}"
+    assert "[OK]" not in out, f"a row it could not read reported success:\n{out}"
+    assert "[FAIL] CHAIN BROKEN" not in out, (
+        f"a row missing {field!r} was reported as TAMPERING. The export is "
+        f"untouched; the reader was handed the wrong shape. Accusing it of "
+        f"tampering is #269 pointed the other way:\n{out}")
+    assert "Traceback" not in out and field in out
+
+
+def test_the_refusal_survives_a_row_missing_every_required_field(tmp_path):
+    """The degenerate case, so the per-field loop cannot be the only cover: a row
+    carrying none of them must still be a refusal naming all six."""
+    export = _make_export(_SPECS)
+    export["logs"][0] = {"note": "not a chain row"}
+    result = fv.verify_export(export)
+    assert result["refused"] is True, result["detail"]
+    for field in _RECOMPUTE_READS_WITH_NO_DEFAULT:
+        assert field in result["detail"], (
+            f"{field!r} is missing from the refusal: {result['detail']!r}")
+
+
 def test_the_known_content_check_reads_the_alias_too(tmp_path):
     """All three `data.get("logs", [])` sites moved, not just the one in
     verify_export. A sidecar check that silently iterated nothing would report

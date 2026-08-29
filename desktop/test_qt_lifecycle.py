@@ -170,7 +170,7 @@ def _app_built_inside_a_test(path):
         for sub in ast.walk(node):
             if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
                     and sub.func.id == "QApplication"):
-                bad.append(f"{os.path.basename(str(path))}:{sub.lineno} "
+                bad.append(f"{Path(path).name}:{sub.lineno} "
                            f"in {node.name}() — build it in a module-scoped "
                            f"`app` fixture instead")
     return bad
@@ -187,6 +187,61 @@ def test_no_test_builds_its_qapplication_inside_the_test_body():
     assert offenders == [], (
         "a QApplication built inside a test body dies when that function "
         "returns:\n  " + "\n  ".join(offenders))
+
+
+#: A file carrying the exact defect the scan hunts, used to drive its REPORTING
+#: path. ⚠ THAT HALF HAD NEVER RUN (register #277). `_TESTS` is all-green by
+#: design, so every execution of the guard above takes the empty branch, and the
+#: line that BUILDS the message called `os.path.basename` in a module importing
+#: `ast`, `pathlib.Path`, `pytest` and PyQt6 and never `os`. A guard whose only
+#: unexercised line is the one that fires when it finally finds something reports
+#: a `NameError` instead of the offender — it breaks at the moment it becomes
+#: useful. Fixing the line without running it would leave that unchanged.
+_OFFENDER_SOURCE = """from PyQt6.QtWidgets import QApplication
+
+
+def test_builds_one_in_the_body():
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+"""
+
+#: The same file with the application moved into a module-scoped fixture. Without
+#: this half, a scan hard-wired to return one line per file would satisfy the
+#: assertions above it.
+_CLEAN_SOURCE = """import pytest
+from PyQt6.QtWidgets import QApplication
+
+
+@pytest.fixture(scope="module")
+def app():
+    return QApplication.instance() or QApplication([])
+
+
+def test_uses_the_fixture(app):
+    assert app is not None
+"""
+
+
+def test_the_scan_can_report_what_it_finds_and_not_only_find_nothing(tmp_path):
+    """Drive the branch that has never fired, on a file built to trip it."""
+    offender = tmp_path / "test_offender_fixture.py"
+    offender.write_text(_OFFENDER_SOURCE, encoding="utf-8")
+    found = _app_built_inside_a_test(offender)
+
+    assert len(found) == 1, f"the scan did not report the offender: {found!r}"
+    line = found[0]
+    assert line.startswith("test_offender_fixture.py:5 "), (
+        f"the report lost the file name or the line it found: {line!r}")
+    assert "in test_builds_one_in_the_body()" in line, (
+        f"the report does not name the offending test: {line!r}")
+    assert "module-scoped" in line and "`app` fixture" in line, (
+        f"the report does not say what to do instead: {line!r}")
+
+    clean = tmp_path / "test_clean_fixture.py"
+    clean.write_text(_CLEAN_SOURCE, encoding="utf-8")
+    assert _app_built_inside_a_test(clean) == [], (
+        "the scan flagged a module-scoped `app` fixture, which is the shape it "
+        "exists to require")
 
 
 # ══ #244c · the event queue must be drained BETWEEN tests ═══════════════════

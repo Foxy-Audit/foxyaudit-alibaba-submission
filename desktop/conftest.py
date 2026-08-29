@@ -160,6 +160,31 @@ def drain_posted_events():
     hundred widget-building tests plus glibc's allocator. Local Windows runs
     961/1 green on the identical tree.
 
+    ⚠ TEARDOWN OR SETUP MAKES NO DIFFERENCE, AND THAT IS MEASURED (#276). The
+    `yield` below puts the pump at THIS test's teardown. Register #276 asked
+    whether that placement is load-bearing, because moving it to the NEXT test's
+    setup (dropping the `yield`) leaves all six of the lifecycle guards green and
+    they therefore cannot tell the two apart. Measured in the container that
+    reproduces the crash — `python:3.13-slim` plus the Qt libs from `ci.yml` AND
+    `libfontconfig1 libfreetype6 libx11-6 libxext6 libxrender1 libglib2.0-0` —
+    five runs each, exit status read from `subprocess.run(...).returncode` and
+    every variant required to prove it EXECUTED before being scored:
+
+        no pump at all                                       SIGSEGV 5/5
+        pump at THIS test's teardown (as written)            SIGSEGV 0/5
+        pump at the NEXT test's setup (no `yield`)           SIGSEGV 0/5
+
+    ⚠ SO THE GUARDS ARE RIGHT AND THE ARGUMENT FOR TEARDOWN WAS NOT. What the
+    fix rests on is that the loop TURNS BETWEEN TESTS — the first line of this
+    docstring — and that is exactly what
+    `test_qt_lifecycle.test_the_queue_was_drained_before_this_test_began` pins.
+    It does NOT rest on the pump running while this test's objects are still
+    alive; that reading is in the register, never in this file, and the
+    measurement does not support it. **No guard was added for the placement.**
+    Inventing one would pin a property that does not matter, which is the
+    failure this file's own history is a catalogue of. Teardown stays because it
+    also drains the LAST test in the run, which setup cannot.
+
     ONE pass, and that is measured rather than assumed. `settle()` below pumps
     twice because delivering a `DeferredDelete` can post another one, so a second
     pass looked obviously right here too — but the full suite is 0/5 either way,

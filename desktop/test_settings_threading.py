@@ -33,6 +33,7 @@ main thread use that object, so none of them can pass on an empty scan.
 
 from __future__ import annotations
 
+import sys
 import threading
 
 import pytest
@@ -52,11 +53,56 @@ WATCHED = ("fileName", "format", "organizationName", "applicationName",
 #: A registry/user-config location that is NOT the app's own
 #: (`OmniAwareFox`/`DesktopPet`), so the native-format tests below cannot read
 #: or damage a developer's real settings. Every value is cleared in a finally.
-#: ⚠ On Windows an EMPTY `HKCU\Software\FoxyAuditTest244` container survives
-#: the run: `QSettings.clear()` removes the keys it owns and Qt offers no way
-#: to delete the organisation node above them. Harmless, and named here so
-#: nobody mistakes it later for the app writing outside its own store.
+#: ⚠ On Windows the organisation node itself outlives the values in it:
+#: `QSettings.clear()` removes the keys it owns and Qt offers no API for the
+#: container above them (register #268). Qt has none — `winreg` does, and it is
+#: stdlib, so the empty node is deleted below rather than left and explained.
 TEST_ORG, TEST_APP = "FoxyAuditTest244", "StoreShapeGuard"
+
+#: ⚠ THE ONE THING THIS FILE IS ALLOWED TO DELETE. `_drop_native_container`
+#: takes a registry path built from `TEST_ORG`, and a rename that pointed that
+#: constant at the app's real store (`OmniAwareFox`) would turn a tidy-up into
+#: deleting a developer's settings. The prefix is asserted before every delete.
+_DELETABLE_ORG_PREFIX = "FoxyAuditTest"
+
+
+def _drop_native_container(org: str, app: str) -> None:
+    """Remove the EMPTY `HKCU\\Software\\<org>` node Qt leaves behind.
+
+    Windows-only and best-effort by design: `winreg.DeleteKey` refuses a key
+    that still has children, which is exactly the behaviour wanted here — if
+    something unexpected is living under that node, leaving it alone and saying
+    nothing is safer than a test suite that deletes registry keys it did not
+    make. On every other platform QSettings writes a file under the user config
+    directory and there is nothing structural to remove.
+
+    ⚠ THE SAFETY CHECK IS ABOVE THE PLATFORM CHECK ON PURPOSE. A guard that
+    only runs where the dangerous branch runs is a guard the other platforms
+    cannot exercise, and the test that pins it would then have to be Windows-only
+    too — which is how a rename reaches production through a green CI run.
+    """
+    assert org.startswith(_DELETABLE_ORG_PREFIX), (
+        f"refusing to delete HKCU\\Software\\{org} — this helper may only "
+        f"touch the throwaway organisation this file creates")
+    if sys.platform != "win32":
+        return
+    import winreg
+    for path in (f"Software\\{org}\\{app}", f"Software\\{org}"):
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+        except OSError:
+            pass                 # already gone, or not empty — never a failure
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _leave_no_registry_container_behind():
+    """Run the native-store cleanup once the whole module is done.
+
+    Per-test `clear()` still runs in each `finally` — this only takes away the
+    husk those leave, and only after the last test that could still want it.
+    """
+    yield
+    _drop_native_container(TEST_ORG, TEST_APP)
 
 
 class Recording(QSettings):
@@ -298,6 +344,45 @@ def test_a_clone_of_the_native_store_points_at_the_same_store(app):
     finally:
         native.clear()
         native.sync()
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="registry containers are a Windows shape")
+def test_the_container_cleanup_actually_removes_a_container():
+    """#268, driven — the module teardown above cannot be asserted from inside
+    the module it tears down, and an unexercised cleanup is the shape this whole
+    phase is about. So the helper is run against a throwaway node of its own,
+    created here and read back through `winreg` rather than through Qt.
+    """
+    import winreg
+
+    probe_org, probe_app = _DELETABLE_ORG_PREFIX + "268Probe", "Probe"
+    scratch = QSettings(probe_org, probe_app)
+    scratch.setValue("k", "v")
+    scratch.sync()
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Software\\{probe_org}"):
+        pass                                   # it exists, or this raises
+
+    scratch.clear()
+    scratch.sync()
+    del scratch
+    # Qt got as far as it can: the values are gone and the node is not.
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Software\\{probe_org}") as k:
+        assert winreg.QueryInfoKey(k)[1] == 0, (
+            "the probe still holds values, so this test is not measuring what "
+            "QSettings.clear() leaves behind")
+
+    _drop_native_container(probe_org, probe_app)
+
+    with pytest.raises(OSError):
+        winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Software\\{probe_org}")
+
+
+def test_the_cleanup_refuses_to_touch_the_apps_real_store():
+    """The assertion that makes the helper safe to keep. A rename of `TEST_ORG`
+    must not turn a tidy-up into deleting a developer's settings."""
+    with pytest.raises(AssertionError, match="throwaway organisation"):
+        _drop_native_container(ORG, APP)
 
 
 def test_the_windows_registry_branch_resolves_by_organization_and_application(app):

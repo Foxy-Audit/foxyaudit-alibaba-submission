@@ -95,13 +95,23 @@ SHARED_SENTENCES = {
 #: module docstring for why the web is allowed one clause more.
 BREACH_CLAIM = "the record is untampered, and it is recorded as a policy breach"
 
-#: The wordings #228 retired. Any of them reappearing on either surface is the
-#: drift this file exists to catch, and the message says which surface moved.
-SUPERSEDED = (
-    "once the Judge processes",
-    "as the Judge flags",
-    "but the Judge flagged",
-)
+#: The wordings #228 retired, each mapped to the LIVE sentence that replaced it.
+#: Any of them reappearing on either surface is the drift this file exists to
+#: catch, and the message says which surface moved.
+#:
+#: ⚠ THE VALUES ARE HERE BECAUSE OF THE VACUITY THIS FILE WAS CAUGHT WITH
+#: (register #279). Every other watchlist can be checked against a surface — its
+#: entries are meant to be FOUND there. A retired wording is meant to be absent,
+#: so "does it still match something real?" has no direct form, and a list of
+#: three phrases that could never have matched anything would look identical to
+#: this one. What CAN be asserted is the other end: each retirement is only
+#: meaningful while the sentence that replaced it is still on a surface, so the
+#: replacement is named and checked. A junk entry has no live replacement.
+SUPERSEDED = {
+    "once the Judge processes": SHARED_SENTENCES["grading-status empty state"],
+    "as the Judge flags": SHARED_SENTENCES["threat-timeline empty state"],
+    "but the Judge flagged": BREACH_CLAIM,
+}
 
 #: ⚠ A grader NAME in the verify panel is the specific invention #228 removed.
 #: The endpoint does not return one, so neither surface may print one there.
@@ -167,6 +177,104 @@ def _desktop_says(text: str) -> list[str]:
     """The desktop modules whose visible strings carry ``text``."""
     return [m for m in desktop_modules()
             if any(text in s for s in desktop_strings(m))]
+
+
+# ══ the watchlists are watched too ═══════════════════════════════
+#
+# ⚠ REGISTER #279, AND IT IS THE POINT OF THE WHOLE FILE. Everything below is
+# a search for a constant defined above. `test_the_guard_is_reading_real_files_
+# and_not_an_empty_string` pins the INPUTS — the dashboard's scripts, the desktop
+# module list — and nothing pinned the CONSTANTS. `GRADER_NAMES` was emptied to
+# `()` and this file's 8 tests all passed — 18 across the pair the #278 phase
+# added, counting `test_key_rotation_copy.py`. Three `for name in ()` loops that
+# assert nothing, green forever, watching nothing. A size check alone does not
+# close it either, because three entries that match nothing on either surface
+# are the same silence with a number attached. So both halves are asserted:
+# non-empty, AND every entry still anchored to something a surface carries.
+
+#: Pinned rather than discovered-and-accepted: discovery on its own would welcome
+#: a fourth watchlist by including it, which is how a new constant arrives
+#: unguarded. Underscored so `_watchlists()` does not find ITSELF.
+_EXPECTED_WATCHLISTS = frozenset({"SHARED_SENTENCES", "SUPERSEDED", "GRADER_NAMES"})
+
+
+def _watchlists() -> dict[str, tuple[str, ...]]:
+    """Every module-level constant in this file shaped like a watchlist — an
+    upper-case name bound to a collection of strings — including one added
+    tomorrow. Dicts contribute their KEYS, which is what the guards iterate."""
+    found = {}
+    for name, value in list(globals().items()):
+        if name.startswith("_") or not name.isupper():
+            continue
+        if isinstance(value, dict):
+            entries = tuple(value)
+        elif isinstance(value, (tuple, list, set, frozenset)):
+            entries = tuple(value)
+        else:
+            continue
+        if all(isinstance(e, str) for e in entries):
+            found[name] = entries
+    return found
+
+
+def test_no_watchlist_in_this_file_can_be_emptied_silently():
+    """The half that catches `GRADER_NAMES = ()`.
+
+    Also catches a NEW watchlist arriving unguarded: the discovered set must be
+    the declared set, so adding a constant means adding it here and deciding how
+    it stays anchored below.
+    """
+    found = _watchlists()
+    assert set(found) == set(_EXPECTED_WATCHLISTS), (
+        f"the watchlists in this file are no longer the ones its guards cover.\n"
+        f"  found:    {sorted(found)}\n"
+        f"  declared: {sorted(_EXPECTED_WATCHLISTS)}\n"
+        f"A new watchlist needs a line in _EXPECTED_WATCHLISTS and an anchor in "
+        f"the test below; a removed one needs both taken out.")
+    for name, entries in sorted(found.items()):
+        assert entries, (
+            f"{name} is EMPTY, so every loop over it asserts nothing and this "
+            f"file is green while watching nothing — register #279.")
+        assert all(e.strip() for e in entries), (
+            f"{name} carries a blank entry, which matches everywhere and "
+            f"therefore distinguishes nothing")
+
+
+def test_every_watchlist_entry_is_still_anchored_to_a_real_surface():
+    """The half a size check cannot do: three entries matching nothing pass a
+    length assertion and watch exactly as little as an empty tuple.
+
+    Two shapes, because the lists mean opposite things. `SHARED_SENTENCES` and
+    `GRADER_NAMES` are phrases a surface really carries, so they are looked for
+    directly. `SUPERSEDED` names phrases that must be ABSENT — there is nothing
+    to find — so each is anchored through the live sentence that replaced it.
+    """
+    assert set(_watchlists()) == set(_EXPECTED_WATCHLISTS), (
+        "a watchlist was added or removed without an anchor — see the test above")
+
+    def live(text):
+        return text in web_scripts() or text in web_markup() or _desktop_says(text)
+
+    for where, sentence in sorted(SHARED_SENTENCES.items()):
+        assert live(sentence), (
+            f"SHARED_SENTENCES[{where!r}] matches nothing on either surface, so "
+            f"the parametrised guard over it proves nothing: {sentence!r}")
+
+    for name in GRADER_NAMES:
+        assert live(name), (
+            f"GRADER_NAMES carries {name!r}, which appears nowhere on the "
+            f"dashboard or in desktop/. A grader name the surfaces never use "
+            f"cannot be the invention #228 removed, and excluding it from the "
+            f"verify panel proves nothing.")
+
+    for retired, replacement in sorted(SUPERSEDED.items()):
+        assert retired not in replacement, (
+            f"SUPERSEDED maps {retired!r} onto a replacement that still contains "
+            f"it, so the retirement never happened: {replacement!r}")
+        assert live(replacement), (
+            f"the sentence that replaced {retired!r} is on neither surface: "
+            f"{replacement!r}. Either the copy was lost, or the retirement was "
+            f"undone — both are the drift this file exists to catch.")
 
 
 # ══ the guards ══════════════════════════════════════════════════════════════
