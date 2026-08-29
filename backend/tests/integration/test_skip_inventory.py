@@ -67,6 +67,13 @@ SKIP_SITES = {
                    "days of a month, on neither for the other ~27"),
     ("test_export_bundle.py", "not REAL_VERIFIER.exists()"): (
         NEITHER, "verifier/ is in the same checkout on both — four sites"),
+    ("test_export_paging.py", "not REAL_VERIFIER.exists()"): (
+        NEITHER, "as above, for #271's paged export — eleven sites. These shell "
+                 "out to the REAL verifier rather than importing it, because "
+                 "what they prove is that a customer holding N page files and "
+                 "one command gets `chain intact`, and the exit code is half of "
+                 "that claim. If verifier/ ever stops being in this checkout "
+                 "they skip, and the disposition below is what says so out loud"),
     ("test_optional_integrations.py", "os.environ.get('GEMINI_API_KEY')"): (
         BOTH, "no live provider key is set in CI or locally, by design"),
     ("test_optional_integrations.py", "os.environ.get('OPENAI_API_KEY')"): (
@@ -86,7 +93,10 @@ SKIP_SITES = {
 }
 
 #: The count each key stands for, where one expression appears more than once.
-_EXPECTED_OCCURRENCES = {("test_export_bundle.py", "not REAL_VERIFIER.exists()"): 4}
+_EXPECTED_OCCURRENCES = {
+    ("test_export_bundle.py", "not REAL_VERIFIER.exists()"): 4,
+    ("test_export_paging.py", "not REAL_VERIFIER.exists()"): 11,
+}
 
 
 def _skip_sites() -> list[tuple[str, str]]:
