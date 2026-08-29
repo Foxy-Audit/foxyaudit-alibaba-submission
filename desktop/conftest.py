@@ -198,6 +198,100 @@ def drain_posted_events():
         app.processEvents()
 
 
+#: What `no_clipboard` hands every test in place of the machine's clipboard.
+#: Named so a failure reads `_LocalClipboard`, which is the whole diagnosis.
+class _LocalClipboard:
+    """`QClipboard`, minus the operating system.
+
+    Only what this tree actually calls: `setText` and `text`. Anything else a
+    future call site needs (`setMimeData`, `clear`, the signals) is absent on
+    purpose — an `AttributeError` naming the missing method is a better failure
+    than a stub that silently accepts it and proves nothing.
+
+    The type contract is PyQt6's, MEASURED rather than assumed, because a stub
+    that is stricter than the real thing fails correct product code and one that
+    is looser hides a bug:
+
+        setText("x")   -> "x"
+        setText(None)  -> ""          (PyQt6 maps None onto a null QString)
+        setText(5)     -> TypeError   (and bytes, and list, and everything else)
+    """
+
+    def __init__(self):
+        self._text = ""
+
+    def setText(self, text, mode=None):
+        if text is not None and not isinstance(text, str):
+            raise TypeError(
+                "setText(self, text: Optional[str], mode: QClipboard.Mode = "
+                "QClipboard.Mode.Clipboard): argument 1 has unexpected type "
+                f"'{type(text).__name__}'")
+        self._text = text or ""
+
+    def text(self, mode=None) -> str:
+        return self._text
+
+
+@pytest.fixture(autouse=True)
+def no_clipboard(monkeypatch):
+    """No desktop test may read or write the CLIPBOARD OF THE MACHINE IT RUNS ON.
+
+    ⚠ REGISTER #281, AND THERE IS NO POLLUTER. `test_p3_orgid_stepup` does
+    `QApplication.clipboard().setText("untouched")` and reads back `''` — on
+    Windows, in the full suite, never alone. It was filed as an ordering bug:
+    something earlier leaves the clipboard dirty. **No test does.** The Windows
+    clipboard is not this process's to own, and the failure is a collision with
+    whatever else is running on the box:
+
+        QClipboard::setText -> OleSetClipboard -> CLIPBRD_E_CANT_OPEN
+          (another process has it open) -> Qt DROPS its local copy, so `text()`
+          falls through to OleGetClipboard and returns the REAL clipboard —
+          `''` when it is empty.
+
+    Measured three ways on this tree at `50afee9`:
+
+        full suite, deterministic order, twice   the test PASSED both times
+        a second process holding it open 3 s     `setText` reads back `''`,
+          (`user32.OpenClipboard(NULL)`)           on demand, every time
+        a probe after each of the 967 tests,     the clipboard broke and then
+          twice                                    recovered mid-run, at a
+                                                   DIFFERENT test each time —
+                                                   once inside a file that sorts
+                                                   AFTER the failing one, which
+                                                   no polluter could manage
+
+    The third row settles it. A test that leaves shared state dirty breaks at the
+    SAME point every run and stays broken until something resets it; this opens
+    and closes a window of a couple of tests wherever the other process happened
+    to land. Windows-only because the offscreen QPA plugin CI runs under keeps
+    clipboard data in-process and arbitrates with nobody.
+
+    ⚠ SO THE SHARED STATE IS NOT RESTORABLE, AND THE FIX CANNOT BE A RESET.
+    No fixture can restore what another process owns. The seam is the one
+    `no_egress` above uses for the network, for the same reason: a unit suite
+    must not depend on a resource the whole machine shares — and must not STOMP
+    one either. This suite was overwriting the developer's real clipboard five
+    times a run.
+
+    ⚠ NOT A SKIP, AND NOT A LOOSENED ASSERTION. Every guard in
+    `test_p3_orgid_stepup` still drives the real product method and still reads
+    back what that method wrote; only the operating system is out of the loop.
+    `test_clipboard_isolation.py` re-breaks this fixture from four directions.
+
+    Patched on `QGuiApplication`, which is where PyQt6 defines `clipboard`
+    (`"clipboard" in QApplication.__dict__` is False), so a `QGuiApplication`
+    call site cannot slip past it. ONE instance per test, not one per call:
+    `clipboard()` is called separately to write and to read, and a fresh object
+    each time would make every read return `""` and every guard here vacuous.
+    Per-test rather than per-session so one test's copy can never satisfy
+    another's assertion — the hazard `test_p3_orgid_stepup.fresh` exists for.
+    """
+    from PyQt6.QtGui import QGuiApplication
+    board = _LocalClipboard()
+    monkeypatch.setattr(QGuiApplication, "clipboard", staticmethod(lambda: board))
+    return board
+
+
 #: Every worker set `DashboardWindow` tracks. Named here rather than spelled out
 #: at each call site so a new one cannot be added to `closeEvent` and forgotten
 #: by the tests that wait on it.
