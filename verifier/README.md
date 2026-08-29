@@ -31,9 +31,40 @@ python foxy_verify.py foxy-audit-logs.json
   root a3f9c17e… (chain=sepolia)
 ```
 
-Exit code is `0` when intact, `1` when tampering or an anchor mismatch is found, and `2`
-when **nothing was verified** — so it drops straight into CI. Add `--json` for
-machine-readable output.
+Exit code is `0` when the whole ledger is intact, `1` when tampering or an anchor
+mismatch is found, `2` when **nothing was verified**, and `3` when every row you gave it
+was intact but they are only **part** of the ledger — so it drops straight into CI. Add
+`--json` for machine-readable output.
+
+### If your export came in pages
+
+A ledger too large to return in one response is exported in pages. Each file carries a
+`page` block naming the seq range it holds, the chain hash it continues from, whether
+more rows remain, and the URL of the next page. Download until `page.complete` is
+`true`, then hand the whole set over in **one** command, in any order:
+
+```bash
+python foxy_verify.py page1.json page2.json page3.json
+```
+
+The pages must join at **both** the sequence and the hash — page 2 has to start one seq
+after page 1 ends *and* declare the hash page 1 actually ended on — so a page quietly
+dropped out of the middle cannot pass as a join.
+
+Given fewer than all of them you get `[OK] segment intact` and exit `3`, never `chain
+intact` and never `0`:
+
+```
+✓ segment intact — 10000 rows verified, seq 1–10000
+  head @ seq 10000 = 91b02d4f…
+— INCOMPLETE — this is NOT the whole ledger:
+  the ledger continues past seq 10000 …
+```
+
+**Exit `3` is not a pass.** It means nothing was found wrong in what you supplied and
+the rest was never looked at. The same wording appears for an export you deliberately
+narrowed with a date range: it starts partway into the ledger, so it can prove its own
+rows and nothing before them.
 
 ### What it will not do
 

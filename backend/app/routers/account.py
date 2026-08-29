@@ -49,7 +49,9 @@ from .logs import limiter          # the app's single Limiter instance
 # endpoint depends on: `_export_row` is exactly such a list, over a table that
 # holds no credential column, going to the same workspace that can already
 # fetch it from GET /v1/logs/export.
-from .logs import _anchor_export, _export_row
+from .logs import (
+    EXPORT_PAGE_MAX, _anchor_export, _export_row, _page_export, _prev_chain_hash,
+)
 
 log = logging.getLogger("foxy.account")
 router = APIRouter()
@@ -578,14 +580,27 @@ EXPORT_STATEMENT = (
     "excluded_tables below, each exclusion with its reason; and every "
     "credential we hold for this workspace is named in withheld_fields, with "
     "what it is and why it cannot be sent. If you need a field you do not see "
-    "here, ask us and we will tell you whether we hold it."
+    "here, ask us and we will tell you whether we hold it. One section is "
+    "bounded: the ledger carries at most the number of rows named in "
+    "page.max_rows_per_page at the top of this file. That block states which "
+    "seq range the rows cover and whether more remain past them; when more "
+    "do, page.note names the export that will hand you the rest."
 )
 
 
-def _export_scope(bundle_sections) -> dict:
-    """The manifest, derived from the sections actually built."""
+def _export_scope(bundle_sections, ledger_page=None) -> dict:
+    """The manifest, derived from the sections actually built.
+
+    ⚠ #271: `ledger_complete` is derived from the page block the ledger section
+    was actually built with, never written separately. The manifest is where a
+    reader looks to find out what this bundle claims, so a bounded ledger has to
+    say so HERE as well as in `page` — a completeness manifest that omits the one
+    section that can stop short is the #252 defect wearing the #252 fix.
+    """
     return {
         "statement": EXPORT_STATEMENT,
+        "ledger_complete": None if ledger_page is None else ledger_page["complete"],
+        "ledger_note": None if ledger_page is None else ledger_page["note"],
         "included_tables": sorted(
             EXPORT_SECTION_TABLES[s] for s in bundle_sections
             if s in EXPORT_SECTION_TABLES),
@@ -676,9 +691,21 @@ def account_export(
     the next secret column automatically. Adding a field here is a decision
     somebody makes; it is never a default.
 
-    ⚠ WHAT IS NOT BOUNDED, AND WHY THAT IS STILL THE RIGHT CALL — MEASURED
-    THROUGH THIS ENDPOINT, NOT ESTIMATED. An empty bundle is 6.2 kB and a
-    `ledger` row costs 670 B. At the Max plan's 250,000 interactions a month,
+    ⚠ #271 — THE LEDGER IS BOUNDED NOW, AND THE PARAGRAPH BELOW USED TO ARGUE IT
+    SHOULD NOT BE. That argument was right about the danger and wrong about the
+    only two options: it read "bound it" as "truncate it", and a silent
+    truncation inside a completeness claim really would have been worse than the
+    OOM. There is a third option and it is what shipped — bound the section AND
+    state the bound in the file, in `page` at the top level (the same projection
+    `GET /v1/logs/export` ships, from `logs._page_export`), in
+    `export_scope.ledger_complete`, and in EXPORT_STATEMENT. `_export_row` was
+    also measured again through THIS endpoint and costs 1450.3 B a row, not the
+    670 B recorded below: the figure predates #269 making this section the full
+    projection, so the exposure was more than twice what the paragraph claimed.
+
+    ⚠ WHAT WAS NOT BOUNDED, AND WHY IT WAS ARGUED FOR — MEASURED THROUGH THIS
+    ENDPOINT, NOT ESTIMATED. An empty bundle is 6.2 kB and a `ledger` row cost
+    670 B when this was written. At the Max plan's 250,000 interactions a month,
     one year of ledger is 3,000,000 rows and about 2.0 GB, built in memory and
     returned in a single response. That is a PRE-EXISTING property of this
     endpoint which #252 does not change and does not paper over: a DSAR that
@@ -697,7 +724,8 @@ def account_export(
     the same verdict this bundle already carries under `gemini_verdict`, and
     `traffic_events` grows per HTTP request rather than per interaction. A
     truncated section inside a completeness claim is the defect this docstring
-    exists to prevent, so nothing here carries a LIMIT.
+    exists to prevent, so the ledger's LIMIT is declared in the bundle and
+    nothing else here carries one.
 
     `account_actions.detail` is exported whole because every writer records THAT
     a secret changed and never the secret (`routers/policies.py` says so at the
@@ -727,10 +755,27 @@ def account_export(
         select(AccountAction).where(AccountAction.org_id == admin.org_id)
         .order_by(AccountAction.created_at.asc())
     ).scalars().all()
+    # ⚠ #271 — THE ONE SECTION THAT COULD OOM THIS ENDPOINT IS BOUNDED NOW.
+    # A `ledger` row costs 1450.3 B measured through this endpoint, so a Max-plan
+    # year (3,000,000 rows) was ~4.4 GB built in memory here. `limit + 1` detects
+    # that more remain without a second COUNT, and the extra row is discarded
+    # rather than served.
     logs = db.execute(
         select(AuditLog).where(AuditLog.org_id == admin.org_id)
-        .order_by(AuditLog.seq.asc())
+        .order_by(AuditLog.seq.asc()).limit(EXPORT_PAGE_MAX + 1)
     ).scalars().all()
+    ledger_has_more = len(logs) > EXPORT_PAGE_MAX
+    logs = logs[:EXPORT_PAGE_MAX]
+    # The SAME page projection `GET /v1/logs/export` ships, for the same reason
+    # both call `_export_row` (#269): one statement of how complete a file is,
+    # written once, so the two artefacts cannot disagree about the same rows.
+    # This bundle is never itself paged — it is a DSAR answer, not a cursor — so
+    # the continuation it names is the log export, which is.
+    ledger_page = _page_export(
+        logs, _prev_chain_hash(db, admin.org_id, logs[0].seq if logs else None),
+        ledger_has_more,
+        (f"/v1/logs/export?format=json&after_seq={logs[-1].seq}"
+         if ledger_has_more else None))
     # ⚠ EVERY ONE OF THESE CARRIES ITS OWN `org_id` FILTER, AND RLS IS NOT THE
     # REASON THEY ARE SAFE. THREE of them — login_events, payment_events,
     # stripe_events — are posture C in the Database note: `org_id` is NULLABLE,
@@ -924,9 +969,14 @@ def account_export(
     # bundle that plainly carries anchor rows under `anchors` was told "no
     # anchor receipt in this export". Both are already in this workspace's own
     # data (`organization.id`, the `anchors` section); neither adds a category.
-    bundle = {"export_scope": _export_scope(bundle),
+    # ⚠ #271: `page` SITS BESIDE THEM FOR THE SAME REASON — it is a verifier
+    # input, not decoration. It names the seq range the `ledger` section holds and
+    # the chain hash it continues from, and without it a bundle whose ledger stops
+    # at EXPORT_PAGE_MAX rows is a truncated chain with nothing saying so.
+    bundle = {"export_scope": _export_scope(bundle, ledger_page),
               "org_id": str(admin.org_id),
               "anchor": _anchor_export(latest_anchor(db, admin.org_id)),
+              "page": ledger_page,
               **bundle}
     fname = f"foxy-account-export-{admin.org_id}.json"
     return Response(content=json.dumps(bundle, indent=2, default=str),

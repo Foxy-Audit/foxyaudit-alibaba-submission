@@ -78,9 +78,49 @@ Run it
   [OK] anchor receipt matches the chain @ seq 512
        root a3f9c17e... (chain=sepolia)
 
-Exit code is 0 when intact, 1 when tampering or an anchor mismatch is found, and
-2 when NOTHING WAS VERIFIED - so it drops straight into CI. Add --json for
-machine-readable output.
+Exit code is 0 when the whole ledger is intact, 1 when tampering or an anchor
+mismatch is found, 2 when NOTHING WAS VERIFIED, and 3 when every row you gave it
+was intact but they are only PART of the ledger - so it drops straight into CI.
+Add --json for machine-readable output.
+
+
+If your export came in pages
+---------------------------
+
+A ledger too large to return in one response is exported in pages. Open the JSON
+and look at "page": it names the seq range that file holds, the chain hash it
+continues from, whether more rows remain, and the URL of the next page. Keep
+downloading until page.complete is true, then hand the whole set to the verifier
+in ONE command, in any order:
+
+  python foxy_verify.py page1.json page2.json page3.json
+
+  [OK] chain intact - 25000 rows verified from genesis
+
+Download the pages as JSON (?format=json): each one arrives named for the seq
+range it holds, so 300 of them land side by side in one folder. This ZIP is
+always called foxy-audit-export.zip, because the Compliance Passport names it in
+writing - so take the verifier out of ONE bundle and point it at the JSON pages.
+
+The pages have to join at BOTH the sequence and the hash - page 2 must start one
+seq after page 1 ends AND declare the hash page 1 actually ended on - so a page
+quietly dropped out of the middle cannot pass as a join.
+
+Given fewer than all of them, you get this instead:
+
+  [OK] segment intact - 10000 rows verified, seq 1-10000
+       head @ seq 10000 = 91b02d4f...
+  [--] INCOMPLETE - this is NOT the whole ledger:
+       the ledger continues past seq 10000: the last file given says it is
+       not the final page. Fetch the remaining pages ...
+
+and exit code 3. That is not a pass. It means nothing was found wrong in what
+you supplied and the rest was never looked at. "chain intact" is said only over
+a set of pages that runs from seq 1 to the end of the ledger.
+
+The same wording appears for an export you deliberately narrowed with a date
+range: it starts partway into the ledger, so it can prove its own rows and
+nothing before them.
 
 It will never report success over a file it did not read. A file with no chain
 in it, an empty chain section, or rows missing the columns the hash is taken

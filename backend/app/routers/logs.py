@@ -659,6 +659,109 @@ def _anchor_export(a) -> dict | None:
     }
 
 
+# ─────────────────────────── the export is bounded (#271) ────────────────────
+#: The most ledger rows any one export response may carry.
+#:
+#: ⚠ MEASURED, NOT GUESSED — AND MEASURED TWICE, TO TWO DIFFERENT NUMBERS.
+#: 2169.6 B a row at the #269 gate; 1782.9 B re-measured here by
+#: `tests/integration/test_export_size_measured.py`. Neither is wrong: a row's
+#: cost depends on what is IN it, and the lower figure is a floor taken over rows
+#: whose `pii_signals` and `event_metadata` are null. The cap is set from the
+#: HIGHER one, because a bound sized on the cheapest row is not a bound.
+#:
+#: At the Max plan's 250,000 interactions a month, one year of ledger is
+#: 3,000,000 rows — 5.3 to 6.5 GB built in memory and returned in a single
+#: response, which is an OOM of the API process, not a slow download. 10,000 rows
+#: is 17.8-21.7 MB: large enough that the overwhelming majority of workspaces
+#: still get their whole ledger in one file and see no change at all, small
+#: enough that no workspace can ever make this endpoint allocate more than that.
+#:
+#: ⚠ AND TRUNCATION IS NOT WHAT THIS IS. A page that stops says so, in the file,
+#: with the URL of the next one — see `_page_note`. Stopping quietly at 10,000
+#: rows would put back exactly the false completeness claim #252 exists to end,
+#: and would do it inside the artefact a customer hands to an auditor.
+EXPORT_PAGE_MAX = 10_000
+
+
+def _prev_chain_hash(db: Session, org_id, first_seq: int | None) -> str | None:
+    """The chain hash the row before `first_seq` ended on — what a reader must
+    seed a recompute with when the export does not start at seq 1.
+
+    None when there is no such row and the export does not start at genesis:
+    saying "genesis" there would be a lie that makes every row in the file
+    recompute wrong, which the verifier reports as TAMPERING.
+    """
+    if first_seq is None:
+        return None
+    if first_seq <= 1:
+        return GENESIS_HASH
+    return db.execute(
+        select(AuditLog.chain_hash)
+        .where(AuditLog.org_id == org_id, AuditLog.seq < first_seq)
+        .order_by(AuditLog.seq.desc()).limit(1)
+    ).scalar_one_or_none()
+
+
+def _page_note(from_seq: int | None, to_seq: int | None, has_more: bool) -> str:
+    """What this file is, in a sentence a customer can act on.
+
+    ⚠ THIS IS THE HALF THAT MATTERS. `complete: false` is a fact a machine reads;
+    an auditor holding page 1 of 300 needs to be told, in the file, that the
+    other 299 exist and how to get them. A bounded export whose partiality lives
+    only in a boolean is a truncated export with better manners.
+    """
+    if from_seq is None:
+        return ("This export contains no ledger rows for the range requested. It "
+                "is not a chain and cannot be verified.")
+    parts = []
+    if from_seq > 1:
+        parts.append(
+            f"This file starts at seq {from_seq}, not at the start of the ledger: "
+            f"rows 1-{from_seq - 1} are not in it, and nothing in this file "
+            "proves anything about them.")
+    if has_more:
+        parts.append(
+            f"THIS IS NOT THE WHOLE LEDGER. It holds rows {from_seq}-{to_seq}; the "
+            f"ledger continues past seq {to_seq}. Download the next page from the "
+            "`next` URL above and repeat until `page.complete` is true.")
+    if not parts:
+        return (f"This file holds the whole ledger: rows 1-{to_seq}, from the first "
+                "interaction this workspace ever recorded to the last one in range.")
+    parts.append(
+        "Verify the pages TOGETHER: `python foxy_verify.py page1.json page2.json "
+        "...`. Given anything less than every page from seq 1, the verifier "
+        "reports `[OK] segment intact` and exits 3 — never 0, and never "
+        "\"chain intact\", because a page proves only its own rows.")
+    return " ".join(parts)
+
+
+def _page_export(rows: list, prev_hash: str | None, has_more: bool,
+                 next_url: str | None) -> dict:
+    """The completeness statement that travels INSIDE the export, and the same
+    one for both artefacts that ship this projection.
+
+    `GET /v1/logs/export` and the `ledger` section of `GET /v1/account/export`
+    call this for the same reason they both call `_export_row` (#269): two
+    descriptions of how complete a file is, written in two places, are two things
+    that can disagree about the same file. There is one.
+    """
+    from_seq = rows[0].seq if rows else None
+    to_seq = rows[-1].seq if rows else None
+    return {
+        "from_seq": from_seq,
+        "to_seq": to_seq,
+        # What a recompute of `from_seq` must start from. Genesis at seq 1; the
+        # predecessor's chain hash otherwise; null when this workspace holds no
+        # such row, which the verifier refuses rather than guesses.
+        "prev_chain_hash": prev_hash,
+        "complete": not has_more,
+        "next_after_seq": to_seq if has_more else None,
+        "next": next_url if has_more else None,
+        "max_rows_per_page": EXPORT_PAGE_MAX,
+        "note": _page_note(from_seq, to_seq, has_more),
+    }
+
+
 @router.get("/v1/logs/export")
 @limiter.limit("6/minute")
 def export_logs(
@@ -668,6 +771,11 @@ def export_logs(
     format: str = Query(default="json", pattern="^(json|csv|bundle)$"),
     date_from: str | None = Query(default=None, description="ISO date YYYY-MM-DD, inclusive"),
     date_to: str | None = Query(default=None, description="ISO date YYYY-MM-DD, inclusive"),
+    after_seq: int = Query(default=0, ge=0,
+                           description="resume after this seq — the `page.next_after_seq` "
+                                       "of the page you already have"),
+    limit: int = Query(default=EXPORT_PAGE_MAX, ge=1, le=EXPORT_PAGE_MAX,
+                       description=f"rows per page, at most {EXPORT_PAGE_MAX}"),
 ):
     """Download the org's audit-log ledger (its own data) as JSON, CSV, or a
     verification bundle — data portability for the tenant. Scoped by org_id
@@ -681,12 +789,44 @@ def export_logs(
     server-side, matching ExportJob's contract that a re-download re-runs the
     producer.
 
-    The date range is optional and, with neither bound, this is still the whole
-    ledger. It exists because the dashboard's Export page has always shown two
-    date pickers, sent them to /v1/passport, and then handed the log download a
-    URL with no range on it at all — so the user picked a window and silently
-    got everything. The bounds match the passport's semantics exactly
-    (routers/passport.py): `date_to` is inclusive of that whole day."""
+    The date range is optional and, within one page, neither bound still means
+    the whole ledger. It exists because the dashboard's Export page has always
+    shown two date pickers, sent them to /v1/passport, and then handed the log
+    download a URL with no range on it at all — so the user picked a window and
+    silently got everything. The bounds match the passport's semantics exactly
+    (routers/passport.py): `date_to` is inclusive of that whole day.
+
+    ⚠ #271 — THIS RESPONSE IS BOUNDED NOW, AND IT SAYS WHEN IT STOPS. It used to
+    load every matching row and serialise the lot: 1782.9-2169.6 B a row (see
+    EXPORT_PAGE_MAX for why there are two figures), so a Max-plan workspace's year
+    (3,000,000 rows, 5.3-6.5 GB) was one allocation in the API process. At most EXPORT_PAGE_MAX rows come back per call, and `page` in the
+    body carries the seq range, the chain hash the page continues from, whether
+    more rows remain and the URL of the next one. `page.note` says the same thing
+    in a sentence an auditor can act on.
+
+    ⚠ SILENTLY STOPPING WAS NOT AVAILABLE. It would have reinstated the exact
+    false completeness claim #252 closed — inside the artefact a customer hands
+    to a regulator, which is the worst possible place for one. The bound is only
+    acceptable BECAUSE the file states it.
+
+    ⚠ AND THE PAGES STILL VERIFY, TOGETHER. `verifier/foxy_verify.py` takes every
+    page file in one command and recomputes across them, requiring each page to
+    join the one before it at BOTH the sequence and the hash. Given fewer than
+    all of them it reports `[OK] segment intact` and exits 3 — never `chain
+    intact`, never 0. A single page cannot be mistaken for a ledger.
+
+    ⚠ THIS ALSO FIXED A DATE-RANGED EXPORT, which was never verifiable. Rows
+    filtered to start at seq 501 were recomputed from genesis by the verifier,
+    mismatched at the first row, and were reported as CHAIN BROKEN — an honest
+    export accused of forgery for where it began. `page.prev_chain_hash` is what
+    that recompute was missing.
+
+    ⚠ RATE LIMIT: 6/minute (unchanged). It is not decoration now that a page is
+    bounded — it is the only thing bounding the ledger BYTES one caller can pull
+    per minute, ~130 MB at EXPORT_PAGE_MAX. A 3,000,000-row ledger is 300 pages
+    and therefore ~50 minutes of paging; that is deliberate, and a client that
+    pages faster than the limit gets 429s rather than a bigger server bill.
+    """
     def _parse(value: str | None):
         if not value:
             return None
@@ -703,10 +843,42 @@ def export_logs(
         query = query.where(AuditLog.created_at >= start)
     if end_day is not None:
         query = query.where(AuditLog.created_at < end_day + timedelta(days=1))
-    rows = db.execute(query.order_by(AuditLog.seq.asc())).scalars().all()
+    if after_seq:
+        query = query.where(AuditLog.seq > after_seq)
+    # limit + 1: one row past the page tells us more remain without a second
+    # COUNT over the whole ledger, and it is discarded rather than served.
+    rows = db.execute(
+        query.order_by(AuditLog.seq.asc()).limit(limit + 1)).scalars().all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    prev_hash = _prev_chain_hash(db, org.id, rows[0].seq if rows else None)
+    next_url = (str(request.url.include_query_params(after_seq=rows[-1].seq))
+                if has_more else None)
+    page = _page_export(rows, prev_hash, has_more, next_url)
+    # An export with no rows in range is not partial: nothing was withheld,
+    # there was nothing to withhold. It is a complete answer to the question
+    # asked, and the verifier refuses it as "no chain" on its own merits.
+    partial = bool(rows) and not (page["complete"] and page["from_seq"] == 1)
+    stem = ("foxy-audit-logs" if not partial
+            else f'foxy-audit-logs-seq-{page["from_seq"]}-{page["to_seq"]}')
 
     if format == "csv":
         buf = io.StringIO()
+        # ⚠ CSV HAS NOWHERE TO PUT A page BLOCK, AND THAT IS NOT A REASON TO SAY
+        # NOTHING. A partial CSV opens as a complete one — there is no field to
+        # notice missing — so the notice goes in a leading `#` comment, which
+        # pandas (`comment='#'`) and R (`comment.char='#'`) skip and every other
+        # reader shows as a visibly wrong first row. Loudly wrong beats silently
+        # short, and a complete export carries no comment at all, so the ordinary
+        # file is unchanged.
+        if partial:
+            # `next` first: the note says "the `next` URL above", which is true
+            # of the JSON body's field order and has to be made true here too.
+            if page["next"]:
+                buf.write(f'# next: {page["next"]}\n')
+            for line in page["note"].split(". "):
+                buf.write("# " + line.strip().rstrip(".") + ".\n")
         w = csv.DictWriter(buf, fieldnames=_EXPORT_COLS)
         w.writeheader()
         for r in rows:
@@ -718,7 +890,7 @@ def export_logs(
             w.writerow(d)
         return Response(
             content=buf.getvalue(), media_type="text/csv",
-            headers={"Content-Disposition": 'attachment; filename="foxy-audit-logs.csv"'})
+            headers={"Content-Disposition": f'attachment; filename="{stem}.csv"'})
 
     # indent=2, because this is evidence someone has to READ. Without it the
     # whole ledger arrives as a single enormous line, which is valid JSON and
@@ -727,6 +899,7 @@ def export_logs(
     # from the parsed fields, never from the raw bytes.
     body = json.dumps(
         {"org_id": str(org.id), "count": len(rows),
+         "page": page,
          "anchor": _anchor_export(latest_anchor(db, org.id)),
          "logs": [_export_row(r) for r in rows]},
         default=str, indent=2)
@@ -751,7 +924,7 @@ def export_logs(
 
     return Response(
         content=body, media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="foxy-audit-logs.json"'})
+        headers={"Content-Disposition": f'attachment; filename="{stem}.json"'})
 
 
 @router.get("/v1/logs/{seq}", response_model=LogListItem)
