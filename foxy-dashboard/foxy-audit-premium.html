@@ -1695,6 +1695,72 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
 #sysEmpty .empty-d{max-width:64ch;}
 @media(max-width:620px){ .syspurpose{max-width:none;} }
 
+
+/* ════════ #228 · GRADING PROVENANCE — who graded a record, off the record ═══
+   The backend phase made every verdict name its author (`graded_by`: ai · rules
+   · host_enforcement · none) and put two counters on GET /v1/stats. This is the
+   half a customer sees. Four rules shape it; the first three are R4's, applied
+   to a different kind of fact.
+
+   1 · NO STATUS HUE ON AN AUTHOR. Who graded a record is not a claim about how
+   the record behaved. Painting `ai` with --safe-bg would say "clean" about an
+   authorship, and painting `rules` with --warn-bg would say the deterministic
+   engine is a degraded judge. It is not one: it reasons over hashes, counts and
+   policy tags and does not evaluate semantic content — a different KIND of
+   evidence, not a worse grade. So the chips are two steps of the ONE neutral
+   ramp and no status token appears in this block.
+
+   2 · AI AND RULES ARE PEERS, AND THAT IS THE DESIGN, NOT AN OVERSIGHT. Both
+   take the same step, because a difference in weight between them would encode
+   a ranking the product does not make. What the step actually tracks is whether
+   the ledger NAMES an author at all: --ink2 where it does (ai, rules, host
+   enforcement), --muted where it does not (`none`, and a row written before this
+   workspace stored the grader). The WORD carries which author; the ramp carries
+   only named / not named.
+
+   3 · MEASURED BOTH WAYS BY CONSTRUCTION. Each chip is one token pair used in
+   both directions — the fill is the ink of the pair and the ink is the fill — so
+   ink-on-chip and chip-on-card are THE SAME NUMBER and neither can drift without
+   the other. Against --surf: named 10.45 dark / 7.81 light · unnamed 5.18 /
+   5.33. --warn-bg was never a candidate here: 1.89:1 on the light card, the trap
+   R4 already paid for.
+
+   4 · THE FIGURES ARE A LEDGER EXTRACT, NOT A STAT ROW. Mono figures on the same
+   2px dashed rule the ledger's own rows carry, because this card is a reading of
+   the record and the settings card above it is not. Four big numbers in tiles
+   would have dressed a statement up as a dashboard metric. */
+.gchip{
+  display:inline-flex;align-items:center;border-radius:20px;padding:2px 8px;
+  font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.4px;
+  text-transform:uppercase;border:var(--border-sm);white-space:nowrap;
+  background:var(--ink2);color:var(--surf);
+}
+.gchip.unnamed{background:var(--muted);color:var(--surf);}
+
+/* Capped, because a figure a thousand pixels from its own label is not a
+   reading — it is a search. The measure holds the pair together on a wide
+   card and simply does not bite below it: the mix is already narrower than
+   this on every phone width. */
+.gmix{margin:0;font-size:11.5px;max-width:46ch;}
+.gmix .gline{display:flex;align-items:baseline;justify-content:space-between;
+  gap:14px;padding:8px 0;border-bottom:2px dashed var(--line);}
+.gmix .gline:last-child{border-bottom:none;}
+.gmix dt{color:var(--ink2);}
+.gmix dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-weight:700;color:var(--ink);white-space:nowrap;}
+/* The denominator, so the three lines above it can be read as a share of
+   something. Set quieter than them because it is not itself an attribution. */
+.gmix .gline.gtotal dt,.gmix .gline.gtotal dd{color:var(--muted);}
+.gsay{font-size:11px;color:var(--muted);line-height:1.75;margin:13px 0 0;max-width:68ch;}
+.gsay b{color:var(--ink);font-weight:800;}
+.gxref{font-family:var(--mono);font-size:10px;line-height:1.7;color:var(--muted);
+  border-top:var(--border-sm);margin-top:13px;padding-top:11px;}
+/* The per-record line in the ledger's detail panel. It wraps rather than pushing
+   the panel wide: the chip and the sentence beside it are one statement and must
+   not end up on opposite sides of a scrollbar. */
+.gby{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.gby .gwhy{color:var(--muted);}
+
 /* ════════ G9 · #154 · Windows High Contrast (forced-colors: active) ═════════
    MEASURED, NOT PORTED. The admin console's block was read for its principle —
    "give every control that draws its own edge an edge that survives" — and for
@@ -2300,7 +2366,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
       <div class="clay pad" style="margin-top:16px;">
         <div class="stitle"><div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none"><path d="M3 7h18M7 7v11a2 2 0 002 2h6a2 2 0 002-2V7M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div><div class="txt">AI Judge — provider &amp; keys</div></div></div>
         <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:6px;">
-          Choose which model grades your events and whose API key pays for those model calls. The Judge is content-blind either way — it receives hashes, token counts and policy tags, <b>never your prompts or responses</b>.
+          Choose which model grades your events when one can be reached, and whose API key pays for those model calls. Where none can be reached, the deterministic rules engine grades the event instead and the record says so — the card below counts both. The Judge is content-blind either way — it receives hashes, token counts and policy tags, <b>never your prompts or responses</b>.
         </div>
         <div class="g2" style="gap:clamp(12px,1.8vw,16px);">
           <div>
@@ -2349,6 +2415,25 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
             </div>
           </div>
         </div>
+      </div>
+      <!-- #228 · WHAT ACTUALLY GRADED THEM — read from the record, sitting
+           directly beneath the settings that say what SHOULD grade them. The
+           adjacency is the point: a configured provider is an intention, and on
+           a workspace with no reachable key every verdict was produced by the
+           deterministic rules while the card above it still named a model.
+
+           ⚠ THE VOCABULARY IS THE COMPLIANCE PASSPORT'S, DELIBERATELY. Its §01
+           "What graded these events" says the same three things in the same
+           words, and a customer holding both documents must not find two
+           stories. If either is reworded, reword both. -->
+      <div class="clay pad" style="margin-top:16px;" id="polGradedCard">
+        <div class="stitle"><div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 3.5h8.3L18.8 8v12.5H6.2z"/><path d="M9.4 14.1l2.1 2.2 4.1-4.7"/></svg></span></div><div class="txt">What graded these events</div></div></div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:6px;">
+          Counted from your own records, not from the settings above. Which judge grades is a per-workspace choice, so a provider configured here is not evidence that any particular event reached a model.
+        </div>
+        <dl class="gmix" id="polGradedMix"><div class="gline"><dt>Reading your records…</dt><dd>—</dd></div></dl>
+        <p class="gsay" id="polGradedNote"></p>
+        <div class="gxref">Your Compliance Passport carries this same statement for the period it covers.</div>
       </div>
       <div class="clay pad" style="margin-top:16px;position:relative;overflow:hidden;">
         <svg class="dglyph" aria-hidden="true" style="opacity:.10;"><use href="#dg-lock"/></svg>
@@ -3014,8 +3099,9 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
           <div class="clay pad">
           <div class="stitle"><div class="stitle-l"><div class="ic-chip sm"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg></span></div><div class="txt">After grading — what happens to a verdict</div></div></div>
           <div style="font-size:11px;color:var(--muted);line-height:1.55;margin-bottom:10px;">
-            Applies <strong>after</strong> the AI judge has graded an interaction that already
-            happened. It does not stop anything from reaching a model.
+            Applies <strong>after</strong> an interaction that already happened has been graded —
+            by the AI judge, or by the deterministic rules where no judge could be reached. It
+            does not stop anything from reaching a model.
           </div>
           <div class="flabel" style="margin-top:0;">verdict handling</div>
           <!-- P4 · Labels renamed, VALUES DELIBERATELY UNCHANGED. `block|flag|monitor`
@@ -3057,7 +3143,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
                thing it was written to forbid. -->
           <select id="polEnforcement"><option value="block">Urgent — escalate on breach</option><option value="flag">Notify — raise an alert</option><option value="monitor">Silent — record only</option></select>
           <div id="polEnforcementNote" style="font-size:11px;color:var(--muted);line-height:1.55;margin-top:10px;">
-            How loudly a breach is treated <strong>once the judge has already found
+            How loudly a breach is treated <strong>once grading has already found
             one</strong> — never whether it happens.
             <ul style="margin:8px 0 0 16px;padding:0;">
               <li style="margin-bottom:5px;"><strong>Urgent</strong> — a breach emails you
@@ -3486,7 +3572,7 @@ async function runVerify(){
     const d=await r.json();
     if(!d.found){ panel('bad','✕','Not in this ledger','No record with this chain hash exists in your workspace.'); return; }
     if(!d.verified){ panel('bad','⚠','Tampering detected','Verification failed at seq '+d.seq+' — this record no longer matches what was recorded.'); return; }
-    if(d.status==='breach'){ panel('warn','✓','Record intact · policy breach','Seq '+d.seq+' — the record is untampered, but the Judge flagged a policy breach.'); return; }
+    if(d.status==='breach'){ panel('warn','✓','Record intact · policy breach','Seq '+d.seq+' — the record is untampered, and it is recorded as a policy breach. Open it in the ledger to see what graded it.'); return; }
     panel('ok','✓','Record verified — untampered','Seq '+d.seq+' · verdict '+(d.status||'clean')+'.');
   }catch(e){ panel('bad','✕','Could not reach the server','Please try again in a moment.'); }
 }
@@ -4517,6 +4603,59 @@ async function loadLoginHistory(scope){
       +'<span class="vfy-age">· checked <span data-ago="'+iso+'">'+vfyAgo(entry.at)+'</span></span>';
   }
 
+  /* #228 · WHO GRADED THIS RECORD — read off the record, never inferred.
+
+     Five outcomes, and the last two are the ones this exists for:
+
+       ai                a model answered and its answer is the grade
+       rules             the deterministic metadata engine graded it. NOT a
+                         degraded judge: it reasons over hashes, counts and
+                         policy tags, which is a different kind of evidence, and
+                         the sentence beside the chip says exactly that
+       host_enforcement  your own host decided it; there was no model response
+       none              nothing graded it — no evaluator ran, or one answered
+                         incoherently and the answer was refused
+       absent            THE LEDGER DOES NOT SAY. Rows written before this
+                         workspace stored the grader carry no value, nothing
+                         backfills them (it would break their verdict_hash as
+                         well as being made-up), and rendering "not graded by an
+                         AI" over one would be exactly the invention this field
+                         exists to end. It says what is true: nothing is recorded,
+                         and nothing here infers anything.
+
+     A row that is not graded yet gets NO line at all. "Pending" is already on
+     the line above, and "not recorded" over it would describe a fact that has
+     simply not happened yet — the same reason the Passport counts authorship
+     over graded rows only. */
+  function gradedByLine(it){
+    if(it.grading_status!=='graded')return '';
+    const gv=it.gemini_verdict||{};
+    const by=gv.graded_by;
+    let chip,why;
+    if(by==='ai'){
+      chip='<span class="gchip">AI model</span>';
+      why=gv.judge_provider
+        ? 'a model answered — '+esc(String(gv.judge_provider))+', named on this record'
+        : 'a model answered and its answer is the grade';
+    }else if(by==='rules'){
+      chip='<span class="gchip">deterministic rules</span>';
+      why='hashes, counts and policy tags — no model produced this verdict';
+    }else if(by==='host_enforcement'){
+      chip='<span class="gchip">host enforcement</span>';
+      why='your own host decided this before any model was called';
+    }else if(by==='none'){
+      chip='<span class="gchip unnamed">nothing</span>';
+      why='no grader produced a verdict for this record';
+    }else{
+      chip='<span class="gchip unnamed">not recorded</span>';
+      why='the ledger holds no grader for this record, and nothing here infers one';
+    }
+    const un=gv.evaluator_unavailable_reason;
+    if(un)why+=' · no model was reached: '+esc(String(un));
+    return '<div class="gby"><b>graded by:</b> '+chip+'<span class="gwhy">'+why+'</span></div>';
+  }
+  window.foxGradedBy=gradedByLine;
+
   function ledgerRow(it){
     const {v,cls}=verdictOf(it);
     const t=new Date(it.created_at).toLocaleTimeString();
@@ -4532,6 +4671,7 @@ async function loadLoginHistory(scope){
       +'<div><b>reason:</b> '+reason+'</div>'
       +'<div><b>PII signals:</b> '+pii+'</div>'
       +'<div><b>grading:</b> '+esc(it.grading_status)+(it.agent?' · agent '+esc(it.agent):'')+' · policy '+esc(it.policy_tag||'—')+'</div>'
+      +gradedByLine(it)
       +'<div style="font-family:var(--mono);font-size:9.5px;word-break:break-all;margin-top:4px;"><b>chain hash:</b> '+esc(it.chain_hash)+'</div>'
       +'<div class="vfy-row">'+(remembered
           ? vfyMark(remembered,false)+vfyBtn(it.chain_hash,'re-check')
@@ -6536,6 +6676,101 @@ async function loadLoginHistory(scope){
 })();
 </script>
 
+<!-- ═══ #228 · what graded these events — the record's own answer, on Policy ═══
+     Three numbers out of ONE GET /v1/stats response (ai_graded, rules_graded,
+     grading.graded), so they can never come from three different row sets.
+
+     ⚠ THE THIRD LINE IS NOT "GRADER NOT RECORDED", and that difference is the
+     care this card exists to take. The remainder is graded - ai - rules, and it
+     holds THREE unlike things: host-enforcement rows, which DO name their author
+     (graded_by="host_enforcement"); rows nothing graded; and rows written before
+     this workspace stored the grader. Calling that sum "not recorded" would be
+     false about the first of the three. The Compliance Passport CAN count "not
+     recorded" exactly, because it walks the rows; this route does not expose it,
+     so this card does not claim it — the line says what it is, neither of the
+     two above, and the sentence underneath enumerates what is in it.
+
+     ⚠ AND THE MIXED CASE IS ITS OWN BRANCH, not a fall-through. A workspace
+     holding both kinds is the realistic one — a key added mid-life, or per-tenant
+     BYOK — and it is the only shape that reads as a self-contradiction if it
+     borrows either extreme's wording. #273 is the same sentence in the Passport
+     going untested for exactly that case. -->
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var api=function(p){return fetch(p,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});};
+  var num=function(n){return Number(n||0).toLocaleString();};
+
+  function line(label,value,cls){
+    return '<div class="gline'+(cls?' '+cls:'')+'"><dt>'+label+'</dt><dd>'+value+'</dd></div>';
+  }
+
+  /* One sentence per shape. The keyless and AI-only branches are the two that
+     may state something absolute; the mixed one must not, and the empty one has
+     nothing to attribute at all. */
+  function say(ai,rules,neither,graded){
+    var out='';
+    if(!graded){
+      return 'Nothing has been graded yet, so there is nothing here to attribute. '
+        + 'These lines fill in as your SDK reports interactions and they are graded.';
+    }
+    if(rules&&!ai){
+      out='<b>No event in this workspace has been graded by an AI model.</b> Every verdict behind '
+        + 'these figures came from the deterministic metadata rules, which reason over hashes, '
+        + 'counts and policy tags and state plainly that semantic content was not evaluated. That '
+        + 'is a statement about what happened, not a fault: grading falls back to those rules '
+        + 'whenever no judge could be reached for this workspace.';
+    }else if(rules&&ai){
+      out='Events graded by deterministic rules were graded without any model being called — those '
+        + 'rules reason over hashes, counts and policy tags and do not evaluate semantic content. '
+        + 'The two lines are counted apart because they are different kinds of evidence, and a '
+        + 'clean rate built on both should be read knowing the mix.';
+    }else if(ai){
+      out='Every graded event here was graded by a model, named on the event' + "'" + 's own verdict.';
+    }
+    if(neither){
+      out+=(out?' ':'')
+        + 'Records in neither line carry neither statement: your host' + "'" + 's own enforcement '
+        + 'decided some of them, nothing graded others, and the rest were recorded before this '
+        + 'workspace began storing the grader. Nothing here infers a grader for any of them.';
+    }
+    return out;
+  }
+
+  window.foxGradingMix=function(s){
+    var mix=$('polGradedMix'), note=$('polGradedNote');
+    if(!mix||!note)return;
+    if(!s){
+      /* "We could not ask" and "nothing graded these" are different facts. The
+         first is never rendered as the second. */
+      mix.innerHTML=line('Could not read your records','—');
+      note.textContent='This card could not reach the server, so it is saying nothing about what '
+        +'graded your events. Reload to try again.';
+      return;
+    }
+    var g=s.grading||{};
+    var ai=Math.max(0,+s.ai_graded||0),
+        rules=Math.max(0,+s.rules_graded||0),
+        graded=Math.max(0,+((g&&g.graded))||0),
+        neither=Math.max(0,graded-ai-rules);
+    var html=line('Graded by an AI model',num(ai))
+            +line('Graded by deterministic rules only',num(rules));
+    if(neither)html+=line('Neither of the above',num(neither));
+    html+=line('Graded records in total',num(graded),'gtotal');
+    mix.innerHTML=html;
+    note.innerHTML=say(ai,rules,neither,graded);
+  };
+
+  window.loadGradingMix=async function(){
+    if(!$('polGradedMix'))return;
+    window.foxGradingMix(await api('/v1/stats'));
+  };
+  var _go=window.go;
+  if(typeof _go==='function'){ window.go=function(p,e){ _go(p,e); if(p==='policy')window.loadGradingMix(); }; }
+  if(document.readyState!=='loading')window.loadGradingMix(); else document.addEventListener('DOMContentLoaded',window.loadGradingMix);
+})();
+</script>
+
 <!-- ═══ P11 · Export — file-type flow (records a job) + export history ═══ -->
 <script>
 (function(){
@@ -8360,7 +8595,7 @@ async function loadLoginHistory(scope){
      b:'Recompute the whole chain from an export. Change a single record and the maths stops matching — that is the tamper-evidence.'},
     {sel:['.dock-item[data-page="policy"]','.mnbtn[data-page="policy"]'],
      t:'Decide what counts as a breach',
-     b:'PHI, PII, secrets, prompt injection. The AI judge grades each event against the rules you set here.'},
+     b:'PHI, PII, secrets, prompt injection. Every event is graded against the rules you set here — by the AI judge where one can be reached, by the deterministic rules where none can. Each record names which.'},
     {sel:['.dock-item[data-page="export"]'],
      t:'Take the evidence with you',
      b:'A Compliance Passport, or the raw ledger as CSV or JSON — in a form your auditor can verify without asking us for anything.'},
