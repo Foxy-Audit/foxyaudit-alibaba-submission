@@ -22,6 +22,7 @@ one cannot go stale without a test going red.
 """
 
 import json
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -155,6 +156,92 @@ def test_the_statement_claims_only_what_the_lists_can_back(admin):
         "the part of it that was false")
     assert "ask us" in statement, (
         "a subject who wants a field the bundle does not carry is given no route")
+
+
+#: The two properties `EXPORT_STATEMENT` calls exact, verbatim. Everything else
+#: in the sentence is the editorial half, and the editorial half is what #270 is
+#: about. Named here rather than matched loosely so a reword of a BACKED clause
+#: fails as "the clause moved" instead of silently widening what may be claimed.
+_BACKED_CLAUSES = (
+    "every table we operate that carries an org_id is named in exactly one of "
+    "included_tables or excluded_tables below, each exclusion with its reason",
+    "every credential we hold for this workspace is named in withheld_fields, "
+    "with what it is and why it cannot be sent",
+)
+
+#: Absolute-completeness language. `every <n words> column|field|record|row`
+#: rather than a bare `every`, because both backed clauses legitimately begin
+#: with "every" and the statement's own disclaimer says "every database column".
+_ABSOLUTE = re.compile(
+    r"\b(?:complete(?:ness|ly)?|entire|everything"
+    r"|all\s+(?:of\s+)?(?:your\s+|the\s+|this\s+)?data"
+    r"|every(?:\s+\w+){0,2}\s+(?:column|field|record|row)s?)\b",
+    re.I)
+
+#: A completeness word is allowed when it is being DENIED — "not a dump of every
+#: database column" is the sentence's most load-bearing clause. Deliberately
+#: narrow: a bare "no" is not here, because "there is no limit; this is complete"
+#: would exempt itself through it.
+_NEGATORS = ("not ", "never ", "n't ")
+_WINDOW = 40
+
+
+def _unbacked_absolutes(statement: str) -> list[str]:
+    """Completeness claims made OUTSIDE the two backed clauses and not denied."""
+    editorial = statement
+    for clause in _BACKED_CLAUSES:
+        editorial = editorial.replace(clause, " ")
+    found = []
+    for hit in _ABSOLUTE.finditer(editorial):
+        before = editorial[max(0, hit.start() - _WINDOW):hit.start()].lower()
+        if not any(neg in before for neg in _NEGATORS):
+            found.append(editorial[max(0, hit.start() - 30):hit.end() + 20].strip())
+    return found
+
+
+def test_the_statement_adds_no_completeness_claim_beside_the_two_it_can_back(admin):
+    """#270 — the guard above proves the two backed claims are PRESENT. It never
+    stopped a third, false one being added beside them.
+
+    MAIN prefixed `EXPORT_STATEMENT` with *"a complete dump of every column we
+    hold"* and all 21 tests passed. The sentence is what a regulator reads in a
+    subject-access response, and #252b was entirely about a version of it that
+    was false by 101 columns; "defensible because the rest is labelled editorial"
+    is not a property anyone reading it can see.
+
+    ⚠ The two backed clauses are REMOVED before scanning, not exempted by
+    pattern, because both legitimately open with "every" — and the statement's
+    own "not a dump of every database column" is the disclaimer that made the
+    sentence true, so a completeness word that is being DENIED is allowed and a
+    bare one is not.
+
+    The detector proves itself on both sides before it judges the real sentence:
+    a guard that cannot fire is the same green as a guard with nothing to find.
+    """
+    from app.routers.account import EXPORT_STATEMENT
+
+    for clause in _BACKED_CLAUSES:
+        assert clause in EXPORT_STATEMENT, (
+            f"a backed clause was reworded and this guard can no longer tell it "
+            f"from an editorial one — update _BACKED_CLAUSES:\n  {clause!r}")
+
+    assert _unbacked_absolutes("this bundle is a complete dump of every column "
+                               "we hold"), (
+        "the detector does not fire on the exact overclaim #270 was filed for")
+    assert not _unbacked_absolutes("not a dump of every database column"), (
+        "the detector fires on a DENIED completeness claim, which would force "
+        "the disclaimer out of the sentence")
+
+    _, client = admin
+    statement = _bundle(client)["export_scope"]["statement"]
+    assert statement == EXPORT_STATEMENT, "the shipped statement is not the constant"
+
+    overclaims = _unbacked_absolutes(statement)
+    assert not overclaims, (
+        f"the statement now claims completeness it cannot back: {overclaims}. "
+        f"The lists back exactly two properties; anything absolute said beside "
+        f"them is a claim to a regulator with nothing behind it. Say what the "
+        f"code does or say it cannot tell — never a third thing.")
 
 
 # ══ the secrets ════════════════════════════════════════════════════════════

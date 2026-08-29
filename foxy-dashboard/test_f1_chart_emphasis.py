@@ -441,8 +441,24 @@ _STACK_TOUCHING = {
 def test_the_two_bands_that_touch_are_the_ones_being_measured() -> None:
     """The pair above is only worth guarding while those two tones really do
     stack. Read from the shipped call, so a re-tone of the timeline re-aims this
-    file rather than leaving it measuring a pair nobody draws."""
-    call = SRC[SRC.index("window.foxChart('threatTimeline',{type:'stacked'"):][:600]
+    file rather than leaving it measuring a pair nobody draws.
+
+    ⚠ ANCHORED ON THE CALL THAT DRAWS, NOT ON THE FIRST ONE IN THE FILE.
+    `loadTimeline` makes two `foxChart('threatTimeline', ...)` calls: an
+    empty-state one with `series:[]`, and the real one with `labels:days.map`.
+    This used to take the first match plus a fixed 600-character window, which
+    happened to reach past the empty call into the real one — so lengthening the
+    empty state's copy by 43 characters (#278) pushed the tones out of the window
+    and reddened a correct implementation. It was also the register's guard-lie
+    #3 waiting to happen in the other direction: anchored to a position rather
+    than a name, it would have read tones off the empty call had any ever
+    appeared there. It now names the call it means.
+    """
+    marker = "window.foxChart('threatTimeline',{type:'stacked',height:180,labels:days.map"
+    assert SRC.count(marker) == 1, (
+        "expected exactly one call that DRAWS the timeline, found %d — this "
+        "guard has to read the one that carries the series" % SRC.count(marker))
+    call = SRC[SRC.index(marker):][:600]
     assert "tone:'bad'" in call and "tone:'warn'" in call, call[:300]
 
 

@@ -86,9 +86,22 @@ def record_result(data: dict | None, *, status: int | None = None) -> tuple[str,
                 f"Verification failed at seq {seq} — this record no longer "
                 f"matches what was recorded.")
     if data.get("status") == "breach":
+        # #278 · NOT "the Judge flagged". `/v1/verify/hash/{h}` returns
+        # found / seq / chain_hash / policy_tag / agent / verified / status /
+        # created_at and NO `graded_by`, so this panel cannot know whether the AI
+        # judge or the deterministic rules graded the row. The web stopped naming a
+        # grader here at #228 rather than guessing one, and this is that sentence.
+        #
+        # ⚠ DELIBERATELY ONE CLAUSE SHORTER THAN THE WEB'S, and the divergence is
+        # the honest half. The web ends "Open it in the ledger to see what graded
+        # it." because its ledger renders a provenance chip from `graded_by`. This
+        # console's ledger reads no such field (`graded_by` appears nowhere in
+        # `desktop/`), so that sentence would send a customer to look for something
+        # that is not there. `foxy-dashboard/test_desktop_parity.py` pins the CLAIM
+        # both surfaces must share, not the sentence, for exactly this reason.
         return ("warn", "Record intact · policy breach",
-                f"Seq {seq} — the record is untampered, but the Judge flagged "
-                f"a policy breach.")
+                f"Seq {seq} — the record is untampered, and it is recorded as a "
+                f"policy breach.")
     return ("ok", "Record verified — untampered",
             f"Seq {seq} · verdict {data.get('status') or 'clean'}.")
 

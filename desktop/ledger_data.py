@@ -233,7 +233,9 @@ def verify_quick(data: dict | None) -> tuple[str, str]:
     """(message, tone) for the one-line quick check (web lookupLedgerHash).
 
     Same six-way decision as the full panel, said in one line — and the same
-    refusal to collapse "intact but the Judge flagged it" into a failure.
+    refusal to collapse "intact, and recorded as a policy breach" into a
+    failure. It names no grader, for the reason `verify_data.record_result`
+    spells out: the endpoint behind this line does not return one.
     """
     if not isinstance(data, dict):
         return "could not reach the server", "bad"

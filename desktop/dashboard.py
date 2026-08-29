@@ -2296,8 +2296,8 @@ class DashboardWindow(QWidget):
             empty=chart_empty(
                 panel_state.resolve(True, bool(total)),
                 empty_title="Nothing graded yet",
-                empty_body="Grading status appears once the Judge processes "
-                           "interactions."))
+                empty_body="Grading status appears once the AI judge or the "
+                           "deterministic rules grade an interaction."))
         # Both gauges match the site exactly (html:2231, 2236): same labels,
         # same scales, same untoned fox fill. The desktop previously showed a
         # rounded percent, and inverted the verdict gauge so it emptied as
@@ -2566,8 +2566,8 @@ class DashboardWindow(QWidget):
             empty=chart_empty(
                 resolve(ok, bool(labels)),
                 empty_title="No breaches in this window",
-                empty_body="Breaches appear here as the Judge flags "
-                           "interactions."))
+                empty_body="Breaches appear here as the AI judge or the "
+                           "deterministic rules flag an interaction."))
 
     def _on_by_agent(self, data, ok: bool = True):
         rows = td.agent_rows(data) if ok else []
@@ -2665,8 +2665,8 @@ class DashboardWindow(QWidget):
             empty=chart_empty(
                 resolve(ok, bool(total)),
                 empty_title="Nothing graded yet",
-                empty_body="Verdicts appear once the Judge processes "
-                           "interactions."))
+                empty_body="Verdicts appear once the AI judge or the "
+                           "deterministic rules grade an interaction."))
 
     def _on_ledger_volume(self, data, ok: bool = True):
         rows = ld.volume_rows(data) if ok else []

@@ -2662,7 +2662,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
       <div class="pg-head"><span class="pg-wm" aria-hidden="true">ACCESS</span>
         <div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn ghost sm" onclick="regenerateKey()" data-tip="Issues a new key and revokes the current one. Confirmed by a code emailed to you.">Rotate API key</button>
+          <button class="btn ghost sm" onclick="regenerateKey()" data-tip="Revokes every active key in this workspace and issues one new key in their place. Confirmed by a code emailed to you.">Rotate API key</button>
           <button class="btn pri sm" onclick="createKey()">+ new key</button>
         </div>
       </div>
@@ -5428,23 +5428,46 @@ async function loadLoginHistory(scope){
   window.regenerateKey=async function(){
     // §9.3 · was confirm() + prompt(): the browser's own dialogs, unstyled, and
     // giving no room to say what the action actually does.
+    // #264 · and what it does is NOT what the old copy said. This button reaches
+    // `regenerate_confirm` -> `_rotate_org_key`, which revokes EVERY active key in
+    // the org and repoints the legacy hash; the machine endpoint (`/v1/keys/rotate`,
+    // #249) is the one that replaces only the presented credential. Saying "the
+    // current one" here understated the estate this dialog burns, and #249's fix
+    // deliberately leans on this being where a human makes that choice informed.
+    //
+    // The count is `status==='active'`, which is `_rotate_org_key`'s own predicate
+    // and NOT the KPI tile's (that one also drops expired keys). An empty list
+    // cannot tell "no keys" from "the fetch failed", so the sentence then drops the
+    // number and keeps the scope rather than printing a 0 that would read as
+    // "nothing will break".
+    const active=_keysAll.filter(k=>k.status==='active').length;
+    const scope=(_keysAll.length&&active)
+      ? (active===1 ? 'the 1 active key in this workspace is revoked'
+                    : 'all '+active+' active keys in this workspace are revoked')
+      : 'every active key in this workspace is revoked';
     const go=await foxConfirm({
-      title:'Rotate your API key?',
-      body:'A new key is issued and the current one stops working immediately. '
-          +'Anything still using the old key will start failing until you update it. '
+      title:'Revoke every API key in this workspace?',
+      body:'This is not a single-key rotation: '+scope+', and one new key is issued. '
+          +'Every service, environment and teammate still using an old key will '
+          +'start failing until you give them the new one. '
           +'We email you a 6-digit code to confirm.',
       confirm:'Send the code', danger:true});
     if(!go)return;
     try{
       const r=await api('/v1/keys/regenerate/request',{method:'POST'});
       if(!r.ok){ toast('Could not send code — '+await errText(r)); return; }
+      // The point of commitment. 'Rotate key' named a single-key act on the
+      // button that performs the org-wide one.
       const code=await foxConfirm({
-        title:'Enter the code', body:'We emailed a 6-digit code to your account address.',
-        input:{placeholder:'123456', inputmode:'numeric', maxlength:6}, confirm:'Rotate key', danger:true});
+        title:'Enter the code',
+        body:'We emailed a 6-digit code to your account address. Entering it revokes '
+            +'every active key in this workspace and issues one new key.',
+        input:{placeholder:'123456', inputmode:'numeric', maxlength:6},
+        confirm:'Revoke all keys', danger:true});
       if(code===null||!String(code).trim())return;
       const r2=await api('/v1/keys/regenerate/confirm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:String(code).trim()})});
       if(!r2.ok){ toast('Regeneration failed — '+await errText(r2)); return; }
-      const k=await r2.json(); revealSecret('Regenerated API key', k.api_key); toast('API key regenerated'); loadKeys();
+      const k=await r2.json(); revealSecret('Regenerated API key', k.api_key); toast('Keys rotated — every previous key is now invalid'); loadKeys();
     }catch(e){ toast('Could not reach the server'); }
   };
   window.revokeKeyApi=async function(id){
@@ -6337,7 +6360,7 @@ async function loadLoginHistory(scope){
     const host=$('threatTimeline'); if(!host||!window.foxChart)return;
     let d; try{ d=await (await api('/v1/analytics/timeseries?days='+_threatDays)).json(); }catch(e){ d=null; }
     const days=(d&&Array.isArray(d.days))?d.days:[];
-    if(!days.length){ window.foxChart('threatTimeline',{type:'stacked',height:180,labels:[],series:[],empty:{title:'No breaches in this window',desc:'Breaches appear here as the Judge flags interactions.'}}); return; }
+    if(!days.length){ window.foxChart('threatTimeline',{type:'stacked',height:180,labels:[],series:[],empty:{title:'No breaches in this window',desc:'Breaches appear here as the AI judge or the deterministic rules flag an interaction.'}}); return; }
     // The thresholds ride on the series names because the engine now renders the
     // legend from them; they are the same numbers the hand-written legend carried.
     window.foxChart('threatTimeline',{type:'stacked',height:180,labels:days.map(x=>x.day),series:[
@@ -6576,7 +6599,7 @@ async function loadLoginHistory(scope){
       var parts=[{label:'Graded',value:+g.graded||0,tone:'ok'},{label:'Pending',value:+g.pending||0,tone:'warn'},{label:'In progress',value:+g.in_progress||0,tone:'blue'},{label:'Failed',value:+g.failed||0,tone:'bad'}];
       var total=parts.reduce(function(a,x){return a+x.value;},0);
       if(total>0)window.foxChart('gradingDonut',{type:'donut',height:170,center:total,data:parts,aria:'grading status distribution'});
-      else gd.innerHTML='<div class="empty" style="padding:18px 0;"><div class="empty-t">Nothing graded yet</div><div class="empty-d">Grading status appears once the Judge processes interactions.</div></div>';
+      else gd.innerHTML='<div class="empty" style="padding:18px 0;"><div class="empty-t">Nothing graded yet</div><div class="empty-d">Grading status appears once the AI judge or the deterministic rules grade an interaction.</div></div>';
     }
   };
   var _go=window.go;
@@ -6668,7 +6691,7 @@ async function loadLoginHistory(scope){
     var dn=$('ledgerVerdictDonut');
     if(dn&&window.foxChart){
       if(total>0)window.foxChart('ledgerVerdictDonut',{type:'donut',height:150,center:total,data:parts,aria:'verdict distribution'});
-      else dn.innerHTML='<div class="empty" style="padding:16px 0;"><div class="empty-t">Nothing graded yet</div><div class="empty-d">Verdicts appear once the Judge processes interactions.</div></div>';
+      else dn.innerHTML='<div class="empty" style="padding:16px 0;"><div class="empty-t">Nothing graded yet</div><div class="empty-d">Verdicts appear once the AI judge or the deterministic rules grade an interaction.</div></div>';
     }
   };
   var _go=window.go;

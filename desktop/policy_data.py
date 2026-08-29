@@ -401,7 +401,21 @@ PRIVACY_NOTE = (
     "each interaction — never the raw prompt or response.")
 PRIVACY_URL = "https://foxyaudit.tech/privacy.html"
 
+#: The web's judge-card blurb (html:2369), which #228 rewrote and this copy did
+#: not follow. "Choose which model grades your events" was the same absolute
+#: claim as the verify panel's: on a workspace whose provider key cannot be
+#: reached, `judge_routing` falls through to the deterministic rules and no model
+#: grades anything.
+#:
+#: ⚠ ONE CLAUSE SHORT OF THE WEB'S, for the reason `verify_data.record_result`
+#: gives. The web ends that sentence "— the card below counts both", pointing at
+#: its "What graded these events" card. This console has no such card, so the
+#: pointer would name something that is not on the screen. The CLAIM is pinned
+#: across both surfaces by `foxy-dashboard/test_desktop_parity.py`; the pointer
+#: is not, because only one surface can back it.
 JUDGE_BLURB = (
-    "Choose which model grades your events and whose API key pays for those "
-    "model calls. The Judge is content-blind either way — it receives hashes, "
-    "token counts and policy tags, never your prompts or responses.")
+    "Choose which model grades your events when one can be reached, and whose "
+    "API key pays for those model calls. Where none can be reached, the "
+    "deterministic rules engine grades the event instead and the record says "
+    "so. The Judge is content-blind either way — it receives hashes, token "
+    "counts and policy tags, never your prompts or responses.")

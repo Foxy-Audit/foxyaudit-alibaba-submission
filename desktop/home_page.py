@@ -487,8 +487,8 @@ class HomeSections:
         o.grading_donut = FoxChart(
             "donut", height=170, legend=True,
             empty={"title": "Nothing graded yet",
-                   "desc": "Grading status appears once the Judge processes "
-                           "interactions."})
+                   "desc": "Grading status appears once the AI judge or the "
+                           "deterministic rules grade an interaction."})
         donut_lay.addWidget(o.grading_donut)
         row.addWidget(donut_card, 2)
         return row
