@@ -277,6 +277,13 @@ def test_a_missing_middle_page_cannot_pass_as_a_join(make_org, client, tmp_path)
     assert code == 1, f"a ledger missing rows 3-4 exited {code}:\n{out}"
     assert "chain intact" not in out and "segment intact" not in out, out
     assert "do not join" in out, out
+    # ⚠ AND IT MUST SAY WHICH FILE. Mutation C1 (drop the sequence-join check and
+    # let the hash-join check catch it instead) SURVIVED everything above: both
+    # checks refuse, both exit 1, both say "do not join". The difference is that
+    # only the sequence check names the file, and with 300 pages on an auditor's
+    # desk "which one is missing" is the whole of the answer.
+    assert names[2] in out, (
+        f"the diagnosis does not name the file that failed to join:\n{out}")
 
 
 @pytest.mark.skipif(not REAL_VERIFIER.exists(), reason="verifier/ not checked out")
@@ -495,3 +502,61 @@ def test_both_artefacts_state_completeness_through_the_same_projection():
     src = inspect.getsource(account.account_export)
     assert "_page_export(" in src, (
         "the DSAR bundle builds its page block some other way")
+
+
+# ══ the bound is in the QUERY, not only in the response ════════════════════
+
+def test_the_ledger_query_itself_carries_a_limit(make_org, client):
+    """⚠ THE ONE TEST THIS PHASE COULD NOT DO WITHOUT, AND IT TOOK A SURVIVING
+    MUTANT TO FIND. Mutation T6 deleted `.limit(limit + 1)` from the export query
+    and the ENTIRE suite still passed — 84 green — because the route slices in
+    Python afterwards, so the response bytes are identical either way. The defect
+    #271 is about is not the response: it is that the endpoint LOADS the whole
+    ledger into memory to build it. A suite that only reads responses cannot see
+    that, and every other test in this file was blind to the exact regression it
+    was written to prevent.
+
+    So this one reads the SQL. The statement that selects the ledger rows must
+    carry a LIMIT, and the bound must be the requested page size plus the one
+    extra row that detects "more remain".
+    """
+    import re
+
+    from sqlalchemy import event
+
+    from app.db import engine
+
+    seen = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if "FROM audit_logs" in statement:
+            seen.append((statement, parameters))
+
+    org = make_org()
+    _ingest(client, org, 6)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        r = client.get("/v1/logs/export?limit=2", headers=org["auth"])
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    assert r.status_code == 200
+    assert seen, "no query over audit_logs was observed at all"
+
+    limited = [(st, p) for st, p in seen if re.search(r"\bLIMIT\b", st, re.I)]
+    assert limited, (
+        "the export selected audit_logs with NO LIMIT — it is reading the whole "
+        "ledger into memory and slicing it in Python afterwards, which is exactly "
+        "the unbounded build #271 is about. Statements seen:\n"
+        + "\n".join(" | " + " ".join(st.split())[-160:] for st, _ in seen))
+
+    bounds = set()
+    for st, params in limited:
+        if isinstance(params, dict):
+            bounds |= {v for v in params.values() if isinstance(v, int)}
+        elif isinstance(params, (list, tuple)):
+            bounds |= {v for v in params if isinstance(v, int)}
+    assert 3 in bounds, (
+        f"the ledger query's LIMIT is not the requested page size + 1 (expected 3 "
+        f"for ?limit=2); integer bind parameters seen were {sorted(bounds)}. A "
+        f"limit not derived from the page size does not bound the page.")
