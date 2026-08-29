@@ -26,7 +26,7 @@ from .. import billing_state, export_bundle, policy_engine
 from ..anchor import latest_anchor
 from ..auth import require_org, resolve_org
 from ..chain import (
-    CHAIN_VERSION_VERDICT_V4, GENESIS_HASH, compute_chain_hash, verdict_hash_hex,
+    CHAIN_VERSION_UTC_V5, GENESIS_HASH, compute_chain_hash, verdict_hash_hex,
 )
 from ..config import get_settings
 from ..db import get_db
@@ -436,7 +436,14 @@ def ingest_batch(
             local_verdict = policy_engine.evaluate(meta, policy_config)
         local_verdict = local_verdict.model_dump()
         row_verdict_hash = verdict_hash_hex(local_verdict)
-        chain_version = CHAIN_VERSION_VERDICT_V4
+        # EVERY new row is V5, not only the rows that carry `occurred_at`.
+        # `chain_version` is itself hashed from V3 on, so a V4 row and a V5 row
+        # with a NULL occurred_at already have different blobs — writing V4 for
+        # those would buy no byte-compatibility and would leave the ledger
+        # interleaving two versions on a rule ('V5 iff occurred_at is set') that
+        # is invisible in the row and enforced by nothing. One rule instead:
+        # rows written from here on are V5. (#272)
+        chain_version = CHAIN_VERSION_UTC_V5
         chain_hash = compute_chain_hash(
             org_id=org.id,
             prompt_hash=item.prompt_hash,

@@ -292,7 +292,11 @@ def _run_verifier(workdir: pathlib.Path):
 def test_the_bundle_carries_what_a_v4_row_needs_to_be_verified(make_org, client, tmp_path):
     """From chain_version 4 the verdict hash IS hashed material. If the export
     omitted it, a stranger could not recompute the row at all — so this asserts
-    the columns are really in the archive, not just in the database."""
+    the columns are really in the archive, not just in the database.
+
+    The version asserted below is whatever ingest currently stamps (5 since
+    #272); the V4 requirement it is named for holds at 4 AND ABOVE.
+    """
     import json as _json
 
     org = make_org()
@@ -300,7 +304,7 @@ def test_the_bundle_carries_what_a_v4_row_needs_to_be_verified(make_org, client,
     data = _json.loads((_unzip(client, org, tmp_path, "v4") / "foxy-audit-logs.json")
                        .read_text(encoding="utf-8"))
     for row in data["logs"]:
-        assert row["chain_version"] == 4
+        assert row["chain_version"] == 5
         assert len(row["verdict_hash"]) == 64
         assert row["local_verdict"]["decision"] == "clean"
         # The AI grade is a separate, unbound field and is still ungraded here.

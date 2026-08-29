@@ -65,9 +65,14 @@ This fetches the anchor transaction named in the export and confirms it emitted
 
 ## The recipe (versioned, and frozen at every version)
 
-Each row declares its own `chain_version`, and each version is frozen forever — a new
-one may only **add** a field, never reorder or remove one, so an export downloaded years
-ago still verifies with today's script.
+Each row declares its own `chain_version`, and **each version is frozen forever**: what
+a version hashes, and how, never changes once rows have been written under it. An
+export downloaded years ago still verifies with today's script.
+
+Versions 2, 3 and 4 each only **added** a field, which left every earlier payload
+byte-identical for free. Version 5 is the first that changes how an **existing** field
+(`occurred_at`) is rendered — so it is frozen the same way, one version at a time, and
+a row written at version 4 still hashes exactly as version 4 always did.
 
 `chain_version` 1 — the original pipe-delimited blob:
 
@@ -90,6 +95,21 @@ Hₙ = SHA256( json(event, sort_keys, separators=(",",":"), ensure_ascii)  +  H�
 | 2 | `event_id`, `client_id`, `client_seq`, `event_type`, `commitment_alg`, `event_metadata`, `pii_signals`, `occurred_at` |
 | 3 | `chain_version` itself (so the declared format is bound too) |
 | 4 | `verdict_hash` — `SHA256(json(local_verdict))` |
+| 5 | *adds nothing.* `occurred_at` is hashed as the **UTC instant** it names — `datetime.fromisoformat(...)`, converted to UTC, re-rendered with `isoformat()` — instead of as the text it arrived in. A value with no offset is read as UTC; a value that is not a timestamp at all is hashed unchanged |
+
+### Why version 5 exists
+
+PostgreSQL returns a `timestamptz` rendered in the reading session's own timezone, so
+up to version 4 the same stored row hashed differently depending on where it was read.
+An untouched export could be reported as **tampered** for no reason but the reader's
+clock. From version 5 the instant is hashed rather than its rendering, so re-rendering
+`occurred_at` into another offset — which is all a different session does — cannot
+change the result. Moving the moment still breaks the chain, as it must.
+
+⚠ If you reimplement this: parse the timestamp back into an instant and re-render it,
+rather than editing the text. The two sides of this recipe start from different things
+— the writer holds a `datetime`, you hold the string it was exported as — and only a
+parse makes them agree.
 
 Only the SHA-256 hashes of your prompt/response are ever stored — never the raw text.
 

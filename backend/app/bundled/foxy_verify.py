@@ -22,6 +22,11 @@ Input: the JSON you download from the dashboard (GET /v1/logs/export?format=json
                   "verdict_hash": "…", "local_verdict": {…} }, … ]
     }
 
+From chain_version 5 `occurred_at` is hashed as the UTC INSTANT it names, so an
+export verifies identically whatever timezone the exporting database session sat
+in. Versions 1-4 hash that timestamp's text verbatim, offset included, and are
+left exactly as they were written: a historical row must keep verifying forever.
+
 The GDPR bundle from GET /v1/account/export carries the same rows under "ledger"
 instead of "logs"; both keys are read. ANY OTHER FILE IS REFUSED — see
 find_chain_section below for why the refusal is the point and the alias is not.
@@ -36,6 +41,7 @@ import hashlib
 import hmac
 import json
 import sys
+from datetime import datetime, timezone
 
 # ─── the chain recipe — an INDEPENDENT copy of backend/app/chain.py ───────────
 # Keep this byte-for-byte identical to the backend, INCLUDING the rule that
@@ -44,6 +50,41 @@ import sys
 # cross-checks the two on every run.
 
 GENESIS_HASH = "0" * 64
+
+
+def normalize_occurred_at(value):
+    """One canonical UTC text for one instant — the V5 rendering of `occurred_at`.
+
+    ⚠ THE TWO SIDES OF THIS RECIPE START FROM DIFFERENT THINGS. The backend
+    folds the `datetime` its database hands back; this file folds the STRING
+    that datetime was exported as, which carries whatever UTC offset the
+    exporting session's `TimeZone` rendered it in. So the string is PARSED back
+    into an instant and re-rendered, never patched textually — the two must land
+    on identical bytes from opposite starting points.
+
+    A value with no offset names no instant, and is read as UTC — the same
+    reading ingest applies before storing it.
+
+    Anything that parses as neither is folded UNCHANGED, and unchanged means the
+    original text rather than the `Z`-swapped one. Refusing it here would turn an
+    unreadable field into a hash mismatch, and this tool reports a hash mismatch
+    as TAMPERING.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            # `Z` is parsed natively only from Python 3.11; this file promises 3.9.
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00").replace("z", "+00:00"))
+        except ValueError:
+            return value
+    elif hasattr(value, "isoformat"):
+        return value.isoformat()          # a date — no instant to normalise
+    else:
+        return value
+    if dt.utcoffset() is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
 
 
 def compute_chain_hash(*, org_id, prompt_hash, response_hash, token_count,
@@ -60,7 +101,17 @@ def compute_chain_hash(*, org_id, prompt_hash, response_hash, token_count,
             "prompt_hash": prompt_hash, "response_hash": response_hash,
             "token_count": token_count, "policy_tag": policy_tag, "agent": agent,
             "pii_signals": pii_signals, "event_metadata": event_metadata,
-            "occurred_at": occurred_at, "seq": seq,
+            # ⚠ V5 IS THE ONE VERSION THAT RE-RENDERS AN EXISTING FIELD RATHER
+            # THAN ADDING ONE. V2/V3/V4 each appended a key, so every earlier
+            # payload stayed byte-identical for free; V5 changes how this line
+            # reads, so the version test lives ON the line. Below V5 the raw
+            # exported text is folded — offset and all, which is exactly why a
+            # pre-V5 row read back in a non-UTC session hashes differently from
+            # the one that was written (register #272). Those rows are frozen
+            # and keep that behaviour; from V5 the INSTANT is folded instead.
+            "occurred_at": (normalize_occurred_at(occurred_at)
+                            if chain_version >= 5 else occurred_at),
+            "seq": seq,
         }
         if chain_version >= 3:
             event["chain_version"] = chain_version
@@ -69,6 +120,7 @@ def compute_chain_hash(*, org_id, prompt_hash, response_hash, token_count,
         # verdict_hash_hex below for what that means for a reader.
         if chain_version >= 4:
             event["verdict_hash"] = verdict_hash
+        # V5 adds no key — see the `occurred_at` line above for where it bites.
         blob = json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256((blob + prev_hash).encode("utf-8")).hexdigest()
     data_blob = f"{org_id}|{prompt_hash}|{response_hash}|{token_count}|{policy_tag}|{seq}"

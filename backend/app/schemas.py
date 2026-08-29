@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -59,6 +59,31 @@ class LogIngest(BaseModel):
     commitment_alg: str = Field(default="sha256-legacy", pattern=r"^[a-z0-9-]{1,32}$")
     event_metadata: dict[str, Any] | None = None
     occurred_at: datetime | None = None
+
+    @field_validator("occurred_at")
+    @classmethod
+    def _occurred_at_names_an_instant(cls, value):
+        """A naive `occurred_at` is read as UTC, and that is now the contract.
+
+        ⚠ WITHOUT THIS, CHAIN V5 WOULD BE CORRECT AND STILL NOT HOLD. V5 folds
+        this field as the UTC instant it names — but a naive datetime names no
+        instant, and psycopg hands it to a `timestamptz` column for PostgreSQL
+        to interpret in the SESSION's `TimeZone`. So the moment hashed at ingest
+        and the moment stored would be different moments, and the row could
+        never verify again on a server whose zone is not UTC. Attaching UTC here
+        makes the two agree by construction rather than by deployment.
+
+        It also settles the idempotency comparison in `routers/logs.py`, which
+        pits this value against the aware one the database returns: a naive
+        datetime compares unequal to every aware one, so an honest retry of a
+        naive-timestamped event used to be rejected as a 409 conflict.
+
+        An offset-bearing value is left exactly as sent — it already names an
+        instant, and V5 renders it in UTC when it folds it. (#272)
+        """
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
     @field_validator("event_metadata")
     @classmethod

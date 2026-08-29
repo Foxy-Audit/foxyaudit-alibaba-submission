@@ -318,8 +318,11 @@ def test_a_row_written_before_graded_by_existed_still_verifies(make_org, client)
     `verdict_hash` / `chain_hash` recomputed the way the old code would have —
     then exported and verified by the INDEPENDENT verifier, beside a new row.
 
-    No chain version bump is needed and none is taken: `chain_version` stays 4
-    on both rows. A control tampers with a genuinely hashed field afterwards, so
+    #228 needs no chain version bump and takes none — both rows carry whatever
+    version ingest stamps (5 since #272, and the reason is unrelated: that one
+    is about how `occurred_at` is folded). What matters here is that the two
+    rows share it, so the legacy row is legacy in its VERDICT BODY and in
+    nothing else. A control tampers with a genuinely hashed field afterwards, so
     a verifier that said "ok" to everything could not pass both halves.
     """
     org = make_org()
@@ -339,7 +342,7 @@ def test_a_row_written_before_graded_by_existed_still_verifies(make_org, client)
         legacy_verdict = {k: v for k, v in row["local_verdict"].items()
                           if k not in ("graded_by", "evaluator_unavailable_reason")}
         assert "graded_by" not in legacy_verdict          # the strip really happened
-        assert row["chain_version"] == 4
+        assert row["chain_version"] == 5
         legacy_hash = chain.verdict_hash_hex(legacy_verdict)
         legacy_chain = chain.compute_chain_hash(
             org_id=oid, prompt_hash=row["prompt_hash"],
@@ -387,7 +390,7 @@ def test_a_row_written_before_graded_by_existed_still_verifies(make_org, client)
     old, new = export["logs"]
     assert "graded_by" not in old["local_verdict"]         # genuinely pre-#228
     assert new["local_verdict"]["graded_by"] == "rules"    # genuinely post
-    assert old["chain_version"] == new["chain_version"] == 4
+    assert old["chain_version"] == new["chain_version"] == 5
 
     fv = _verifier()
     result = fv.verify_export(export)

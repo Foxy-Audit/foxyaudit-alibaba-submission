@@ -67,22 +67,22 @@ def _h(s: str) -> str:
 def _session_zone_times(n):
     """`occurred_at` values expressed in the DATABASE SESSION's own timezone.
 
-    ⚠ THIS WORKS AROUND A REAL, PRE-EXISTING DEFECT, AND IT IS NOT #269.
-    Ingest hashes `occurred_at.isoformat()` of the value the CLIENT SENT, while
-    PostgreSQL returns a `timestamptz` rendered in the session's `TimeZone`. On
-    a deployment whose session zone is not UTC, an event sent as
-    `2026-08-21T10:00:00+00:00` reads back as `2026-08-21T15:00:00+05:00`, so
-    every recompute over the stored row yields a different hash and the ledger
-    reads as TAMPERED with nothing having been touched.
+    ⚠ THIS WORKED AROUND A REAL DEFECT THAT IS NOW FIXED — register #272, closed
+    by chain V5. Ingest used to hash `occurred_at.isoformat()` of the value the
+    CLIENT SENT, while PostgreSQL returns a `timestamptz` rendered in the reading
+    session's `TimeZone`. On a deployment whose session zone was not UTC, an event
+    sent as `2026-08-21T10:00:00+00:00` read back as `2026-08-21T15:00:00+05:00`,
+    so every recompute over the stored row yielded a different hash and the ledger
+    read as TAMPERED with nothing having been touched. Sending the offset the
+    session would render in made the two strings agree, which is what this helper
+    is for, and it is why the tests below could measure #269 on a machine in any
+    timezone instead of inheriting a failure that was not theirs.
 
-    Measured on the DOCUMENTED path, with this branch's `account.py` reverted to
-    origin/main: `GET /v1/logs/export` + `verifier/foxy_verify.py`, one row with
-    `occurred_at` set -> `chain hash mismatch at seq 1`; the identical row
-    without it -> `chain intact`. Filed separately. #269 neither causes it nor
-    changes it, and this helper exists so these tests measure #269 on a machine
-    in any timezone instead of inheriting that failure.
-
-    Sending the offset the session will render in makes the two strings agree.
+    From chain_version 5 the fold normalises to UTC, so the offset sent no longer
+    matters. The helper is kept because these tests are about #269 and there is no
+    reason for them to change; the fix itself is measured by
+    `test_chain_v5_occurred_at.py`, which exports under three session zones and
+    carries the V4 control that proves the failure was real.
     """
     from sqlalchemy import text as sa_text
 
@@ -201,7 +201,9 @@ def test_the_seeded_rows_actually_exercise_every_chain_bound_field(seeded):
             assert row[field] is not None, (
                 f"{field} is null on seq {n}, so removing it could not change a "
                 f"hash and the removal test would pass vacuously")
-    assert rows[0]["chain_version"] == 4, "the seed is no longer writing V4 rows"
+    assert rows[0]["chain_version"] == 5, (
+        "the seed is no longer writing the version ingest writes — this asserts\n"
+        "what routers/logs.py stamps, so it moves with every chain version")
     assert rows[0]["local_verdict"] is not None
 
 

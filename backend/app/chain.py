@@ -12,12 +12,74 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 
 GENESIS_HASH = "0" * 64
 CHAIN_VERSION_LEGACY = 1
 CHAIN_VERSION_CAPTURE_V2 = 2
 CHAIN_VERSION_POLICY_V3 = 3
 CHAIN_VERSION_VERDICT_V4 = 4
+CHAIN_VERSION_UTC_V5 = 5
+
+
+def normalize_occurred_at(value):
+    """One canonical UTC text for one instant — from a datetime OR from its ISO string.
+
+    ⚠ THE TWO IMPLEMENTATIONS OF THIS RECIPE START FROM DIFFERENT THINGS.
+    This one folds the `datetime` SQLAlchemy hands back; `verifier/foxy_verify.py`
+    folds the STRING that datetime was exported as. They must arrive at the same
+    bytes, so the string is parsed back into an instant rather than patched
+    textually — a text-level fix would agree with itself and with nothing else.
+
+    A naive datetime names no instant, so it is read as UTC. That is the same
+    reading `schemas.LogIngest` applies before the value is stored, which is what
+    keeps the moment hashed and the moment written identical.
+
+    Anything that parses as neither is folded unchanged. Refusing it here would
+    turn an unreadable field into a hash mismatch, and a hash mismatch is
+    reported to a customer as TAMPERING.
+    """
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            # `Z` is accepted natively only from 3.11; the swap is what makes the
+            # verifier's stated 3.9 floor real. An unparseable string keeps its
+            # ORIGINAL text, never the swapped one, so both sides fold the same.
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00").replace("z", "+00:00"))
+        except ValueError:
+            return value
+    elif hasattr(value, "isoformat"):
+        return value.isoformat()          # a date — no instant to normalise
+    else:
+        return value
+    if dt.utcoffset() is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _occurred_at_blob(occurred_at, chain_version: int):
+    """The text `occurred_at` contributes to the hashed event, BY VERSION.
+
+    ⚠ THIS IS THE ONE FIELD WHOSE FOLDING DIFFERS BETWEEN VERSIONS, AND IT IS
+    WHY V5 IS NOT LIKE V2, V3 OR V4. Each of those ADDED a key under a
+    `chain_version >=` guard, so every earlier payload stayed byte-identical for
+    free. V5 changes how an EXISTING key is rendered, so the version test has to
+    sit on this line. Move it and you silently rewrite history.
+
+    Below V5 the pre-V5 text is reproduced exactly: `isoformat()` for anything
+    datetime-like, the value untouched otherwise. That text carries whatever UTC
+    offset the value happened to have — and for a row read back from Postgres
+    that is the READER's session `TimeZone`, not the writer's. So the same row
+    hashed in two sessions produced two hashes and an honest ledger read as
+    tampered (register #272). Those rows are frozen and keep that behaviour.
+
+    From V5 the same INSTANT is folded, normalised to UTC, so a recompute no
+    longer depends on where the reader sits.
+    """
+    if chain_version >= CHAIN_VERSION_UTC_V5:
+        return normalize_occurred_at(occurred_at)
+    return occurred_at.isoformat() if hasattr(occurred_at, "isoformat") else occurred_at
 
 
 def verdict_hash_hex(verdict: dict | None) -> str | None:
@@ -66,7 +128,7 @@ def compute_chain_hash(
             "prompt_hash": prompt_hash, "response_hash": response_hash,
             "token_count": token_count, "policy_tag": policy_tag, "agent": agent,
             "pii_signals": pii_signals, "event_metadata": event_metadata,
-            "occurred_at": occurred_at.isoformat() if hasattr(occurred_at, "isoformat") else occurred_at,
+            "occurred_at": _occurred_at_blob(occurred_at, chain_version),
             "seq": seq,
         }
         # V3 binds the declared chain format too. Earlier V2 rows remain exactly
@@ -82,6 +144,8 @@ def compute_chain_hash(
         # V1/V2/V3 stay byte-identical, exactly as V3 did for V2.
         if chain_version >= CHAIN_VERSION_VERDICT_V4:
             event["verdict_hash"] = verdict_hash
+        # V5 adds NO key. It changes how `occurred_at` is rendered — see
+        # _occurred_at_blob, which is where the version actually bites.
         data_blob = json.dumps(event, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256((data_blob + prev_hash).encode("utf-8")).hexdigest()
     data_blob = f"{org_id}|{prompt_hash}|{response_hash}|{token_count}|{policy_tag}|{seq}"

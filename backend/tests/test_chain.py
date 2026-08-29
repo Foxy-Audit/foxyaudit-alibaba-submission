@@ -81,9 +81,15 @@ def test_agent_is_bound_into_the_hash():
 # One fixed input set, hashed at every version the product has ever written. The
 # values below were computed from the chain.py at origin/main BEFORE V4 was added
 # — they are what customers already hold in exports, not what this file happens
-# to produce today. A new version must extend the event dict, never reorder it;
-# if any of these move, every historical export stops verifying and the change is
-# a breaking one, whatever it looked like in the diff.
+# to produce today. If any of these move, every historical export stops verifying
+# and the change is a breaking one, whatever it looked like in the diff.
+#
+# ⚠ AND A NEW VERSION NO LONGER ONLY EXTENDS THE EVENT DICT. This comment used
+# to say it must, because V2, V3 and V4 each added a key and so left every
+# earlier payload byte-identical for free. V5 does not add a key: it changes how
+# `occurred_at` is RENDERED (#272). Byte-identity is therefore no longer
+# structural and has to be asserted — which is what the V5 block at the bottom
+# of this file does, with an occurred_at the normalisation can actually move.
 
 _V2_ARGS = dict(
     org_id="org-1", prompt_hash="a" * 64, response_hash="b" * 64,
@@ -94,6 +100,12 @@ _V2_ARGS = dict(
     event_metadata={"policy_snapshot_hash": "c" * 64, "request_id": "req-1"},
     pii_signals=["email"], occurred_at="2026-07-18T18:00:00+00:00",
 )
+
+#: The SAME instant as `_V2_ARGS`' occurred_at, rendered in Asia/Karachi — which
+#: is what PostgreSQL hands a reader whose session sits there. Normalising moves
+#: this text and cannot move `+00:00`, so a guard fed only the golden input is
+#: blind to the whole of V5. Measured: it was.
+_SAME_INSTANT_ELSEWHERE = "2026-07-18T23:00:00+05:00"
 
 GOLDEN = {
     1: "872eb2c206bcb995773ab1b9a43a031c6d8488761c976ce3d341921a81aa2f79",
@@ -182,3 +194,77 @@ def test_tamper_is_detected_at_that_seq():
     # it from the tampered seq 2 also diverges (tampering cascades forward).
     recomputed_seq3 = compute_chain_hash(prev_hash=recomputed_seq2, **ROWS[2])
     assert recomputed_seq3 != stored[2]
+
+
+# ── V5: the same instant, however it was rendered ────────────────────────────
+
+def test_v5_does_not_disturb_the_older_versions():
+    """⚠ THE ONE THING V5 COULD GET CATASTROPHICALLY WRONG.
+
+    V2, V3 and V4 each ADDED a key under a `chain_version >=` test, so an earlier
+    payload could not move without deleting a line. V5 changes how an EXISTING key
+    is rendered — so "V1-V4 are byte-identical" is now a claim, not a structural
+    fact, and it is asserted here two ways.
+
+    First the golden vectors still hold (above). Then, on an input the
+    normalisation CAN move: V2, V3 and V4 must still hash the timestamp's TEXT, so
+    two renderings of one instant give two hashes. That is the frozen defect
+    (#272), and freezing it is the price of not rewriting history.
+    """
+    for version in (2, 3, 4):
+        here = compute_chain_hash(chain_version=version, **_V2_ARGS)
+        there = compute_chain_hash(chain_version=version,
+                                   **dict(_V2_ARGS, occurred_at=_SAME_INSTANT_ELSEWHERE))
+        assert here != there, (
+            "V%d normalised the offset — every row ever written at that version "
+            "just changed hash" % version)
+    # V1 does not hash occurred_at at all, so it cannot move either way.
+    v1 = dict(org_id="org-1", prompt_hash="a" * 64, response_hash="b" * 64,
+              token_count=100, policy_tag="hipaa_basic", seq=1, prev_hash=GENESIS_HASH)
+    assert compute_chain_hash(**v1, occurred_at=_SAME_INSTANT_ELSEWHERE) == GOLDEN[1]
+
+
+def test_v5_folds_the_instant_not_its_rendering():
+    """The fix itself: at V5 the two renderings collapse to one hash, and a value
+    with no offset at all is read as UTC — the same reading `schemas.LogIngest`
+    applies before the row is stored."""
+    here = compute_chain_hash(chain_version=5, **_V2_ARGS)
+    there = compute_chain_hash(chain_version=5,
+                               **dict(_V2_ARGS, occurred_at=_SAME_INSTANT_ELSEWHERE))
+    assert here == there
+    assert compute_chain_hash(
+        chain_version=5, **dict(_V2_ARGS, occurred_at="2026-07-18T18:00:00Z")) == here
+    assert compute_chain_hash(
+        chain_version=5, **dict(_V2_ARGS, occurred_at="2026-07-18T18:00:00")) == here
+    # …and it is still a hash of the moment: move the moment, break the chain.
+    assert compute_chain_hash(
+        chain_version=5,
+        **dict(_V2_ARGS, occurred_at="2026-07-18T18:00:01+00:00")) != here
+    # …and V5 is its own version: `chain_version` is bound from V3 on, so a V5 row
+    # never collides with the V4 row carrying identical fields.
+    assert here != compute_chain_hash(chain_version=4, **_V2_ARGS)
+
+
+def test_v5_folds_a_datetime_and_its_exported_string_identically():
+    """⚠ THE ASYMMETRY THAT MAKES V5 HARD. Ingest and the internal recompute hand
+    this function a `datetime`; the verifier is handed the STRING that datetime was
+    exported as, rendered in whatever zone the exporting session used. A fix that
+    only agreed with itself would pass everything else in this file."""
+    from datetime import datetime, timedelta, timezone
+
+    written = datetime(2026, 7, 18, 18, 0, tzinfo=timezone.utc)
+    exported = written.astimezone(timezone(timedelta(hours=5))).isoformat()
+    assert exported != written.isoformat(), "the premise: two texts, one instant"
+    assert (compute_chain_hash(chain_version=5, **dict(_V2_ARGS, occurred_at=written))
+            == compute_chain_hash(chain_version=5, **dict(_V2_ARGS, occurred_at=exported)))
+
+
+def test_v5_leaves_an_unreadable_timestamp_alone():
+    """Refusing — or silently rewriting — a value this function cannot parse turns
+    "I could not read that field" into a hash mismatch, which every surface in this
+    product reports to a customer as TAMPERING."""
+    assert chain.normalize_occurred_at("not a timestamp") == "not a timestamp"
+    assert chain.normalize_occurred_at(None) is None
+    assert (compute_chain_hash(chain_version=5, **dict(_V2_ARGS, occurred_at="ZZZ"))
+            != compute_chain_hash(chain_version=5,
+                                  **dict(_V2_ARGS, occurred_at="not a timestamp")))

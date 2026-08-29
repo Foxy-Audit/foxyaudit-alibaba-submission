@@ -128,7 +128,23 @@ _PARITY_ARGS = dict(
     event_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", client_id="sdk-a",
     client_seq=7, event_type="interaction", commitment_alg="hmac-sha256",
     event_metadata={"policy_snapshot_hash": "c" * 64, "request_id": "req-1"},
-    pii_signals=["email"], occurred_at="2026-07-18T18:00:00+00:00",
+    pii_signals=["email"],
+)
+
+#: ⚠ NOT ONE UTC STRING. `occurred_at` was pinned at `+00:00` here, and
+#: normalising a value that is already UTC is a no-op — so a writer that had
+#: started normalising at V2 agreed with a verifier that had not, and the parity
+#: test passed while every historical row's hash had moved. Measured: that exact
+#: mutant SURVIVED. Every rendering below now goes through both implementations
+#: at every version.
+OCCURRED_RENDERINGS = (
+    None,
+    "2026-07-18T18:00:00+00:00",      # a UTC session
+    "2026-07-18T23:00:00+05:00",      # Asia/Karachi — the developer's cluster
+    "2026-07-18T11:00:00-07:00",      # America/Los_Angeles — CI
+    "2026-07-18T18:00:00Z",           # a client that writes Z
+    "2026-07-18T18:00:00",            # no offset at all: names no instant
+    "not a timestamp",                # and something that is not one either
 )
 
 
@@ -137,14 +153,17 @@ def test_writer_and_verifier_agree_at_every_version():
     They drift silently, and when they do a genuine export fails to verify at a
     customer's desk with no test having said anything. So: identical inputs into
     both, at every version the product has ever written, including V4 with and
-    without a verdict."""
+    without a verdict and V5 with its UTC-normalised occurred_at."""
     bc = _backend_chain()
-    for version in (1, 2, 3, 4):
+    for version in (1, 2, 3, 4, 5):
         for verdict_hash in (None, "d" * 64):
-            args = dict(_PARITY_ARGS, chain_version=version, verdict_hash=verdict_hash)
-            assert fv.compute_chain_hash(**args) == bc.compute_chain_hash(**args), (
-                f"writer/verifier disagree at chain_version {version} "
-                f"(verdict_hash={'set' if verdict_hash else 'None'})")
+            for occurred in OCCURRED_RENDERINGS:
+                args = dict(_PARITY_ARGS, chain_version=version,
+                            verdict_hash=verdict_hash, occurred_at=occurred)
+                assert fv.compute_chain_hash(**args) == bc.compute_chain_hash(**args), (
+                    f"writer/verifier disagree at chain_version {version} "
+                    f"(verdict_hash={'set' if verdict_hash else 'None'}, "
+                    f"occurred_at={occurred!r})")
 
 
 def test_the_two_verdict_digests_agree():
@@ -654,3 +673,155 @@ def test_the_accepted_keys_are_a_closed_list():
     assert fv.CHAIN_SECTION_KEYS == ("logs", "ledger")
     assert fv.find_chain_section({"entries": [{"seq": 1}]}) is None
     assert fv.find_chain_section({"logs": "not a list"}) is None
+
+# ── V5: the same INSTANT hashes the same, wherever it was rendered ───────────
+#
+# ⚠ V5 IS NOT LIKE V2, V3 OR V4, AND THAT IS WHAT THESE GUARD. Each of those
+# ADDED a key under a `chain_version >=` test, so every earlier payload stayed
+# byte-identical for free — you could not break history without deleting a line.
+# V5 changes how an EXISTING key (`occurred_at`) is RENDERED, so byte-identity is
+# no longer free and has to be asserted: `test_only_v5_normalises_the_offset`
+# below pins the pre-V5 behaviour, defect and all, because a historical row must
+# keep verifying forever.
+
+#: One instant, written three ways. `+00:00` is what a UTC session renders,
+#: `+05:00` what the developer's Asia/Karachi cluster renders, `Z` what a
+#: hand-written export or a non-Python client emits. All three name 09:30 UTC.
+_SAME_INSTANT = ("2026-07-18T09:30:00+00:00",
+                 "2026-07-18T14:30:00+05:00",
+                 "2026-07-18T02:30:00-07:00",
+                 "2026-07-18T09:30:00Z")
+
+
+def _v5(**over):
+    args = dict(_PARITY_ARGS, chain_version=5, verdict_hash="d" * 64)
+    args.update(over)
+    return fv.compute_chain_hash(**args)
+
+
+def test_v5_hashes_one_instant_identically_however_it_was_rendered():
+    """REGISTER #272, THE WHOLE OF IT IN ONE ASSERTION.
+
+    PostgreSQL renders a `timestamptz` in the READING session's `TimeZone`, so
+    the four strings below are what one stored row looks like to four readers.
+    Before V5 each produced a different chain hash and the reader who was not
+    the writer was told the ledger had been tampered with."""
+    digests = {s: _v5(occurred_at=s) for s in _SAME_INSTANT}
+    assert len(set(digests.values())) == 1, (
+        "the same instant still hashes differently by rendering: %r" % digests)
+
+
+def test_only_v5_normalises_the_offset():
+    """⚠ THE BYTE-IDENTITY GUARD, STATED AS BEHAVIOUR RATHER THAN A GOLDEN FILE.
+
+    A stored vector only proves a branch agrees with itself. What must be true is
+    that V1-V4 still fold `occurred_at` the way they always did — VERBATIM, offset
+    and all — so every row ever written keeps its hash. Under V4 two renderings of
+    one instant therefore MUST disagree: that is the frozen defect, and freezing it
+    is the price of not rewriting history.
+
+    ⚠ AND IT ASSERTS ON BOTH IMPLEMENTATIONS. Pointed at this file alone it
+    missed the mutant that normalised from V2 inside `backend/app/chain.py` — the
+    two copies still agreed with each other, and agreeing on the wrong hash is
+    exactly what a hand-duplicated recipe fails as. Measured: that mutant SURVIVED
+    until the backend was named here.
+
+    A mutant that applies the V5 normalisation at every version dies here."""
+    bc = _backend_chain()
+    utc, karachi = _SAME_INSTANT[0], _SAME_INSTANT[1]
+    for impl in (fv, bc):
+        for version in (2, 3, 4):
+            args = dict(_PARITY_ARGS, chain_version=version, verdict_hash="d" * 64)
+            assert (impl.compute_chain_hash(**dict(args, occurred_at=utc))
+                    != impl.compute_chain_hash(**dict(args, occurred_at=karachi))), (
+                "%s normalised the offset at V%d — every historical row's hash "
+                "just moved" % (impl.__name__, version))
+        v5 = dict(_PARITY_ARGS, chain_version=5, verdict_hash="d" * 64)
+        assert (impl.compute_chain_hash(**dict(v5, occurred_at=utc))
+                == impl.compute_chain_hash(**dict(v5, occurred_at=karachi)))
+
+
+def test_v5_reads_an_offsetless_timestamp_as_utc():
+    """A value with no offset names no instant. Ingest attaches UTC before storing
+    it (schemas.LogIngest), so the fold has to make the same choice or the row it
+    wrote would not be the row it reads back.
+
+    ⚠ BOTH IMPLEMENTATIONS, for the same reason as the guard above: a writer that
+    read an offsetless value as the machine's LOCAL time survived every check that
+    asked only this file, and the machine this was written on is UTC+5."""
+    naive, utc = "2026-07-18T09:30:00", _SAME_INSTANT[0]
+    for impl in (fv, _backend_chain()):
+        args = dict(_PARITY_ARGS, chain_version=5, verdict_hash="d" * 64)
+        assert (impl.compute_chain_hash(**dict(args, occurred_at=naive))
+                == impl.compute_chain_hash(**dict(args, occurred_at=utc))), (
+            "%s did not read an offsetless timestamp as UTC" % impl.__name__)
+        assert impl.normalize_occurred_at(naive) == utc
+
+
+def test_v5_folds_an_unreadable_timestamp_unchanged():
+    """⚠ AND UNCHANGED MEANS THE ORIGINAL TEXT, NOT THE `Z`-SWAPPED ONE. Refusing
+    a value here — or silently rewriting it — turns "I cannot read this field"
+    into a hash mismatch, which this tool reports to a customer as TAMPERING."""
+    assert fv.normalize_occurred_at("not a timestamp") == "not a timestamp"
+    assert fv.normalize_occurred_at("ZZZ") == "ZZZ"
+    assert fv.normalize_occurred_at(None) is None
+    assert _v5(occurred_at="not a timestamp") != _v5(occurred_at="ZZZ")
+
+
+def test_v5_agrees_across_the_datetime_and_string_asymmetry():
+    """⚠ THE TWO IMPLEMENTATIONS DO NOT START FROM THE SAME THING, AND THIS IS
+    WHERE V5 WOULD GO WRONG.
+
+    `backend/app/chain.py` folds the `datetime` SQLAlchemy hands it; this file
+    folds the STRING that datetime was exported as. `test_writer_and_verifier_
+    agree_at_every_version` passes one shared value to both and so cannot see the
+    asymmetry at all. Here the backend is given the object and the verifier is
+    given its `isoformat()` — rendered in a DIFFERENT zone from the one the object
+    carries, which is exactly what an export from a non-UTC session contains."""
+    from datetime import datetime, timedelta, timezone
+
+    bc = _backend_chain()
+    written = datetime(2026, 7, 18, 9, 30, tzinfo=timezone.utc)
+    read_back = written.astimezone(timezone(timedelta(hours=5)))   # Asia/Karachi
+    assert read_back.isoformat() != written.isoformat(), "the premise: two texts"
+
+    args = dict(_PARITY_ARGS, chain_version=5, verdict_hash="d" * 64)
+    args.pop("occurred_at", None)
+    backend_digest = bc.compute_chain_hash(**args, occurred_at=written)
+    verifier_digest = fv.compute_chain_hash(**args, occurred_at=read_back.isoformat())
+    assert backend_digest == verifier_digest, (
+        "the writer folded a datetime and the verifier folded its exported "
+        "string, and they disagree — which is #272 with extra steps")
+    # and the backend must not be quietly self-consistent either: hand IT the
+    # string the export carries and it has to land on the same digest.
+    assert bc.compute_chain_hash(**args, occurred_at=read_back.isoformat()) == backend_digest
+
+
+def test_a_v5_export_verifies_after_the_offset_is_re_rendered():
+    """End to end through `verify_export`, not just the hash function: re-render
+    every row's `occurred_at` into another zone — which is all a different reading
+    session does — and the chain must still recompute clean."""
+    from datetime import datetime, timedelta, timezone
+
+    export = _v4_export()
+    row = export["logs"][0]
+    row["chain_version"] = 5
+    row["occurred_at"] = _SAME_INSTANT[0]
+    row["chain_hash"] = fv.compute_chain_hash(
+        org_id=ORG, prev_hash=fv.GENESIS_HASH, **{k: row[k] for k in (
+            "prompt_hash", "response_hash", "token_count", "policy_tag", "seq",
+            "agent", "event_id", "client_id", "client_seq", "event_type",
+            "commitment_alg", "event_metadata", "pii_signals", "occurred_at",
+            "chain_version", "verdict_hash")})
+    assert fv.verify_export(export)["ok"] is True
+
+    other = dict(export, logs=[dict(row, occurred_at=datetime.fromisoformat(
+        row["occurred_at"]).astimezone(timezone(timedelta(hours=5))).isoformat())])
+    assert other["logs"][0]["occurred_at"] != row["occurred_at"], "premise"
+    assert fv.verify_export(other)["ok"] is True, (
+        "the same rows read in another session zone were called tampered")
+
+    # and V5 is still tamper-evident: a different INSTANT must break it.
+    moved = dict(export, logs=[dict(row, occurred_at="2026-07-18T09:31:00+00:00")])
+    assert fv.verify_export(moved)["ok"] is False
+    assert fv.verify_export(moved)["first_broken_seq"] == 1

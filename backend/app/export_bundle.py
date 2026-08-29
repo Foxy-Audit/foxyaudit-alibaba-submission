@@ -111,10 +111,11 @@ The verifier re-implements the hash-chain recipe from scratch - it imports
 nothing from Foxy - and recomputes your entire ledger from genesis, reporting
 the first tampered row (if any).
 
-Each row declares its own chain_version, and every version is frozen forever: a
-new one may only ADD a field, never reorder or remove one, so an export you
-downloaded years ago still verifies with this script. Version 1 hashes a
-pipe-delimited string; version 2 onward hashes canonical JSON of the event:
+Each row declares its own chain_version, and every version is frozen forever:
+what a version hashes, and how, never changes once rows exist under it, so an
+export you downloaded years ago still verifies with this script. Version 1
+hashes a pipe-delimited string; version 2 onward hashes canonical JSON of the
+event:
 
   Hn = SHA256( "org_id|prompt_hash|response_hash|token_count|policy_tag|seq"
                [+ "|agent=<agent>"]  +  Hn-1 )              # version 1
@@ -124,7 +125,12 @@ pipe-delimited string; version 2 onward hashes canonical JSON of the event:
 The |agent=<agent> segment is appended only when the row has an agent, so rows
 logged before agent attribution hash identically. Version 2 added the capture
 fields (event_id, client ids, event_type, metadata, pii_signals, occurred_at),
-version 3 bound chain_version itself, and version 4 bound verdict_hash.
+version 3 bound chain_version itself, and version 4 bound verdict_hash. Version
+5 adds nothing: it hashes occurred_at as the UTC INSTANT it names rather than as
+the text it arrived in, because PostgreSQL renders a timestamp in the reading
+session's own timezone and an untouched export could otherwise be reported as
+tampered for no reason but the reader's clock. Rows written at versions 1-4 are
+unchanged and still hash their timestamp text verbatim.
 
 If Foxy - or anyone with database access - altered a historical interaction, the
 recomputed chain hash for that row no longer matches the stored one, and every
