@@ -63,7 +63,14 @@
     font-family:'DejaVu Sans Mono',Consolas,monospace; font-size:8pt; color:#6a6158;
   }
   @bottom-left{
-    content:"{{ org_name }} · {{ date_from }} to {{ date_to }}";
+    {# CSS context, NOT markup. Jinja's autoescape does nothing useful inside a
+       <style> block, and org.name is customer-chosen, so this ONE variable is
+       pre-escaped for a CSS string by routers/passport.py:_css_string and
+       arrives as Markup. Do not swap it back to the plain org_name used in the
+       body below: a raw newline in the value ends this string, and the rest of
+       the name is then parsed as CSS. (Spelled out rather than shown, so a grep
+       for the unsafe variable in a CSS context does not match this warning.) #}
+    content:"{{ org_name_css }} · {{ date_from }} to {{ date_to }}";
     font-family:Georgia,'Times New Roman',serif; font-size:8pt; color:#6a6158;
   }
   @bottom-right{

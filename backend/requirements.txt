@@ -19,6 +19,27 @@ bcrypt==5.0.0
 itsdangerous==2.2.0
 # PDF passport renderer — lazy-imported and NOT installed in the CI/test venv, so
 # it's bounded (minor-pinned) rather than exact-pinned since it's unverified here.
+#
+# ⚠ pip-audit reports PYSEC-2026-2034 against 63.1 (fixed in 68.0): urllib follows
+# a redirect without re-running a CUSTOM url_fetcher, so an SSRF allowlist can be
+# bypassed on the second hop. Triaged 2026-08-30 (#262). NOT APPLICABLE here —
+# routers/passport.py now installs `_passport_url_fetcher`, which accepts ONLY
+# `data:` URIs. urllib resolves those in-process, so there is never a first hop
+# to be redirected off. Every other scheme raises before `urlopen` is reached.
+#
+# ⚠ What WAS live at 50afee9 is not this advisory but a plain SSRF the advisory
+# would have distracted from: the default fetcher was in use with no allowlist at
+# all, and a CSS injection through the customer-chosen `org.name` let a customer
+# choose the URL. Fixed, with the evidence, in tests/integration/
+# test_passport_css_injection.py — read that before touching either guard.
+#
+# Deliberately NOT bumped to 68.0 with that fix. The bump is dependency-clean
+# (68.0 needs Pillow>=9.1.0 — we pin 12.3.0 — plus pydyf/tinycss2/cssselect2/
+# tinyhtml5/Pyphen/fonttools/cffi, none of which anything else here constrains;
+# Requires-Python >=3.10), but five majors of layout engine on the document an
+# auditor is handed cannot be verified from this repo: weasyprint is not in the
+# test venv and needs pango/cairo, which only the production image has. Bump it
+# as its own phase that renders a before/after passport PDF in that image.
 weasyprint>=62,<64
 # Public-chain anchoring (Phase 3 A1). Only needed for anchor_provider=evm; the
 # import is lazy so the app + the 'stub' provider run fine without it installed.
@@ -27,6 +48,34 @@ web3==7.16.0
 # (Already resolved transitively via google-generativeai; pinned explicitly here.)
 google-auth==2.55.1
 # Fernet envelope for customer-supplied (BYOK) provider API keys — app/crypto_secrets.py.
+#
+# ⚠ pip-audit reports PYSEC-2026-36 against 46.0.1 (fixed in 46.0.7): a buffer
+# overflow when a NON-CONTIGUOUS buffer reaches `Hash.update()`. Triaged
+# 2026-08-30 (#262). NOT REACHABLE — the trigger needs a caller that hands a
+# memoryview slice or a reversed buffer to a cryptography primitive, and nothing
+# does. Four things were checked, so this need not be re-derived:
+#
+#   1. `crypto_secrets.py` is the ONLY cryptography call site in the repo
+#      (Fernet/MultiFernet). Both directions pass a fresh contiguous `bytes`:
+#      `envelope.encode("utf-8")` on encrypt, `str(token).encode("utf-8")` on
+#      decrypt.
+#   2. The chain does NOT hash with this library at all. `chain.py`,
+#      `sdk/hashing.py` and `verifier/foxy_verify.py` all use stdlib
+#      `hashlib`/`hmac`, always on `<str>.encode("utf-8")`.
+#   3. No `memoryview`, `[::-1]` or `.getbuffer()` exists anywhere in
+#      `backend/app`, `sdk/src` or `verifier`.
+#   4. Across the whole installed dependency tree, the only `hashes.Hash(…)
+#      .update(…)` outside cryptography itself is google-auth's
+#      `transport/_custom_tls_signer._compute_sha256_digest`, which feeds
+#      `ctypes.string_at(...)` — contiguous — and is only reached on the Google
+#      mTLS client-certificate path this deployment never configures.
+#
+# Fernet's own internals were read at 46.0.1 for completeness: `HMAC.update`, on
+# concatenated bytes and on `data[:-32]` (a bytes slice, i.e. a new contiguous
+# object). Not `Hash`, and never non-contiguous.
+#
+# Left at 46.0.1 rather than bumped to 46.0.7: nothing reachable is fixed by the
+# bump, and this pin is load-bearing for the KEK envelope.
 cryptography==46.0.1
 
 # Avatar upload (P6c) — the first file-upload surface in this backend.

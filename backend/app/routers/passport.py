@@ -22,11 +22,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import hashlib
+import re
 import uuid as _uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from jinja2 import Environment, FileSystemLoader
+from markupsafe import Markup
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -51,6 +53,86 @@ _jinja_env = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=True,
 )
+
+
+# ── Two guards on what the renderer is allowed to be told to do ──────────────
+#
+# Both exist because ONE value in this template lands in CSS rather than in
+# markup: the running footer is `content:"{{ org_name_css }} · …"` inside the
+# `@page` block, and `org.name` is chosen by the customer at `POST /v1/signup`
+# (`SignupRequest.name` is an unvalidated `str | None`, kept verbatim apart from
+# `.strip()[:255]`).
+#
+# Jinja's autoescape is INERT there. `<style>` is a raw-text element, so the
+# `&#34;` it emits for a quote is five literal characters to a CSS parser and
+# not a string delimiter — but a RAW NEWLINE ends a CSS string as a
+# `<bad-string>`, and everything after it is parsed as CSS. Measured against
+# this very template with tinycss2, which is weasyprint's own parser:
+#
+#   an org name of "Acme", a NEWLINE, then
+#   "; content:url(http://169.254.169.254/latest/meta-data/) ;"
+#     -> a VALID `content: url(…)` declaration in the @bottom-left margin box.
+#        make_margin_boxes -> build.content_to_boxes -> get_image_from_uri ->
+#        default_url_fetcher -> urlopen. Server-side SSRF, customer-chosen URL.
+#   an org name of "Acme", a NEWLINE, then
+#   "}}  .seal,.seal-facts,.seal-state{display:none}  @page{@bottom-left{"
+#     -> a valid TOP-LEVEL rule with the rest of the stylesheet intact, which
+#        removes the CHAIN BROKEN seal from the document handed to an auditor.
+#
+# The second is the worse of the two and needs no network at all, so neither
+# guard is sufficient alone. `_css_string` closes the injection; the fetcher is
+# the boundary that still holds if a future edit reopens one.
+
+
+_CSS_UNSAFE = re.compile(r"""[\\"'<\x00-\x1f\x7f]""")
+
+
+def _css_string(value: str) -> str:
+    """Escape ``value`` for use inside a CSS string literal in a ``<style>`` block.
+
+    Escapes exactly what can end the string or the element: the backslash, both
+    quotes, ``<`` (so ``</style`` cannot close the raw-text element), and every
+    control character — a raw newline being the one that makes a `<bad-string>`.
+    Everything else, ``&`` and ``{`` and ``}`` included, is inert INSIDE a string
+    literal and is left alone; that is also why the footer stops printing
+    ``&amp;`` for an org named "A&B".
+
+    The trailing space on each escape is load-bearing: CSS consumes up to six hex
+    digits and then one following whitespace, so without it ``A" B`` would come
+    back as ``A"B``.
+
+    Returns `Markup` so Jinja does NOT escape it again — HTML-escaping a CSS
+    escape is what produced the ``&amp;`` above.
+    """
+    return Markup(_CSS_UNSAFE.sub(lambda m: "\\%06x " % ord(m.group()), value))
+
+
+def _passport_url_fetcher(url: str):
+    """Refuse every fetch. The passport is a self-contained document.
+
+    Every asset it carries is an inline ``data:`` URI — the cover mark and the
+    three verification seals — precisely so that nothing is fetched at render
+    time; the template says as much beside the seal. So any OTHER URL reaching
+    the renderer is one the document does not need and did not have when it was
+    written. Refuse it rather than let the server issue the request.
+
+    This is also why PYSEC-2026-2034 (weasyprint < 68: `urllib` follows a
+    redirect without re-running a custom ``url_fetcher``, so an allowlist can be
+    bypassed on the second hop) does not apply to this fetcher: there is no
+    second hop to bypass on. A `data:` URI is resolved in-process and every other
+    scheme never reaches `urlopen` at all.
+
+    weasyprint wraps whatever this raises in `URLFetchingError` and treats a
+    failed image as a warning, so a refusal degrades one asset rather than
+    failing the document.
+    """
+    if url[:5].lower() != "data:":
+        raise ValueError(
+            "the compliance passport renders offline; it fetches nothing")
+    # data: is resolved by urllib in-process, no socket. Delegated rather than
+    # decoded here so weasyprint keeps owning the shape of the result dict.
+    from weasyprint.urls import default_url_fetcher
+    return default_url_fetcher(url)
 
 
 def _issued_to(request: Request, org: Organization, db: Session) -> str:
@@ -320,6 +402,9 @@ def generate_passport(
         verify_url=verify_url,
         explorer_url=explorer_url,
         org_name=org.name,
+        # CSS context, not markup — see _css_string. Kept separate from
+        # org_name so the body still gets the plain autoescaped value.
+        org_name_css=_css_string(org.name or ""),
         org_id=str(org.id),
         plan_tier=getattr(org, "plan_tier", None),
         date_from=start.strftime("%Y-%m-%d"),
@@ -373,7 +458,8 @@ def generate_passport(
     # weasyprint installed.
     try:
         from weasyprint import HTML
-        pdf_bytes = HTML(string=html_string).write_pdf()
+        pdf_bytes = HTML(string=html_string,
+                         url_fetcher=_passport_url_fetcher).write_pdf()
     except Exception as exc:
         # Type name only, never str(exc). This is an authenticated request, and a
         # weasyprint/native-lib failure carries library paths and system detail in
