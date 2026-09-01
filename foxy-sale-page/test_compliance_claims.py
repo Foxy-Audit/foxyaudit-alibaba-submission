@@ -378,14 +378,59 @@ def _class_pattern(spec: dict) -> "re.Pattern":
 
 
 def _sentences_in_class(spec: dict) -> list[tuple[str, str]]:
+    """Every sentence in this class, across the pages the class covers.
+
+    ⚠ `scope_to` NARROWS A CLASS TO NAMED FILES, and both uses of it are load
+    bearing rather than convenient:
+
+    · `transfer_safeguards` covers privacy.html only, because dpa.html, msa.html
+      and terms.html are CONTRACT instruments and are full of safeguard language
+      by design. A contract states a forward obligation; privacy.html §13 states
+      present fact, and it is present fact this class is about. What that leaves
+      uncovered is written down rather than forgotten — see
+      `open_questions.dpa_asserts_scc_reliance`.
+
+    · `data_location_exclusivity` covers privacy.html only, because trust.html's
+      sub-processor table has no sentence boundaries, so flattening it yields one
+      enormous pseudo-sentence that would sit in the approval list unreadably.
+      That table's Location column is guarded structurally by `hosting_country`
+      instead.
+
+    A class with no `scope_to` covers every customer-facing page, which is the
+    default and the safer one."""
     pat = _class_pattern(spec)
+    scope = spec.get("scope_to")
     out = []
     for path in _pages():
+        rel = _rel(path)
+        if scope and rel not in scope:
+            continue
         for sentence in _SENTENCE.split(_prose(path)):
             sentence = sentence.strip()
             if pat.search(sentence):
-                out.append((_rel(path), sentence))
+                out.append((rel, sentence))
     return out
+
+
+def test_every_scoped_class_names_files_that_exist(register):
+    """⚠ A `scope_to` POINTING AT NOTHING SILENTLY DISABLES ITS CLASS.
+
+    Rename a page, and a class scoped to the old name stops matching any
+    sentence at all — `approved_sentences` empties, both class tests pass, and
+    the guard reports success while covering nothing. That is the shape this
+    whole file exists to prevent, so the scope is checked rather than trusted."""
+    live = {_rel(p) for p in _pages()}
+    for name, spec in _classes(register).items():
+        for rel in spec.get("scope_to") or []:
+            assert rel in live, (
+                f"claim class {name!r} is scoped to {rel!r}, which is not a page "
+                f"on any surface in meta.surfaces. The class currently guards "
+                f"nothing and would pass in silence.")
+        if spec.get("scope_to"):
+            assert _sentences_in_class(spec), (
+                f"claim class {name!r} matches no sentence anywhere in its "
+                f"scope. Either the pattern or the scope is wrong; as it stands "
+                f"the class is green and guarding nothing.")
 
 
 def test_every_sentence_in_a_claim_class_is_one_the_register_approved(register):

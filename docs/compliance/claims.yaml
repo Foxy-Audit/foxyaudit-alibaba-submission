@@ -167,6 +167,54 @@ assertions:
       - "International Data Transfers In short: Your workspace data is hosted in Qatar, and daily snapshots of that server's disk are stored in the European Union."
       - "Daily snapshots of our server's disk are also stored in the European Union multi-region (see Section 8 ), so a complete copy of the hosted data is held there as well as in Qatar."
 
+  data_location_exclusivity:
+    value: "no surface may claim data is only in one place"
+    detail: >-
+      Two false residency sentences have shipped from this section. #289 said
+      hosting was in the United States when it is in Qatar. #294 said backups
+      "do not leave Qatar" when the GCP snapshots are in the EU multi-region.
+      BOTH TOOK THE SAME GRAMMATICAL SHAPE — a place plus a totality word — and
+      that shape is what this class guards.
+    established: "vault #289 (2026-09-01) and #294 (2026-09-01), both measured, not inferred"
+    scope_to: ['foxy-sale-page/privacy.html']
+    #: ⚠ SCOPED TO privacy.html ON PURPOSE. trust.html's sub-processor table has
+    #: no sentence boundaries, so flattening it produces one enormous pseudo-
+    #: sentence that would land in this list unreadably. That table's Location
+    #: column is already guarded structurally by `hosting_country` — mutations
+    #: A2 and A8 prove it — so nothing is left uncovered.
+    sentence_pattern: '(?:Qatar|Doha|me-central1|European Union|\bEU\b|EEA|United States|Pakistan|Ireland|Germany|Singapore)[^.]{0,60}\b(?:only|solely|exclusively|at all times|entirely|never leaves?|never leave|do(?:es)? not leave|remains? within|stays? within|remains? in|stays? in|and nowhere else)\b|\b(?:only|solely|exclusively|at all times|entirely|never leaves?|never leave|do(?:es)? not leave|remains? within|stays? within|remains? in|stays? in|and nowhere else)\b[^.]{0,40}(?:Qatar|Doha|me-central1|European Union|\bEU\b|EEA|United States|Pakistan|Ireland|Germany|Singapore)|\b(?:all|every|any|no|none of the) (?:copies|copy|data|backups?|snapshots?)\b[^.]{0,60}(?:Qatar|Doha|me-central1|European Union|\bEU\b|EEA|United States|Pakistan|Ireland|Germany|Singapore)'
+    approved_sentences:
+      - "Backups are kept in two places, and only one of them is in Qatar."
+      - "Pakistan: while the Personal Data Protection Bill remains in draft form (see Section 1 ), we extend the same rights described above to individuals in Pakistan as a matter of policy, not only where currently legally mandated."
+
+  transfer_safeguards:
+    value: "no safeguard may be asserted that has not been evidenced"
+    detail: >-
+      As at 2026-09-01, confirmed by the owner: OpenAI — NO DPA or SCCs ever
+      executed, a key is set and that is all. Google Cloud — probably covered by
+      auto-incorporated terms, artefact never produced. Paddle — sandbox.
+      Payoneer — nothing. Qatar — no Article 46 instrument exists.
+    established: "vault #293, answered by the owner 2026-09-01"
+    scope_to: ['foxy-sale-page/privacy.html']
+    #: ⚠ SCOPED TO privacy.html, AND THE REASON MATTERS. dpa.html, msa.html and
+    #: terms.html are CONTRACT instruments and are full of this language by
+    #: design — a contract says what the parties will rely on, which is a
+    #: forward obligation, not a statement of present fact. privacy.html §13 is
+    #: the page that states present fact, so it is the page this class guards.
+    #: ⚠ See open_questions.dpa_asserts_scc_reliance: dpa.html says "the parties
+    #: rely on the EU Standard Contractual Clauses", which is the same assertion
+    #: this branch just removed from §13. C2b did NOT rewrite it — changing
+    #: contract text needs a lawyer — but it must not be forgotten.
+    sentence_pattern: 'Standard Contractual Clauses|\bSCCs?\b|\bClauses\b|data processing agreement|Article 46|adequacy decision|International Data Transfer Addendum'
+    approved_sentences:
+      - "Qatar has no EU adequacy decision, and for the United States we cannot yet evidence a safeguard for every sub-processor — both are set out below."
+      - "The safeguard Article 46 GDPR requires for a transfer from the EEA, UK, or Switzerland to the United States is the EU Standard Contractual Clauses , together with the UK International Data Transfer Addendum for UK transfers and Swiss Federal Act on Data Protection safeguards for Swiss transfers."
+      - "— no data processing agreement has been executed, so no Standard Contractual Clauses cover this transfer."
+      - "Google's standard cloud terms incorporate the Clauses and we expect them to apply, but we have not obtained the executed instrument and have not confirmed which of these services those terms cover."
+      - "Qatar is not the subject of a European Commission adequacy decision."
+      - "A transfer of personal data from the EEA, UK, or Switzerland to our hosting region in Qatar is therefore a transfer to a third country without adequacy, and it requires a safeguard under Article 46 GDPR."
+      - "If you are an EEA, UK, or Swiss customer and need a named Article 46 safeguard for either destination before sending personal data, write to privacy@foxyaudit.tech and we will tell you exactly where we are."
+
 # ---------------------------------------------------------------------------
 # REGIME WORDS
 #
@@ -722,7 +770,7 @@ claims:
     mechanism: TBD-LEGAL
 
   - file: foxy-sale-page/privacy.html
-    line: 217
+    line: 216
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -747,7 +795,7 @@ claims:
     mechanism: TBD-LEGAL
 
   - file: foxy-sale-page/privacy.html
-    line: 229
+    line: 228
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -760,7 +808,7 @@ claims:
     why: "The rights exist, the export and deletion paths implement them, and §14's general commitment extends them."
 
   - file: foxy-sale-page/privacy.html
-    line: 230
+    line: 229
     regime: CCPA/CPRA
     kind: affirmative
     verdict: backed
@@ -770,7 +818,7 @@ claims:
     why: "Same missing-CCPA-rows caveat as cookie-policy.html:117. The substance — we do not sell or share — is implemented."
 
   - file: foxy-sale-page/privacy.html
-    line: 231
+    line: 230
     regime: LGPD
     kind: affirmative
     verdict: backed
@@ -787,7 +835,7 @@ claims:
       Art. 18 and enumerates the same rights this bullet promises.
 
   - file: foxy-sale-page/privacy.html
-    line: 232
+    line: 231
     regime: PIPEDA
     kind: affirmative
     verdict: backed
@@ -800,7 +848,7 @@ claims:
     why: "✓ BACKED BY C0b. Four PIPEDA rows now exist, all from the official Justice Laws text."
 
   - file: foxy-sale-page/privacy.html
-    line: 233
+    line: 232
     regime: PDPA (SG)
     kind: affirmative
     verdict: backed
@@ -813,7 +861,7 @@ claims:
     why: "✓ BACKED BY C0b. Five PDPA rows now exist, from the official Singapore Statutes Online PDF."
 
   - file: foxy-sale-page/privacy.html
-    line: 233
+    line: 232
     regime: Privacy Act
     kind: affirmative
     verdict: backed
@@ -827,7 +875,7 @@ claims:
       those rows say so in their first words.
 
   - file: foxy-sale-page/privacy.html
-    line: 237
+    line: 236
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -1149,19 +1197,43 @@ open_questions:
 
   - id: us_leg_scc_execution
     question: "Have the EU Standard Contractual Clauses actually been executed for the EEA -> US leg?"
-    status: UNVERIFIED
-    blocks: "nothing on this branch — the sentence was already published and C2 left it exactly as it was"
+    status: ANSWERED — and the answer was no
+    blocks: "nothing further on this branch; the page now says what can be evidenced"
     why: >-
-      ⚠ RECORDED SO IT IS NOT MISTAKEN FOR SOMETHING C2 CHECKED. privacy.html
-      §13 has always said "we rely on the EU Standard Contractual Clauses" for
-      transfers to the United States. That leg is real — Google, OpenAI,
-      Paddle, Payoneer and Google Identity are all US — so unlike the Qatar
-      sentence it is not addressed to a destination that does not exist.
-      But whether Foxy executed Google Cloud's and OpenAI's DPAs (both of which
-      incorporate the SCCs as standard) cannot be verified from this repo.
-      C2 neither strengthened nor weakened the sentence. C1 should confirm it,
-      and if it turns out to be unexecuted this becomes a second false
-      statement of the same kind as the one this branch fixes.
+      ✓ ANSWERED BY THE OWNER 2026-09-01, and it was the bad answer. C2 raised
+      this honestly about text it had not written and left the sentence
+      untouched because it predated the branch. It could not be left:
+      **no DPA or SCCs were ever executed with OpenAI** — a key is set, and that
+      is all — while OpenAI receives customer event metadata, under Foxy's own
+      key on platform-key tiers. Google Cloud is probably covered by
+      auto-incorporated cloud terms and nobody has produced the artefact;
+      Paddle is sandbox; Payoneer has nothing.
+      C2b rewrote the paragraph per sub-processor. See vault #293 and
+      `retired.unqualified-us-scc-reliance`.
+      ⚠ THE REMAINING WORK IS NOT A WORDING PROBLEM. Executing the OpenAI DPA is
+      self-serve and free, and it is the fastest of the four; when it is done,
+      that bullet gets rewritten with a date and this entry closes. Until then
+      the page is honest and the exposure is real.
+
+  - id: dpa_asserts_scc_reliance
+    question: "dpa.html still says the parties rely on the EU Standard Contractual Clauses."
+    status: OPEN
+    blocks: "nothing on this branch — C2b deliberately did not edit a contract instrument"
+    why: >-
+      ⚠ FOUND BY C2b WHILE BUILDING THE transfer_safeguards CLASS, and it extends
+      #293 to a second page. foxy-sale-page/dpa.html's international-transfers
+      clause reads "the parties rely on the EU Standard Contractual Clauses
+      (Module Two...)" and "the parties rely on the UK International Data
+      Transfer Addendum". That is the same assertion this branch just removed
+      from privacy.html §13, and there are no SCCs with OpenAI.
+      It is arguably not a false statement of FACT the way §13's was — a contract
+      states a forward obligation, and dpa.html carries "Effective date — set
+      when first executed" — but a customer reading it concludes the chain
+      exists. C2b did not rewrite it: changing contract text without a lawyer is
+      exactly what the plan forbids, and the DPA is C1's artefact.
+      ⚠ Whoever fixes it must also decide whether dpa.html §5's sub-processor
+      undertaking ("impose data-protection obligations on each sub-processor
+      materially no less protective than this DPA") is currently true.
 
   - id: ccpa_has_no_rows
     question: "CCPA/CPRA is named on four surfaces and has no regime in crosswalk.yaml."
