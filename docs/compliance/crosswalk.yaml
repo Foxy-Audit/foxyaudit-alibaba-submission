@@ -1,0 +1,1149 @@
+# Foxy Audit — regime crosswalk
+#
+# Phase C0 of docs/plans/compliance-program.md. READ docs/compliance/README.md
+# BEFORE READING OR EDITING THIS FILE — it defines what each status word means
+# and what may be written into `evidence`. The definitions are narrower than
+# they look.
+#
+# ⚠ THE ONE RULE: never write a clause number you have not verified against a
+# real source. `clause: TBD` with `status: gap` is a correct answer. An invented
+# article number is a defect, and this file will be read as authoritative.
+
+meta:
+  phase: C0
+  written: "2026-09-01"
+  verified_against: "01e87ad"        # origin/main at the time of writing
+  written_by: "executor chat, per docs/plans/compliance-program.md §4 C0"
+  legal_review: "NONE — this file is engineering research, not legal advice"
+  scope: >-
+    Maps regulatory clauses onto Foxy controls and onto evidence a third party
+    could inspect. It is a planning artefact. It is not a compliance claim, it
+    is not a certification, and no row in it has been reviewed by a lawyer.
+  hard_facts:
+    # Established before this file was written; do not re-derive them here.
+    hosting: "GCP me-central1-a — Doha, Qatar. No EU adequacy decision for Qatar."
+    backups: "deploy/backup.sh writes to deploy/backups ON THE PRODUCTION VM, RETENTION_DAYS default 14."
+    baa: "No BAA exists anywhere in the repo, the sale page or the vault (searched 2026-09-01)."
+    platform_keys: "backend/app/judge_routing.py platform_keys_allowed() lets Foxy's OWN provider keys carry customer event metadata to OpenAI and Google."
+    policy_tags: "sdk/src/foxy_audit/policy.py KNOWN_POLICY_TAGS = {default, soc2, hipaa, gdpr} + aliases {hipaa_basic, gdpr_basic}. _POLICY_EXTRA maps soc2 -> () — baseline only."
+    judge_limit: "The AI judge sees only hashes and counts. It CANNOT assess maliciousness. No row here may imply otherwise."
+    company: "Foxy is incorporated in Pakistan. Two people. No legal budget yet."
+
+# ---------------------------------------------------------------------------
+# REGIMES
+#
+# posture:
+#   CLAIMED      a customer-facing surface names this regime today
+#   MAPPED-ONLY  mapped here for planning; no customer-facing surface names it
+#
+# Posture is about what we SAY, not about what we have. Every regime below is
+# one Foxy the company is certified in exactly none of.
+# ---------------------------------------------------------------------------
+regimes:
+  - id: HIPAA
+    name: "Health Insurance Portability and Accountability Act — Security Rule, Breach Notification Rule (45 CFR Part 164)"
+    posture: CLAIMED
+    role: >-
+      If a customer sends PHI through the SDK, Foxy is a business associate.
+      No BAA exists, so that relationship is currently un-papered.
+    named_on: ["foxy-sale-page/install.html", "foxy-sale-page/how-it-works.html", "foxy-sale-page/welcome.html", "foxy-dashboard/foxy-audit-premium.html"]
+
+  - id: SOC2
+    name: "AICPA Trust Services Criteria (2017, with revised points of focus 2022)"
+    posture: CLAIMED
+    role: >-
+      An organisational control regime. It is NOT a per-call policy and can
+      never be one — see the `soc2` vocabulary rows below.
+    named_on: ["foxy-sale-page/faq.html", "foxy-sale-page/pricing.html", "foxy-sale-page/trust.html", "foxy-sale-page/privacy.html", "foxy-sale-page/how-it-works.html", "foxy-sale-page/install.html", "foxy-sale-page/sdk.html"]
+
+  - id: GDPR
+    name: "Regulation (EU) 2016/679"
+    posture: CLAIMED
+    role: "Foxy is a processor for customer workspace data; a controller for account data."
+    named_on: ["foxy-sale-page/privacy.html", "foxy-sale-page/dpa.html", "foxy-sale-page/cookie-policy.html", "foxy-sale-page/index.html", "foxy-sale-page/install.html", "foxy-dashboard/foxy-audit-premium.html"]
+
+  - id: EU_AI_ACT
+    name: "Regulation (EU) 2024/1689 (Artificial Intelligence Act)"
+    posture: CLAIMED
+    role: >-
+      Foxy is not a provider or deployer of a high-risk AI system. It is a
+      record-keeping tool a deployer can use toward Art. 26(6). Provider
+      obligations are not-applicable to Foxy itself.
+    named_on: ["foxy-sale-page/passport.html", "foxy-sale-page/docs.html", "foxy-dashboard/foxy-audit-premium.html"]
+
+  - id: NIST_AI_RMF
+    name: "NIST AI Risk Management Framework 1.0"
+    posture: CLAIMED
+    role: >-
+      NOT one of the eight regimes C0 was scoped to map. It is here because two
+      customer-facing pages claim the Compliance Passport is mapped to it and
+      the Passport template contains zero NIST references. See surface_claims.
+    named_on: ["foxy-sale-page/passport.html", "foxy-sale-page/docs.html"]
+
+  - id: PDPL_KSA
+    name: "Saudi Personal Data Protection Law (Royal Decree M/19, as amended)"
+    posture: MAPPED-ONLY
+    role: "Live Gulf customers exist. The published privacy policy does not cover PDPL."
+    named_on: []
+
+  - id: PDPL_UAE
+    name: "UAE Federal Decree-Law No. 45 of 2021 on the Protection of Personal Data"
+    posture: MAPPED-ONLY
+    role: "Live Gulf customers exist. The published privacy policy does not cover PDPL."
+    named_on: []
+
+  - id: QATAR_13_2016
+    name: "Qatar Law No. 13 of 2016 Concerning Personal Data Privacy Protection (PDPPL)"
+    posture: MAPPED-ONLY
+    role: >-
+      Reaches Foxy through HOSTING, not through customers: production runs in
+      GCP me-central1-a, Doha. Whether hosting alone triggers obligations is a
+      legal question and is TBD.
+    named_on: []
+
+  - id: PCI_DSS
+    name: "PCI DSS v4.0.1"
+    posture: CLAIMED
+    role: >-
+      Foxy is not a merchant, not a service provider in a cardholder data
+      environment, and stores no account data. The claim surface is a single
+      dashboard string naming a `pci` tag the SDK does not recognise.
+    named_on: ["foxy-dashboard/foxy-audit-premium.html"]
+
+  - id: ISO_27001
+    name: "ISO/IEC 27001:2022"
+    posture: CLAIMED
+    role: "Named only in the negative and as a roadmap item. Not certified."
+    named_on: ["foxy-sale-page/trust.html", "foxy-sale-page/privacy.html"]
+
+  - id: SOC1
+    name: "SSAE 18 SOC 1 (ICFR)"
+    posture: MAPPED-ONLY
+    role: "NOT APPLICABLE. Reasoning lives in docs/compliance/not-applicable.md."
+    named_on: []
+
+# ---------------------------------------------------------------------------
+# SURFACE CLAIMS
+#
+# Every regime word found on a customer-facing surface, and where it lands.
+# Found with:
+#   grep -ril "HIPAA\|SOC 2\|GDPR\|PCI\|ISO 27001\|FedRAMP\|CCPA\|NIST" \
+#        foxy-sale-page/ foxy-dashboard/
+# then re-run per word with word boundaries, because base64 image payloads in
+# these files contain the letter sequences "pci", "PDPL" and "NIST" and a naive
+# grep reports them as claims.
+#
+# verdict:
+#   backed      a crosswalk row supports the claim as written
+#   qualify     true but overclaims as written; C2 should narrow it
+#   delete      not true, or not supportable; C2 should remove it
+# ---------------------------------------------------------------------------
+surface_claims:
+  - claim: "We're currently completing our SOC 2 Type I audit."
+    where: "foxy-sale-page/faq.html:60 and foxy-sale-page/pricing.html:121"
+    verdict: delete
+    why: >-
+      foxy-sale-page/trust.html:151 says the opposite on the same site: "SOC 2
+      Type I — intended, but no auditor is engaged yet, so we are not putting a
+      date on it." Two pages cannot both be true. "Completing an audit" with no
+      engaged auditor is not a qualification, it is a false statement of fact.
+    regime: SOC2
+
+  - claim: "Infrastructure / hosting provider (Google Cloud, Ubuntu VM) — United States."
+    where: "foxy-sale-page/privacy.html:175, and the same row in foxy-sale-page/trust.html:144"
+    verdict: delete
+    why: >-
+      ⚠ FOUND BY THIS PHASE, NOT ANTICIPATED BY THE PLAN. Production runs in GCP
+      me-central1-a — Doha, Qatar. The published privacy policy and the trust
+      page both state the hosting region as the United States. This is a
+      factually wrong residency statement on a legal page, live today, and it
+      is load-bearing for GDPR Art. 44-46: the transfer actually being made is
+      EEA -> Qatar, a country with no adequacy decision, and neither page
+      mentions it.
+    regime: GDPR
+
+  - claim: "Your data is processed in the United States (our hosting infrastructure, Google, OpenAI, and Paddle) and the European Union (Brevo). ... Where personal data is transferred from the EEA, UK, or Switzerland to the United States, we rely on the EU Standard Contractual Clauses..."
+    where: "foxy-sale-page/privacy.html:208-209 (§13 International Data Transfers)"
+    verdict: delete
+    why: >-
+      Same defect, one section further on, and worse: it names a transfer
+      mechanism for a destination that is not the actual destination. The Art.
+      46 safeguard for the EEA -> Qatar leg is not stated because the leg is not
+      disclosed. C1 owns the fix (SCCs + a transfer impact assessment); C2 owns
+      the page.
+    regime: GDPR
+
+  - claim: "Mapped to standards: aligned to NIST AI RMF and the EU AI Act so reviewers recognize it on sight."
+    where: "foxy-sale-page/passport.html:36, and passport.html:7 / docs.html:68 in the same words"
+    verdict: delete
+    why: >-
+      backend/app/templates/compliance_passport.html contains zero occurrences
+      of "NIST", "AI RMF", "AI Act" or any clause number (grep -c, 2026-09-01).
+      The Passport is grouped by policy_tag. Nothing in it is mapped to a
+      standard. C3 is the phase that could make this claim true; until it does,
+      the claim has nothing behind it.
+    regime: NIST_AI_RMF
+
+  - claim: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act is risk-scored 60 or higher unless it is clearly compliant."
+    where: "foxy-dashboard/foxy-audit-premium.html:2360 (Regulated data mode — HIPAA / financial)"
+    verdict: qualify
+    why: >-
+      Three of the five tags named — `pci`, `sox`, `eu_ai_act` — are not in the
+      SDK's KNOWN_POLICY_TAGS. A customer may pass them as free strings (the SDK
+      warns once per unknown tag), so the sentence is not false; but a
+      dashboard listing them beside `hipaa` and `gdpr` reads as four regime
+      modes where two exist. This is the only surface where the word "pci"
+      appears at all.
+    regime: PCI_DSS
+
+  - claim: "@foxy.audit(policy=\"soc2\")"
+    where: "foxy-sale-page/how-it-works.html:38, foxy-sale-page/sdk.html:38, foxy-sale-page/install.html:58"
+    verdict: qualify
+    why: >-
+      _POLICY_EXTRA maps "soc2": () — baseline injection and secret checks only,
+      no SOC 2-specific rule. The code is right and the vocabulary is wrong: SOC
+      2 is an organisational control regime and cannot be a per-call check. The
+      example is not a false claim, but the tag name implies a check that does
+      not and cannot exist. C2 owns the vocabulary fix.
+    regime: SOC2
+
+  - claim: "@foxy.audit(policy=\"hipaa\")"
+    where: "foxy-sale-page/install.html:54, foxy-sale-page/welcome.html:88 (as hipaa_basic)"
+    verdict: backed
+    why: >-
+      `hipaa` -> ("phi",) is a real detection family and mode=\"block\" genuinely
+      stops the model call before it is made. What it does NOT establish is that
+      Foxy may lawfully receive PHI — that needs a BAA, which does not exist.
+      Backed as a product claim; see the HIPAA gap rows for the company claim.
+    regime: HIPAA
+
+  - claim: "Its verdict is a review signal — not a HIPAA or SOC 2 certification — and unavailable judge results remain visibly unknown."
+    where: "foxy-sale-page/how-it-works.html:56"
+    verdict: backed
+    why: "A disclaimer, and an accurate one. This is the sentence other pages should sound like."
+    regime: SOC2
+
+  - claim: "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation."
+    where: "foxy-sale-page/trust.html:150 and foxy-sale-page/privacy.html:177"
+    verdict: backed
+    why: "True, and stated plainly. Nothing to change."
+    regime: ISO_27001
+
+  - claim: "Roadmap: ISO 27001 gap analysis — Q2 2027. SOC 2 Type I — intended, but no auditor is engaged yet, so we are not putting a date on it."
+    where: "foxy-sale-page/trust.html:151"
+    verdict: backed
+    why: "True. It is also the sentence that makes faq.html:60 and pricing.html:121 indefensible."
+    regime: SOC2
+
+  - claim: "EU / EEA / UK (GDPR): analytics is off until you opt in ... California (CCPA/CPRA): we don't sell or share personal information"
+    where: "foxy-sale-page/cookie-policy.html:116-117, foxy-sale-page/index.html:1389-1460, and foxy-sale-page/dpa.html:99 (which defines the controller/processor split in CCPA/CPRA terms as well as GDPR terms)"
+    verdict: backed
+    why: >-
+      A geo-aware consent gate that is actually implemented in index.html. The
+      claim is about cookies, not about certification.
+    regime: GDPR
+
+  - claim: "Rights lists for Brazil (LGPD), Canada (PIPEDA), Singapore, Australia"
+    where: "foxy-sale-page/privacy.html:221-224"
+    verdict: qualify
+    why: >-
+      ⚠ OUT OF C0 SCOPE AND RECORDED SO NOBODY MISTAKES THIS FILE FOR COMPLETE.
+      LGPD, PIPEDA, Singapore PDPA and Australian Privacy Principles are named
+      on a live legal page and have NO rows in this crosswalk. Either they get
+      regimes here or the privacy policy stops naming them. The same page omits
+      PDPL, which live Gulf customers are behind.
+    regime: null
+
+  - claim: "FedRAMP"
+    where: null
+    verdict: backed
+    why: "Zero occurrences on any customer-facing surface. Nothing to resolve."
+    regime: null
+
+# ---------------------------------------------------------------------------
+# ROWS
+#
+# status: met | partial | gap | not-applicable
+#   met            the requirement is discharged AND a third party can inspect
+#                  the evidence that says so. THERE ARE ZERO `met` ROWS. That is
+#                  not modesty; see README.md "Why nothing is met".
+#   partial        a real control exists and does real work, but either it does
+#                  not discharge the clause on its own or no third party can
+#                  inspect it.
+#   gap            no control, or a control that fails the clause.
+#   not-applicable the clause cannot bind Foxy. Every one carries its reasoning.
+#
+# control:  what Foxy does. May name closed-source code.
+# evidence: what an OUTSIDE party could obtain and inspect. A path into the
+#           private backend is NOT evidence — it is a control. null is common
+#           and is the honest answer.
+# ---------------------------------------------------------------------------
+rows:
+
+  # ---------------------------------------------------------------- HIPAA ---
+  - id: HIPAA-001
+    regime: HIPAA
+    clause: "164.308(a)(1)(ii)(D)"
+    requirement: "Information system activity review (Required) — regularly review records of information system activity such as audit logs, access reports and security incident tracking reports."
+    control: "Per-org hash-chained event ledger (backend/app/chain.py) plus the dashboard's grading and breach views."
+    evidence: "A ledger export the customer pulls from GET /v1/logs/export and re-verifies with verifier/foxy_verify.py — dependency-free, no Foxy imports."
+    status: partial
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "The ledger makes review possible. Nothing evidences that a review is actually PERFORMED on a schedule — that is a C4 control, not a product feature."
+
+  - id: HIPAA-002
+    regime: HIPAA
+    clause: "164.308(a)(2)"
+    requirement: "Assigned security responsibility — identify the security official responsible for developing and implementing the policies and procedures required by this subpart."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "Two-person team; no named security official recorded anywhere. Cheap to close and it is a question every questionnaire opens with."
+
+  - id: HIPAA-003
+    regime: HIPAA
+    clause: "164.308(a)(5)"
+    requirement: "Security awareness and training — implement a security awareness and training program for all workforce members."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "C4 scope."
+
+  - id: HIPAA-004
+    regime: HIPAA
+    clause: "164.308(a)(6)(ii)"
+    requirement: "Response and reporting (Required) — identify and respond to suspected or known security incidents; mitigate harmful effects; document incidents and their outcomes."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "No incident-response plan exists. C1 deliverable 6."
+
+  - id: HIPAA-005
+    regime: HIPAA
+    clause: "164.308(a)(7)(ii)(A)"
+    requirement: "Data backup plan (Required) — establish and implement procedures to create and maintain retrievable exact copies of electronic protected health information."
+    control: "deploy/backup.sh — nightly pg_dump plus an avatar tarball, RETENTION_DAYS default 14."
+    evidence: null
+    status: partial
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "Copies exist. They are written to deploy/backups ON THE PRODUCTION VM, so they share a failure domain with the database they protect."
+
+  - id: HIPAA-006
+    regime: HIPAA
+    clause: "164.308(a)(7)(ii)(B)"
+    requirement: "Disaster recovery plan (Required) — establish and implement procedures to restore any loss of data."
+    control: "A restore recipe in the header comment of deploy/backup.sh."
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "A comment is not a plan. Lose the VM and both the database and every dump go together."
+
+  - id: HIPAA-007
+    regime: HIPAA
+    clause: "164.308(a)(7)(ii)(D)"
+    requirement: "Testing and revision procedures (Addressable) — implement procedures for periodic testing and revision of contingency plans."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "No record of a restore ever having been performed. An untested backup is a belief, not a control."
+
+  - id: HIPAA-008
+    regime: HIPAA
+    clause: "164.308(b)(1)"
+    requirement: "Business associate contracts and other arrangements — a covered entity may permit a business associate to create, receive, maintain or transmit ePHI on its behalf only if it obtains satisfactory assurances, per 164.314(a), that the business associate will appropriately safeguard it."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
+    notes: "⚠ THE SHARPEST SINGLE GAP. No BAA exists in the repo, the sale page or the vault. There are live healthcare customers. C1 deliverable 1."
+
+  - id: HIPAA-009
+    regime: HIPAA
+    clause: "164.312(a)(2)(i)"
+    requirement: "Unique user identification (Required) — assign a unique name and/or number for identifying and tracking user identity."
+    control: "Per-user accounts (backend/app/auth.py); staff console sessions signed with a secret distinct from the customer app's."
+    evidence: null
+    status: partial
+    source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
+    notes: "Implemented; nothing an external party can inspect."
+
+  - id: HIPAA-010
+    regime: HIPAA
+    clause: "164.312(b)"
+    requirement: "Audit controls — implement hardware, software and/or procedural mechanisms that record and examine activity in information systems that contain or use electronic protected health information."
+    control: "Sequential per-org SHA-256 hash chain over event metadata (backend/app/chain.py); staff-action audit trail (backend/app/admin_audit.py, account_audit.py, admin_chain.py); optional EVM anchoring of the chain head."
+    evidence: "An export plus `python verifier/foxy_verify.py logs.json`. The verifier is shipped, dependency-free, and recomputes the chain with zero Foxy imports, so the customer's auditor runs it without trusting us."
+    status: partial
+    source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
+    notes: >-
+      The strongest genuine row in this file, and still not `met`: Foxy's system
+      does not contain ePHI (content-blindness), so what the chain evidences is
+      activity ABOUT ePHI-bearing interactions, not the covered system itself.
+      Whether the metadata is identifiable — and so itself PHI — is a legal
+      question and is TBD.
+
+  - id: HIPAA-011
+    regime: HIPAA
+    clause: "164.312(c)(1)"
+    requirement: "Integrity — implement policies and procedures to protect electronic protected health information from improper alteration or destruction."
+    control: "Hash chain; event_metadata bound into the chain hash; anchor receipts and the staff trail are read-only in the admin tools."
+    evidence: "The verifier detects any post-hoc edit of an exported chain."
+    status: partial
+    source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
+    notes: "Tamper-EVIDENT, not tamper-proof, and the distinction is the product's honest line."
+
+  - id: HIPAA-012
+    regime: HIPAA
+    clause: "164.312(d)"
+    requirement: "Person or entity authentication — implement procedures to verify that a person or entity seeking access to electronic protected health information is the one claimed."
+    control: "backend/app/auth.py; backend/app/mfa.py; step-up authentication for sensitive staff actions; backend/app/ip_allow.py."
+    evidence: null
+    status: partial
+    source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
+    notes: null
+
+  - id: HIPAA-013
+    regime: HIPAA
+    clause: "164.312(e)(1)"
+    requirement: "Transmission security — implement technical security measures to guard against unauthorized access to electronic protected health information that is being transmitted over an electronic communications network."
+    control: "TLS-terminating reverse proxy; the SDK never transmits raw prompt or response text at all — only hashes and bounded metadata."
+    evidence: "The SDK is public on PyPI (foxy-audit) and its wire payload is a closed field list a customer can read and diff against what leaves their process."
+    status: partial
+    source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
+    notes: "Content-blindness is the real control here, and it is a genuinely unusual one. It does not cover the platform-key leg — see HIPAA-015."
+
+  - id: HIPAA-014
+    regime: HIPAA
+    clause: "164.314(a)(2)(i)(C)"
+    requirement: "Business associate contract implementation specification — the contract must require the business associate to report to the covered entity any security incident of which it becomes aware, including breaches of unsecured protected health information."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.314, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.314 (fetched 2026-09-01)"
+    notes: "No contract to carry the term, and no reporting process behind it. Depends on HIPAA-008."
+
+  - id: HIPAA-015
+    regime: HIPAA
+    clause: "164.314(a)(2)(i)(B)"
+    requirement: "Business associate contract implementation specification — the contract must require the business associate to ensure that any subcontractors that create, receive, maintain or transmit ePHI on its behalf agree to comply with the applicable requirements of this subpart by entering into a contract that meets this section."
+    control: "BYOK: under bring-your-own-key the customer contracts with OpenAI/Google directly and Foxy is not in that chain."
+    evidence: null
+    status: gap
+    source: "45 CFR 164.314, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.314 (fetched 2026-09-01)"
+    notes: >-
+      backend/app/judge_routing.py platform_keys_allowed() lets privileged orgs
+      grade on FOXY's provider keys, which sends customer event metadata to
+      OpenAI and Google under Foxy's account — a subcontractor relationship with
+      no contract behind it. Content-blindness does NOT cover this leg. Open
+      question 2 in the plan (which tiers actually use platform keys in
+      production) decides whether this is live or latent.
+
+  - id: HIPAA-016
+    regime: HIPAA
+    clause: "164.316(b)(2)(i)"
+    requirement: "Time limit (Required) — retain the documentation required by 164.316(b)(1) for 6 years from the date of its creation or the date when it last was in effect, whichever is later."
+    control: null
+    evidence: null
+    status: gap
+    source: "45 CFR 164.316, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.316 (fetched 2026-09-01)"
+    notes: "No documented retention policy for security documentation. Distinct from ledger retention, which is also unstated — see EUAI-003 and PCI-005."
+
+  - id: HIPAA-017
+    regime: HIPAA
+    clause: "164.410"
+    requirement: "Notification by a business associate — following the discovery of a breach of unsecured protected health information, a business associate shall notify the covered entity without unreasonable delay and in no case later than 60 calendar days after discovery."
+    control: "foxy-sale-page/privacy.html §15 commits to notifying affected workspace administrators without undue delay."
+    evidence: "The published privacy policy, which anyone can read."
+    status: gap
+    source: "45 CFR 164.410, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.410 (fetched 2026-09-01)"
+    notes: "A privacy-policy sentence is not a breach-response plan and does not name the 60-day duty. C1 deliverable 6."
+
+  # ---------------------------------------------------------------- SOC 2 ---
+  - id: SOC2-001
+    regime: SOC2
+    clause: "CC6.1"
+    requirement: "The entity implements logical access security software, infrastructure, and architectures over protected information assets to protect them from security events to meet the entity's objectives."
+    control: "PostgreSQL row-level security, per-org isolation (backend/app/rls.py); API-key and session auth; separate customer_api / admin_api ASGI apps."
+    evidence: null
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01 — https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022"
+    notes: "Real and load-bearing. No auditor has looked at it, so it cannot be more than partial."
+
+  - id: SOC2-002
+    regime: SOC2
+    clause: "CC6.6"
+    requirement: "The entity implements logical access security measures to protect against threats from sources outside its system boundaries."
+    control: "TLS-terminating reverse proxy; backend/app/ip_allow.py; step-up authentication on sensitive staff actions; backend/app/mfa.py."
+    evidence: null
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: null
+
+  - id: SOC2-003
+    regime: SOC2
+    clause: "CC6.7"
+    requirement: "The entity restricts the transmission, movement, and removal of information to authorized internal and external users and processes, and protects it during transmission, movement, or removal to meet the entity's objectives."
+    control: "Content-blindness — raw prompt and response text never leave the customer process. Provider keys encrypted at rest under the KEK (backend/app/crypto_secrets.py). Exports are org-scoped and bounded."
+    evidence: "The public SDK's wire payload is a closed field list; a customer can verify what leaves their own process."
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "The platform-key leg (see HIPAA-015) is an authorized-by-Foxy movement the customer has not separately authorized."
+
+  - id: SOC2-004
+    regime: SOC2
+    clause: "CC6.8"
+    requirement: "The entity implements controls to prevent or detect and act upon the introduction of unauthorized or malicious software to meet the entity's objectives."
+    control: null
+    evidence: null
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "No dependency scanning, image scanning or endpoint control recorded. C4 scope."
+
+  - id: SOC2-005
+    regime: SOC2
+    clause: "CC7.2"
+    requirement: "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives; anomalies are analyzed to determine whether they represent security events."
+    control: "The durable outbox worker grades each event's METADATA (backend/app/worker.py, judge.py); deterministic metadata rules where no judge can be reached; backend/app/observability.py."
+    evidence: null
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: >-
+      ⚠ READ THIS BEFORE CITING THIS ROW ANYWHERE. The judge sees only hashes and
+      counts. It CANNOT assess maliciousness — it has no content to read. What it
+      detects is metadata anomaly (repeated hashes in a session, token spikes).
+      This row must never be used to imply Foxy detects malicious intent. It also
+      monitors CUSTOMER AI activity, not Foxy's own infrastructure, which is what
+      CC7.2 is actually about for Foxy's own SOC 2.
+
+  - id: SOC2-006
+    regime: SOC2
+    clause: "CC7.3"
+    requirement: "The entity evaluates security events to determine whether they could or have resulted in a failure of the entity to meet its objectives (security incidents) and, if so, takes actions to prevent or address such failures."
+    control: null
+    evidence: null
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "Same gap as HIPAA-004: no incident-response process exists."
+
+  - id: SOC2-007
+    regime: SOC2
+    clause: "CC8.1"
+    requirement: "The entity authorizes, designs, develops or acquires, configures, documents, tests, approves, and implements changes to infrastructure, data, software, and procedures to meet its objectives."
+    control: "Branch-per-change with a merge gate; .github/workflows/ci.yml and deploy.yml; deploy is Actions -> VM -> docker compose up --build with a /health/ready smoke test and auto-rollback; linear Alembic migration history with a single-head check."
+    evidence: "Public commit history and CI runs, for anyone given repository access."
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "Closest thing to an already-operating SOC 2 control. What is missing is the record that each change was AUTHORIZED and APPROVED, distinct from merged."
+
+  - id: SOC2-008
+    regime: SOC2
+    clause: "CC9.2"
+    requirement: "The entity assesses and manages risks associated with vendors and business partners."
+    control: "A subprocessor roster published on foxy-sale-page/privacy.html §8 and foxy-sale-page/trust.html, guarded by test_site_wide_claims.py so the pages cannot disagree with each other."
+    evidence: "The published subprocessor list."
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: >-
+      The guard proves the pages AGREE. It does not prove they are RIGHT, and
+      they are not: the hosting row says United States. No vendor risk assessment
+      exists for any provider. C1 deliverable 4.
+
+  - id: SOC2-009
+    regime: SOC2
+    clause: "A1.2"
+    requirement: "The entity authorizes, designs, develops or acquires, implements, operates, approves, maintains, and monitors environmental protections, software, data backup processes, and recovery infrastructure to meet its objectives."
+    control: "deploy/backup.sh — nightly pg_dump plus avatar archive, RETENTION_DAYS default 14."
+    evidence: null
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: >-
+      ⚠ THE FINDING THE PLAN NAMES IN C4. Backups are written to deploy/backups
+      on the production VM. There is no recovery infrastructure separate from the
+      thing being recovered. This is the question an auditor opens with.
+
+  - id: SOC2-010
+    regime: SOC2
+    clause: "A1.3"
+    requirement: "The entity tests recovery plan procedures supporting system recovery to meet its objectives."
+    control: null
+    evidence: null
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "No restore has been tested. Cheapest high-value control in C4: run one, keep the output, and the row moves."
+
+  - id: SOC2-011
+    regime: SOC2
+    clause: "C1.1"
+    requirement: "The entity identifies and maintains confidential information to meet the entity's objectives related to confidentiality."
+    control: "Content-blindness by design; KEK-encrypted provider keys; password_hash / key_hash / *_key_enc / session token_hash never serialized; API keys shown once."
+    evidence: "The public SDK shows what is and is not sent."
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "No written data-classification scheme, which is what C1.1 asks for in an audit."
+
+  - id: SOC2-012
+    regime: SOC2
+    clause: "C1.2"
+    requirement: "The entity disposes of confidential information to meet the entity's objectives related to confidentiality."
+    control: "Workspace deletion from the dashboard; permanent erasure on request (foxy-sale-page/privacy.html §9)."
+    evidence: "The published privacy policy."
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: "Deletion exists; a retention schedule that says WHEN disposal happens by default does not."
+
+  - id: SOC2-013
+    regime: SOC2
+    clause: "CC4.1"
+    requirement: "COSO Principle 16: The entity selects, develops, and performs ongoing and/or separate evaluations to ascertain whether the components of internal control are present and functioning."
+    control: null
+    evidence: null
+    status: gap
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: >-
+      The clause that makes the plan's §5 sequencing argument concrete: Type II
+      needs an observation WINDOW of evidence that controls operated. Nothing is
+      accumulating today, so the window starts the day someone starts it — which
+      is why C4's evidence collection runs beside C1 and not after C3.
+
+  - id: SOC2-014
+    regime: SOC2
+    clause: "CC2.1"
+    requirement: "COSO Principle 13: The entity obtains or generates and uses relevant, quality information to support the functioning of internal control."
+    control: "backend/app/observability.py; the staff audit trail; CI records."
+    evidence: null
+    status: partial
+    source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
+    notes: null
+
+  # ----------------------------------------------------------------- GDPR ---
+  - id: GDPR-001
+    regime: GDPR
+    clause: "Art. 5(1)(c)"
+    requirement: "Data minimisation — personal data shall be adequate, relevant and limited to what is necessary in relation to the purposes for which they are processed."
+    control: "Content-blindness: prompt and response text are hashed locally and never transmitted. The wire payload is a closed field list."
+    evidence: "The public SDK (pip foxy-audit) — a customer can read exactly what leaves their process."
+    status: partial
+    source: "GDPR Art. 5, gdpr-info.eu — https://gdpr-info.eu/art-5-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: "The best GDPR story the product has. Not `met` because minimisation is judged over ALL processing, including the account and billing data Foxy controls."
+
+  - id: GDPR-002
+    regime: GDPR
+    clause: "Art. 25"
+    requirement: "Data protection by design and by default — implement appropriate technical and organisational measures designed to implement the data-protection principles in an effective manner and to integrate the necessary safeguards into the processing."
+    control: "Content-blindness as an architectural property rather than a setting; local policy check before the model call in block/redact mode; per-org RLS."
+    evidence: "The public SDK and the standalone verifier."
+    status: partial
+    source: "GDPR Art. 25, gdpr-info.eu — https://gdpr-info.eu/art-25-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: null
+
+  - id: GDPR-003
+    regime: GDPR
+    clause: "Art. 28(3)"
+    requirement: "Processing by a processor shall be governed by a contract that sets out the subject-matter, duration, nature and purpose of processing, the type of personal data and categories of data subjects, and the obligations and rights of the controller — including the specific terms listed at points (a) to (h)."
+    control: "A published DPA at foxy-sale-page/dpa.html, backed by a policy .docx and pinned by foxy-sale-page/test_dpa_v14.py."
+    evidence: "The published DPA."
+    status: partial
+    source: "GDPR Art. 28, gdpr-info.eu — https://gdpr-info.eu/art-28-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: "Marked partial and not backed because the DPA has not been reviewed by a lawyer, and because its subprocessor annex inherits the wrong hosting region — see the surface_claims entries."
+
+  - id: GDPR-004
+    regime: GDPR
+    clause: "Art. 30(2)"
+    requirement: "Each processor shall maintain a record of all categories of processing activities carried out on behalf of a controller, containing the processor's and controllers' details, the categories of processing, transfers to third countries, and a general description of the technical and organisational security measures."
+    control: null
+    evidence: null
+    status: gap
+    source: "GDPR Art. 30, gdpr-info.eu — https://gdpr-info.eu/art-30-gdpr/ (paragraphs 1 and 2 quoted, fetched 2026-09-01)"
+    notes: "No record of processing exists. C1 deliverable 6. Note it is Art. 30(2) that binds Foxy as processor, not 30(1)."
+
+  - id: GDPR-005
+    regime: GDPR
+    clause: "Art. 32"
+    requirement: "Security of processing — the controller and the processor shall implement appropriate technical and organisational measures to ensure a level of security appropriate to the risk, including as appropriate pseudonymisation and encryption, confidentiality, integrity, availability and resilience, restoration of availability after an incident, and regular testing of effectiveness."
+    control: "Hash chain; RLS; KEK-encrypted provider keys; TLS; content-blindness; deploy/backup.sh."
+    evidence: "The export plus verifier/foxy_verify.py evidences integrity. Nothing evidences availability or restoration."
+    status: partial
+    source: "GDPR Art. 32, gdpr-info.eu — https://gdpr-info.eu/art-32-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: "Art. 32(1)(c) restoration and 32(1)(d) regular testing both fail on the same fact as SOC2-009 and SOC2-010: on-VM backups, never restored."
+
+  - id: GDPR-006
+    regime: GDPR
+    clause: "Art. 33(2)"
+    requirement: "The processor shall notify the controller without undue delay after becoming aware of a personal data breach."
+    control: "foxy-sale-page/privacy.html §15 commits to notifying affected workspace administrators without undue delay."
+    evidence: "The published privacy policy."
+    status: partial
+    source: "GDPR Art. 33, gdpr-info.eu — https://gdpr-info.eu/art-33-gdpr/ (paragraphs 1 and 2 quoted, fetched 2026-09-01)"
+    notes: "The commitment is published and uses the right words. There is no plan behind it — no decision tree, no named owner, no template. C1 deliverable 6."
+
+  - id: GDPR-007
+    regime: GDPR
+    clause: "Art. 44"
+    requirement: "General principle for transfers — any transfer of personal data to a third country shall take place only if the conditions of Chapter V are complied with by the controller and processor, including for onward transfers."
+    control: null
+    evidence: null
+    status: gap
+    source: "GDPR Art. 44, gdpr-info.eu — https://gdpr-info.eu/art-44-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: >-
+      Production is in GCP me-central1-a, Doha. EEA personal data is at rest in
+      Qatar. The published pages state the hosting region as the United States,
+      so the transfer that is actually happening is not disclosed anywhere. This
+      is the single most serious row in the file.
+
+  - id: GDPR-008
+    regime: GDPR
+    clause: "Art. 45"
+    requirement: "Transfers on the basis of an adequacy decision — a transfer may take place where the Commission has decided that the third country ensures an adequate level of protection."
+    control: null
+    evidence: null
+    status: not-applicable
+    source: "GDPR Art. 45, gdpr-info.eu — https://gdpr-info.eu/art-45-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: >-
+      Not-applicable because the route is closed, not because it is irrelevant:
+      there is no adequacy decision for Qatar. Recorded so nobody proposes Art.
+      45 as the answer. Art. 46 is the only route.
+
+  - id: GDPR-009
+    regime: GDPR
+    clause: "Art. 46"
+    requirement: "Transfers subject to appropriate safeguards — in the absence of an adequacy decision, a controller or processor may transfer personal data to a third country only if it has provided appropriate safeguards, and on condition that enforceable data subject rights and effective legal remedies are available."
+    control: "foxy-sale-page/dpa.html §on transfers commits to the EU SCCs where a destination is not adequate."
+    evidence: "The published DPA."
+    status: gap
+    source: "GDPR Art. 46, gdpr-info.eu — https://gdpr-info.eu/art-46-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: >-
+      The DPA names the mechanism generically; the privacy policy names SCCs only
+      for a US destination that is not where the data is. No executed SCCs and no
+      transfer impact assessment exist for the EEA -> Qatar leg. C1 deliverable 3.
+
+  - id: GDPR-010
+    regime: GDPR
+    clause: "Art. 28(2)"
+    requirement: "The processor shall not engage another processor without prior specific or general written authorisation of the controller; with general written authorisation, the processor shall inform the controller of intended changes concerning the addition or replacement of other processors, giving the controller the opportunity to object."
+    control: "foxy-sale-page/dpa.html commits to advance notice by email to the workspace's registered administrator before adding or replacing a sub-processor."
+    evidence: "The published DPA and the published subprocessor roster."
+    status: partial
+    source: "GDPR Art. 28, gdpr-info.eu — https://gdpr-info.eu/art-28-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
+    notes: >-
+      The mechanism is written down. The roster it points at is wrong about
+      hosting, and it is not established whether platform-key grading (which puts
+      OpenAI/Google under Foxy's account in the chain) has ever been notified as
+      a subprocessor engagement.
+
+  # ------------------------------------------------------------ EU AI ACT ---
+  - id: EUAI-001
+    regime: EU_AI_ACT
+    clause: "Art. 12"
+    requirement: "Record-keeping — high-risk AI systems shall technically allow for the automatic recording of events (logs) over the lifetime of the system, enabling traceability appropriate to the intended purpose."
+    control: "The event ledger is exactly this shape of automatic event record."
+    evidence: "A ledger export plus verifier/foxy_verify.py."
+    status: not-applicable
+    source: "EU AI Act Art. 12, artificialintelligenceact.eu — https://artificialintelligenceact.eu/article/12/ (full text fetched 2026-09-01)"
+    notes: >-
+      Art. 12 binds the PROVIDER of a high-risk AI system. Foxy is not one. It is
+      not-applicable TO FOXY and simultaneously the clause a customer-provider
+      would use Foxy toward — which is why it is here rather than omitted. Do not
+      quote this row as Foxy satisfying Art. 12.
+
+  - id: EUAI-002
+    regime: EU_AI_ACT
+    clause: "Art. 26(6)"
+    requirement: "Deployers of high-risk AI systems shall keep the logs automatically generated by that high-risk AI system, to the extent such logs are under their control, for a period appropriate to the intended purpose, of at least six months, unless provided otherwise in applicable Union or national law."
+    control: "The per-org hash-chained ledger retains event metadata for the life of the workspace; exports are paged and independently verifiable."
+    evidence: "A ledger export the deployer's auditor re-verifies with the shipped verifier."
+    status: partial
+    source: "EU AI Act Art. 26, artificialintelligenceact.eu — https://artificialintelligenceact.eu/article/26/ (paragraphs 5 and 6 fetched 2026-09-01)"
+    notes: >-
+      ⚠ THIS IS THE ROW THE PRODUCT ACTUALLY SERVES — a deployer's log-retention
+      duty, not a provider's Art. 12. Partial because no retention policy is
+      published, so nobody can state that the six-month floor is met; and because
+      the ledger holds Foxy's record of the interaction, not the AI system's own
+      generated logs, which is a distinction a regulator may draw.
+
+  - id: EUAI-003
+    regime: EU_AI_ACT
+    clause: "Art. 19"
+    requirement: "Automatically generated logs — providers of high-risk AI systems shall keep the logs referred to in Article 12(1) that are automatically generated, to the extent such logs are under their control, for a period appropriate to the intended purpose of at least six months, unless provided otherwise in applicable Union or national law."
+    control: "As EUAI-002."
+    evidence: null
+    status: gap
+    source: "EU AI Act Art. 19, artificialintelligenceact.eu — https://artificialintelligenceact.eu/article/19/ (full text fetched 2026-09-01)"
+    notes: "No published retention period anywhere means the six-month floor cannot be evidenced for either Art. 19 or Art. 26(6). One published retention policy closes both."
+
+  - id: EUAI-004
+    regime: EU_AI_ACT
+    clause: "Art. 11"
+    requirement: "Technical documentation — the technical documentation of a high-risk AI system shall be drawn up before that system is placed on the market or put into service and kept up to date, demonstrating that the system complies with the requirements of Section 2."
+    control: "The AI system registry (backend/migrations/versions/0068_ai_systems.py, backend/app/models.py) records the field list EU AI Act paperwork asks for and cannot hold prompt or response content."
+    evidence: null
+    status: partial
+    source: "EU AI Act Art. 11, article title verified via the AI Act Explorer — https://artificialintelligenceact.eu/ai-act-explorer/ (fetched 2026-09-01)"
+    notes: "A registry that helps a customer assemble Art. 11 documentation. It does not produce the documentation, and Foxy has no Art. 11 duty of its own."
+
+  - id: EUAI-005
+    regime: EU_AI_ACT
+    clause: "Art. 26(5)"
+    requirement: "Deployers shall monitor the operation of the high-risk AI system on the basis of the instructions for use, inform the provider where use may result in the system presenting a risk, and notify serious incidents to the provider and to market surveillance authorities."
+    control: "Metadata grading, breach views and org notifications give a deployer a standing monitoring surface."
+    evidence: null
+    status: partial
+    source: "EU AI Act Art. 26, artificialintelligenceact.eu — https://artificialintelligenceact.eu/article/26/ (paragraphs 5 and 6 fetched 2026-09-01)"
+    notes: >-
+      ⚠ The monitoring is metadata-only. It cannot identify that a system
+      presented a risk in any semantic sense — the judge has no content to read.
+      Any Passport wording built on this row must say so.
+
+  # ---------------------------------------------------------- NIST AI RMF ---
+  - id: NIST-001
+    regime: NIST_AI_RMF
+    clause: TBD
+    requirement: "Unverified. The Compliance Passport is publicly claimed to be 'mapped to NIST AI RMF', and no mapping exists to state a subcategory against."
+    control: null
+    evidence: null
+    status: gap
+    source: "NOT VERIFIED — no NIST AI RMF function or subcategory identifier was verified for this row, deliberately. The finding is the absence of a mapping, not a mapping."
+    notes: >-
+      backend/app/templates/compliance_passport.html contains zero occurrences of
+      NIST, AI RMF, AI Act, or any clause number. Writing plausible-looking
+      subcategory IDs here would manufacture exactly the appearance the sale page
+      already claims and the Passport does not have. Either C3 builds the mapping
+      and this row is replaced with real subcategories, or C2 deletes the claim.
+      Whichever happens, this row is closed by that phase, not by research.
+
+  # ----------------------------------------------------------- PDPL (KSA) ---
+  - id: KSA-001
+    regime: PDPL_KSA
+    clause: "Art. 19"
+    requirement: "The controller shall take the necessary organisational, administrative and technical measures to ensure the protection of personal data, including when it is transferred, in accordance with the provisions and controls specified in the implementing regulations."
+    control: "As GDPR-005: hash chain, RLS, KEK-encrypted keys, TLS, content-blindness."
+    evidence: null
+    status: partial
+    source: "Secondary — Securiti and saudiprivacylaw.com, cross-checked 2026-09-01. ⚠ The official SDAIA English PDF (sdaia.gov.sa/en/SDAIA/about/Documents/Personal Data English V2-23April2023-Reviewed-.pdf) returns 'Request Rejected' to automated fetches, so this article number rests on secondary sources only."
+    notes: "Verify against the official text before this row is shown to a customer or a lawyer."
+
+  - id: KSA-002
+    regime: PDPL_KSA
+    clause: "Art. 29"
+    requirement: "A controller may transfer personal data outside the Kingdom, or disclose it to a party outside the Kingdom, only for the purposes the Law allows, without prejudice to national security or vital interests, where the destination provides an adequate level of protection as assessed by the competent authority, and limited to the minimum data necessary."
+    control: null
+    evidence: null
+    status: gap
+    source: "Corroborated twice: SDAIA's own 'Regulation on Personal Data Transfer Outside the Kingdom' cites 'subparagraph (c) of paragraph (2) of Article (29) of the Law'; saudiprivacylaw.com quotes the Article 29 opening text — https://saudiprivacylaw.com/saudi-pdpl-article-29-cross-border-data-transfer/ (fetched 2026-09-01)"
+    notes: >-
+      ⚠ A source conflict was found and resolved. One secondary source (Securiti)
+      cites 'Article 28 of PDPL' for cross-border transfer. SDAIA's own
+      regulation cites Article 29, so Article 29 is used. Recorded because the
+      next reader will hit the same conflict.
+      Substance: Saudi data reaching a Qatar-hosted service is a transfer outside
+      the Kingdom. Nothing addresses it.
+
+  - id: KSA-003
+    regime: PDPL_KSA
+    clause: "Art. 30"
+    requirement: "The controller shall maintain a record of personal data processing activities."
+    control: null
+    evidence: null
+    status: gap
+    source: "Secondary — saudiprivacylaw.com article index, listing 'Article 30 – Controller Record Maintenance' (fetched 2026-09-01). ⚠ Not confirmed against the official SDAIA text; see KSA-001."
+    notes: "Same gap as GDPR-004 — no record of processing exists in any form. One record can serve both if it is written to the wider standard."
+
+  - id: KSA-004
+    regime: PDPL_KSA
+    clause: TBD
+    requirement: "Data breach notification to the competent authority (reported as within 72 hours) and to affected data subjects. The ARTICLE NUMBER could not be verified."
+    control: null
+    evidence: null
+    status: gap
+    source: "NOT VERIFIED — two secondary sources disagree: saudiprivacylaw.com's index labels Article 18 'Data Breach Notifications', while a Securiti-derived summary attributes the notification duty to Article 20. The official SDAIA English PDF is not machine-fetchable. Left as TBD rather than picked."
+    notes: >-
+      The 72-hour duty is well attested; the article number is not. Do not
+      guess it. Resolve from the official text, or from counsel, before this
+      row is used anywhere.
+
+  # ----------------------------------------------------------- PDPL (UAE) ---
+  - id: UAE-001
+    regime: PDPL_UAE
+    clause: "Art. 20"
+    requirement: "The controller and the processor shall implement appropriate technical and organisational measures to ensure a level of information security appropriate to the risks of the processing, in line with leading international standards and practices."
+    control: "As GDPR-005."
+    evidence: null
+    status: partial
+    source: "Secondary — Securiti overview of Federal Decree-Law No. 45 of 2021 and Bird & Bird / Lexology commentary, cross-checked 2026-09-01 — https://securiti.ai/uae-personal-data-protection-law/. ⚠ Not verified against the official UAE gazette text."
+    notes: null
+
+  - id: UAE-002
+    regime: PDPL_UAE
+    clause: "Art. 22"
+    requirement: "Cross-border transfer of personal data is permitted where the destination state has an adequate data-protection regime as approved by the UAE Data Office, or, absent adequacy, under the alternative bases the Law provides."
+    control: null
+    evidence: null
+    status: gap
+    source: "Secondary — Securiti overview of Federal Decree-Law No. 45 of 2021, corroborated by Lexology and Bird & Bird commentary, 2026-09-01. ⚠ Not verified against the official UAE gazette text."
+    notes: "Same substance as KSA-002: UAE data reaching a Qatar-hosted service is a cross-border transfer, and nothing addresses it."
+
+  - id: UAE-003
+    regime: PDPL_UAE
+    clause: TBD
+    requirement: "Breach notification to the UAE Data Office and, where relevant, to the data subject, 'immediately after having become aware'. The ARTICLE NUMBER could not be verified."
+    control: null
+    evidence: null
+    status: gap
+    source: "NOT VERIFIED — the duty is attested by Securiti's overview but that page states the obligation without giving an article number, and no second source gave one. Left as TBD rather than guessed."
+    notes: null
+
+  # ---------------------------------------------------- QATAR LAW 13/2016 ---
+  - id: QAT-001
+    regime: QATAR_13_2016
+    clause: "Art. 11(5)"
+    requirement: "\"Develop and implement an internal effective Personal Data management system, and report any breach of protection measures thereof.\""
+    control: null
+    evidence: null
+    status: gap
+    source: "Quoted verbatim by the regulator: NCSA (Qatar), 'Personal Data Breach Notifications — Guideline for Regulated Entities' v2.0, PDPPL-02050217E, §4, extracted 2026-09-01 — https://ncsa.gov.qa/"
+    notes: "No internal personal-data management system is documented. Whether hosting alone brings Foxy in scope is a legal question and is TBD."
+
+  - id: QAT-002
+    regime: QATAR_13_2016
+    clause: "Art. 13"
+    requirement: "\"The Controller and the Processor shall adopt all necessary precautions to protect Personal Data against loss, damage... The Processor shall forthwith notify the Controller of any breach of such precautions or where any risk of threats arises to Personal Data in any way.\""
+    control: "Content-blindness, hash chain, RLS, KEK-encrypted keys, TLS."
+    evidence: null
+    status: partial
+    source: "Quoted verbatim by the regulator: NCSA (Qatar), 'Personal Data Breach Notifications — Guideline for Regulated Entities' v2.0, §4, extracted 2026-09-01"
+    notes: "The precautions half is substantially met in substance. The processor-notifies-controller half has no process behind it — same gap as GDPR-006."
+
+  - id: QAT-003
+    regime: QATAR_13_2016
+    clause: "Art. 14"
+    requirement: "\"The Controller shall inform both the relevant individual and Competent Department upon occurrence of a breach\" — the NCSA guideline sets a 72-hour deadline from detection and lists the content the notification must carry."
+    control: null
+    evidence: null
+    status: gap
+    source: "NCSA (Qatar), 'Personal Data Breach Notifications — Guideline for Regulated Entities' v2.0, §§4 and 6, extracted 2026-09-01. The guideline cites Articles 11(5), 13 and 14 as the breach provisions and Articles 23 and 24 as the penalty provisions."
+    notes: "Penalties cited by the regulator: up to QAR 1,000,000 (Art. 23) for failure to notify, up to QAR 5,000,000 (Art. 24) for failure to take appropriate precautions or for a processor's failure to inform a controller."
+
+  - id: QAT-004
+    regime: QATAR_13_2016
+    clause: TBD
+    requirement: "Cross-border transfer of personal data out of Qatar. The ARTICLE NUMBER could not be verified."
+    control: null
+    evidence: null
+    status: gap
+    source: "NOT VERIFIED — DLA Piper's Qatar chapter and Centraleyes both discuss transfer restrictions without citing an article, and the NCSA breach guideline covers only Arts. 11(5), 13, 14, 23, 24, 27 and 8. No official English text of the full Law was reachable."
+    notes: >-
+      Matters in the opposite direction to KSA-002 and UAE-002: this is data
+      leaving Qatar (the judge's calls to OpenAI and Google, and any future
+      off-VM backup), not arriving in it.
+
+  # -------------------------------------------------------------- PCI DSS ---
+  - id: PCI-001
+    regime: PCI_DSS
+    clause: "Req. 3.2.1"
+    requirement: "Account data storage is kept to a minimum through implementation of data retention and disposal policies, procedures and processes that include coverage for all locations of stored account data."
+    control: "Foxy stores no account data. The SDK's PII sweep detects card-number patterns locally and can block before the model call; the pattern never leaves the customer process."
+    evidence: "The public SDK."
+    status: not-applicable
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01 — https://www.middlebury.edu/sites/default/files/2025-01/PCI-DSS-v4_0_1.pdf (mirror of the PCI SSC document)"
+    notes: "Not-applicable because there is no cardholder data environment, not because the requirement was waived."
+
+  - id: PCI-002
+    regime: PCI_DSS
+    clause: "Req. 3.5.1"
+    requirement: "PAN is rendered unreadable anywhere it is stored, by one-way hashes based on strong cryptography of the entire PAN, truncation, tokenisation, or strong cryptography with key management."
+    control: "No PAN is stored. Card details for Foxy's own billing are held by Paddle as merchant of record, not by Foxy."
+    evidence: "foxy-sale-page/terms.html §6 and the published subprocessor roster name Paddle as merchant of record."
+    status: not-applicable
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: null
+
+  - id: PCI-003
+    regime: PCI_DSS
+    clause: "Req. 10.2.1"
+    requirement: "Audit logs are enabled and active for all system components and cardholder data."
+    control: "The event ledger, for the customer's AI interactions."
+    evidence: "An export plus verifier/foxy_verify.py."
+    status: partial
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: "Foxy is not in anyone's CDE, so this can only ever be a supporting record for a customer's own Req. 10 — never a Foxy attestation."
+
+  - id: PCI-004
+    regime: PCI_DSS
+    clause: "Req. 10.3.2"
+    requirement: "Audit log files are protected to prevent modifications by individuals."
+    control: "Sequential SHA-256 hash chain; optional EVM/Sepolia anchoring of the chain head; read-only anchor receipts and staff trail in the admin tools."
+    evidence: "The independent verifier detects any modification of an exported chain, with zero Foxy imports."
+    status: partial
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: "The single best-fitting PCI requirement in the standard for what Foxy actually is, and it is a log-integrity requirement, not a card requirement. Worth remembering when someone asks whether to 'do PCI'."
+
+  - id: PCI-005
+    regime: PCI_DSS
+    clause: "Req. 10.5.1"
+    requirement: "Retain audit log history for at least 12 months, with at least the most recent three months immediately available for analysis."
+    control: null
+    evidence: null
+    status: gap
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: "Third clause in this file to fail on the same missing artefact — see HIPAA-016 and EUAI-003. A single published retention policy moves all three."
+
+  - id: PCI-006
+    regime: PCI_DSS
+    clause: "Req. 12.8.1"
+    requirement: "A list of all third-party service providers with which account data is shared, or that could affect the security of account data, is maintained, including a description of the services provided."
+    control: "The published subprocessor roster, guarded for internal consistency by foxy-sale-page/test_site_wide_claims.py."
+    evidence: "The published roster."
+    status: gap
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: "The roster misstates the hosting region. A list that is consistent across pages and wrong on every one of them fails this requirement in spirit and in fact."
+
+  - id: PCI-007
+    regime: PCI_DSS
+    clause: "Req. 12.10.1"
+    requirement: "An incident response plan exists and is ready to be activated in the event of a suspected or confirmed security incident, including roles, responsibilities and communication strategies."
+    control: null
+    evidence: null
+    status: gap
+    source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
+    notes: "Fourth regime to record the same missing plan — see HIPAA-004, SOC2-006, GDPR-006."
+
+  # ------------------------------------------------------------ ISO 27001 ---
+  - id: ISO-001
+    regime: ISO_27001
+    clause: "A.5.1"
+    requirement: "Policies for information security — information security policy and topic-specific policies shall be defined, approved by management, published, communicated to and acknowledged by relevant personnel and interested parties, and reviewed at planned intervals."
+    control: "Twelve .docx policy documents back the published legal pages, with six owner-authorised divergences each pinned by a test."
+    evidence: "The published legal pages the .docx documents back."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles — https://hightable.io/iso-27001-annex-a-controls-reference-guide/ (fetched 2026-09-01). ⚠ Secondary: the standard itself is paywalled, so control TITLES are verified and the full normative text is not."
+    notes: "Customer-facing legal policy, not an internal ISMS policy set. The distinction matters to an auditor."
+
+  - id: ISO-002
+    regime: ISO_27001
+    clause: "A.5.15"
+    requirement: "Access control — rules to control physical and logical access to information and other associated assets shall be established and implemented based on business and information security requirements."
+    control: "RLS, per-org isolation, role separation between customer and staff surfaces, MFA and step-up authentication."
+    evidence: null
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: null
+
+  - id: ISO-003
+    regime: ISO_27001
+    clause: "A.5.19"
+    requirement: "Information security in supplier relationships — processes and procedures shall be defined and implemented to manage the information security risks associated with the use of suppliers' products or services."
+    control: null
+    evidence: null
+    status: gap
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Same gap as SOC2-008. No supplier risk process exists for GCP, OpenAI, Google, Paddle, Payoneer, Brevo, Alchemy/Infura or Etherscan."
+
+  - id: ISO-004
+    regime: ISO_27001
+    clause: "A.5.23"
+    requirement: "Information security for use of cloud services — processes for acquisition, use, management and exit from cloud services shall be established in accordance with the organization's information security requirements."
+    control: null
+    evidence: null
+    status: gap
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "The whole product runs on one GCP VM in one zone. There is no exit plan and no documented acquisition decision — including no record of why me-central1-a."
+
+  - id: ISO-005
+    regime: ISO_27001
+    clause: "A.5.24"
+    requirement: "Information security incident management planning and preparation — the organization shall plan and prepare for managing information security incidents by defining, establishing and communicating incident management processes, roles and responsibilities."
+    control: null
+    evidence: null
+    status: gap
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Fifth regime naming the same missing plan."
+
+  - id: ISO-006
+    regime: ISO_27001
+    clause: "A.5.28"
+    requirement: "Collection of evidence — the organization shall establish and implement procedures for the identification, collection, acquisition and preservation of evidence related to information security events."
+    control: "The hash chain, the export, and the standalone verifier are an evidence-preservation mechanism by construction."
+    evidence: "An export plus verifier/foxy_verify.py, which a third party runs without trusting Foxy."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "The control Foxy is closest to being able to demonstrate rather than assert. It covers customer AI events; it does not cover evidence about Foxy's own incidents."
+
+  - id: ISO-007
+    regime: ISO_27001
+    clause: "A.5.31"
+    requirement: "Identification of legal, statutory, regulatory and contractual requirements — legal, statutory, regulatory and contractual requirements relevant to information security and the organization's approach to meeting them shall be identified, documented and kept up to date."
+    control: "This file."
+    evidence: "docs/compliance/crosswalk.yaml, docs/compliance/not-applicable.md, in version control with a verified_against SHA."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Partial and not met on its own terms: four clause numbers in this file are TBD, and four named regimes (LGPD, PIPEDA, Singapore, Australia) have no rows at all."
+
+  - id: ISO-008
+    regime: ISO_27001
+    clause: "A.5.33"
+    requirement: "Protection of records — records shall be protected from loss, destruction, falsification, unauthorized access and unauthorized release."
+    control: "Hash chain and anchoring protect against falsification. Nothing protects against loss."
+    evidence: "The verifier, for the falsification half."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Half a control. Falsification is the half the product is built around; loss is the half SOC2-009 fails."
+
+  - id: ISO-009
+    regime: ISO_27001
+    clause: "A.5.34"
+    requirement: "Privacy and protection of PII — the organization shall identify and meet the requirements regarding the preservation of privacy and protection of PII according to applicable laws and regulations and contractual requirements."
+    control: "Content-blindness; local PII/PHI detection in the SDK; published privacy policy and DPA."
+    evidence: "The public SDK and the published policies."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Weakened by the residency misstatement: a privacy policy that names the wrong country has not met this control's 'according to applicable laws' half."
+
+  - id: ISO-010
+    regime: ISO_27001
+    clause: "A.8.15"
+    requirement: "Logging — logs that record activities, exceptions, faults and other relevant events shall be produced, stored, protected and analysed."
+    control: "Event ledger; staff audit trail (admin_audit.py, account_audit.py, admin_chain.py); login history; observability."
+    evidence: "Customer-side: the export and verifier. Staff-side: nothing external."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "'Analysed' is the unmet word. Logs are produced and protected; no one reviews them on a schedule."
+
+  - id: ISO-011
+    regime: ISO_27001
+    clause: "A.8.16"
+    requirement: "Monitoring activities — networks, systems and applications shall be monitored for anomalous behaviour and appropriate actions taken to evaluate potential information security incidents."
+    control: "backend/app/observability.py; /health/ready smoke test with auto-rollback on deploy."
+    evidence: null
+    status: gap
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: "Deploy-time health checking is not monitoring. No alerting on anomalous behaviour in Foxy's own infrastructure."
+
+  - id: ISO-012
+    regime: ISO_27001
+    clause: "A.8.32"
+    requirement: "Change management — changes to information processing facilities and information systems shall be subject to change management procedures."
+    control: "As SOC2-007: branch, review gate, CI, single-Alembic-head check, smoke test and auto-rollback."
+    evidence: "Commit and CI history."
+    status: partial
+    source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
+    notes: null
+
+  # ---------------------------------------------------------------- SOC 1 ---
+  - id: SOC1-001
+    regime: SOC1
+    clause: "SSAE 18 AT-C 320 (SOC 1) scope"
+    requirement: "A SOC 1 report addresses controls at a service organization that are likely to be relevant to user entities' internal control over financial reporting. Unlike SOC 2, it has no predefined criteria — the service organization writes its own control objectives and the auditor opines on whether they were met."
+    control: null
+    evidence: null
+    status: not-applicable
+    source: "Reasoning and codebase evidence established in the vault note 'Issues — SOC 1 is not applicable.md' (2026-08-23); scope distinction per AICPA SOC 1 vs SOC 2 positioning. Full reasoning in docs/compliance/not-applicable.md."
+    notes: >-
+      No money moves on a customer's behalf; the wire payload carries no amount,
+      currency, account identifier or transaction reference; the policy
+      vocabulary has no financial family; and the Passport explicitly disclaims
+      the completeness over a population that a SOC 1 auditor would need. It
+      becomes real only if a customer tells you their AI touches financial
+      reporting — the trigger is theirs, not ours.
