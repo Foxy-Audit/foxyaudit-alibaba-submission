@@ -16,45 +16,75 @@ other. ``docs/compliance/claims.yaml`` holds the truth; the pages are compared t
 it. If every page agrees and the value is wrong, the value is wrong in one place
 and the fix is one edit — which is the property agreement-checking never has.
 
-Three rules:
+Four rules:
 
   1. the hosting country on every surface is the one asserted value;
   2. a regime word with no ``backed``/``qualified`` entry in the register fails;
-  3. a retired claim that comes back fails — the SOC 2 sentence above all, which
-     the vault records being softened once already.
+  3. a retired claim that comes back fails;
+  4. **every sentence in a guarded claim class is one the register approved** —
+     which is rule 3 turned the right way round, and the one that survives being
+     attacked with words nobody has seen before.
+
+WHY RULE 4 EXISTS: #292
+-----------------------
+
+C2 shipped rules 1-3 and reported 12 mutations, 12 caught. MAIN broke it with one
+line — injecting into faq.html:
+
+    "Our SOC 2 Type I report is expected shortly and fieldwork is already
+     underway."
+
+as false as the sentence that had been removed, and **all nine tests stayed
+green**. Rule 3 blacklists: it pins the sentence that WAS wrong. But the expected
+failure mode here is *a human rewriting the sentence*, and a human rewriting it
+does not reuse a banned phrase.
+
+Rule 1 never had that hole, because it asserts positively — every hosting
+statement must name Qatar, so three pages agreeing on "Germany" is three
+failures. Rule 4 generalises that shape into claim classes: a `sentence_pattern`
+selects the sentences a class is about, and every one of them must appear in that
+class's `approved_sentences`. Novel text fails by default.
+
+⚠ AND RULE 4 HAD THE SAME BUG ONE LEVEL DOWN. The first version keyed the classes
+on vocabulary that happened to appear — `SOC 2`, `backup` — so three invented
+sentences walked around them: "All copies of your data remain within Qatar at all
+times" contains neither word. The classes are now keyed on the CONSTRUCTION —
+a place beside a totality word; SCC/DPA/Article-46 language — which is what #289
+and #294 actually had in common.
 
 MEASURED, NOT ASSERTED
 ----------------------
 
-Every rule above was mutation-tested before this file was committed: the defect
-was introduced into the real page, the guard was watched to fail, and the defect
-was reverted. **12 mutations, 12 caught**, on a branch that was green before and
-after each one. A guard nobody watched fail is not a guard.
+**23 mutations, 23 caught**, each introduced into the real file, watched to fail,
+and reverted, on a branch green before and after.
 
 ===============================  ==========================================
-mutation                         caught by
+SET A — the twelve C2 mutations  all 12 still caught (no regression)
 ===============================  ==========================================
-privacy.html §8 → United States  hosting-names-qatar + retired-claim
-trust.html §6 → United States    hosting-names-qatar + must-state + retired
-privacy.html §13 → processed in  hosting-names-qatar + retired-claim
-  the United States
-faq.html → "currently completing  retired-claim (+ coverage, both directions)
-  our SOC 2 Type I audit"
-pricing.html → "our auditor is    retired-claim — the SOFT regression, which
-  engaged"                        the retired phrase itself would not catch
-"We are FedRAMP aligned." added   coverage — a regime nobody wrote down
-NIST mapping back on passport     retired-claim + coverage
-hosting cell emptied, not wrong   must-state-the-country — wrong by SILENCE
-claims.yaml cites LGPD-999        backing-row-exists
-the exempted sentence reworded    exemption-still-matches + hosting-names-qatar
-trust.html's canonical SOC 2      soc2-status-is-the-one-trust-states
-  sentence truncated
-a claim's `line:` set to 999      line-numbers-are-current
+SET B — novel text, 11 cases
+  MAIN's exact #292 sentence     class rule
+  an implied date; an implied    class rule
+    assessor; a readiness claim
+    on a quiet page
+  "All copies of your data       class rule ⚠ MISSED BY THE FIRST C2b BUILD
+    remain within Qatar"           — it drove data_location_exclusivity
+  "Your data never leaves        class rule
+    Qatar." (five words)
+  "Every US sub-processor is     class rule ⚠ MISSED BY THE FIRST C2b BUILD
+    bound by the Clauses"          — it drove transfer_safeguards
+  the OpenAI bullet flipped to   class rule ⚠ MISSED BY THE FIRST C2b BUILD
+    "an agreement is in place"
+  the EU half of the backup      orphan rule — wrong by SILENCE
+    sentence quietly deleted
+  a class scoped to a renamed    scope rule — it would have guarded
+    page                           nothing, in silence
+  the REGISTER loosened          orphan rule — the attack that edits the
+    instead of the page fixed      guard rather than the page
 ===============================  ==========================================
 
-The two that mattered most were the ones a naive version would have missed: the
-emptied table cell (wrong by silence, not by content) and the softened auditor
-sentence (a regression that never repeats the retired phrase).
+The last two are the ones worth keeping in mind: a guard is also attackable
+through its own configuration, and both of those mutations leave every page
+untouched.
 
 Run:  pytest foxy-sale-page -q
 """
