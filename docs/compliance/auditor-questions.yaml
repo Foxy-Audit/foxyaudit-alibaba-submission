@@ -71,7 +71,32 @@ meta:
 # confused. The block is empty because inventing a plausible customer ask would
 # be exactly the fabrication CLAUDE.md §6 forbids.
 # ---------------------------------------------------------------------------
-from_real_requests: []
+from_real_requests:
+  # ⚠ THIS IS NOT A QUESTIONNAIRE, AND MUST NOT BE READ AS ONE. The owner
+  # answered on 2026-09-02, and the answer is that nothing formal has arrived.
+  # It is recorded verbatim in substance because the ABSENCE is itself the most
+  # decision-relevant thing anyone has said about this file: what prospects
+  # actually ask for is an explanation, not evidence.
+  - recorded: "2026-09-02"
+    source: "the owner, asked directly by MAIN"
+    what_was_asked: >-
+      Has any real customer, prospect or auditor asked for something specific —
+      a security questionnaire, a procurement checklist, a named control?
+    answer: >-
+      No formal security questionnaire and no procurement checklist has been
+      received. Prospects ask informally: "how is the security" and "how does
+      this work".
+    what_it_signals: >-
+      The near-term demand is EXPLAINING the model — the trust page, the docs —
+      not producing auditor evidence. That does not demote the questions below,
+      which are derived from clauses that will bind whenever a buyer does run a
+      process; it changes which of them is worth closing first.
+    what_it_does_not_license: >-
+      ⚠ NOTHING BELOW MAY BE ATTRIBUTED TO A REAL REQUEST ON THIS BASIS. Two
+      informal questions are not a question set, and expanding them into
+      specific invented asks would be exactly the fabrication CLAUDE.md §6
+      forbids. Every entry in `questions` remains clause-derived, and this block
+      still contains no customer-supplied question, because none exists.
 
 # ---------------------------------------------------------------------------
 # QUESTIONS
@@ -143,19 +168,22 @@ questions:
       with the evidence, so verification needs neither Foxy's servers nor Foxy's
       cooperation.
     gap: >-
-      ⚠ THE CUSTOMER CANNOT GET THE BUNDLE FROM ANY SURFACE. `format=bundle`
-      appears nowhere a customer can see: grep over foxy-dashboard/,
-      foxy-sale-page/ and every .js returns ONE hit, an HTML comment inside
-      backend/app/templates/compliance_passport.html. The Export dropdown
-      (foxy-audit-premium.html:2614) offers passport / logs_csv / logs_json and
-      no bundle, while the same page at :4907 tells the reader to "Download the
-      verification bundle from Export", and the Passport at :575 tells the
-      AUDITOR to ask the customer for `foxy-audit-export.zip` by filename. The
-      backend already accepts `logs_bundle` as an export-history type
-      (routers/account.py:1113) with nothing in the UI producing one. Two
-      documents name a download the product does not offer; the only way to it
-      is hand-editing a URL. This is the strongest evidence asset in the
-      product, and it is one dropdown option away from being reachable.
+      ⚠ THE SURFACE GAP IS CLOSED IN THE REPO AND IS NOT LIVE YET. As written
+      here on 2026-09-02 the customer could not get the bundle from any surface:
+      `format=bundle` appeared nowhere a customer could see, the Export dropdown
+      offered passport / logs_csv / logs_json only, while the same page told the
+      reader to "Download the verification bundle from Export" and the Passport
+      told the AUDITOR to ask for `foxy-audit-export.zip` by filename. C3b added
+      the option: the dropdown now offers "Verification bundle · ZIP", the
+      Export card names the file and what is in it, and the format mapping is a
+      table rather than a ternary that resolved every unknown type to json.
+      ⚠ THE VERDICT STAYS `partial` BECAUSE OF THE FREEZE, NOT BECAUSE OF THE
+      PRODUCT: app.foxyaudit.tech serves the frozen repo, so a customer TODAY
+      still cannot click it, and `full` in this file means today. It becomes
+      `full` for the discoverability limb when this merges past the 2026-09-18
+      floor and deploys. What is left after that is real but narrower: a ledger
+      over EXPORT_PAGE_MAX rows needs one bundle plus every JSON page, and the
+      dashboard now says so on the download rather than leaving it to the file.
     effort: trivial
 
   - id: AQ-003
@@ -290,9 +318,13 @@ questions:
       the customer's own key and content.
     gap: >-
       Same dependency as AQ-006 — the customer must have kept the content and
-      the sidecar — and the same discoverability problem as AQ-002: the verifier
-      arrives only in a bundle no surface offers. Neither the dashboard nor the
-      Passport mentions `--events` or the sidecar.
+      the sidecar. The discoverability half it shared with AQ-002 is fixed in
+      the repo by C3b (the Export dropdown now offers the bundle) and is not
+      live until the 2026-09-18 floor. What is NOT fixed, and is this row's own
+      gap, is the sidecar: neither the dashboard nor the Passport mentions
+      `--events` or says anywhere that a salted row needs the customer's own
+      copy of the salt. The tool is about to be reachable; the flag that makes
+      it answer THIS question still is not documented on any customer surface.
     effort: small
 
   - id: AQ-008
@@ -439,7 +471,7 @@ questions:
       "Show me everything Foxy holds about this workspace — and tell me what it
       deliberately leaves out, and why."
     regimes: [GDPR, LGPD, PDPL_KSA, PDPL_UAE, SOC2]
-    crosswalk_rows: [GDPR-003, LGPD-005, KSA-005, UAE-006, SOC2-012]
+    crosswalk_rows: [GDPR-003, GDPR-011, GDPR-012, LGPD-005, KSA-005, UAE-006, SOC2-012]
     answerable: full
     how: >-
       GET /v1/account/export (admin only), wired to a dashboard button
@@ -468,7 +500,7 @@ questions:
       "One of our employees has made a subject access request. Show me how your
       processor helps us answer it inside the statutory window."
     regimes: [GDPR, LGPD, PDPL_KSA, PDPL_UAE, PDPA_SG, AU_PRIVACY]
-    crosswalk_rows: [GDPR-003, LGPD-005, KSA-005, UAE-006]
+    crosswalk_rows: [GDPR-003, GDPR-011, LGPD-005, KSA-005, UAE-006]
     answerable: partial
     how: >-
       The workspace admin pulls GET /v1/account/export and extracts the subject's
@@ -969,10 +1001,12 @@ questions:
     gap: >-
       It only works for evidence already exported, and nothing prompts, schedules
       or automates an export — so in practice most customers would have nothing.
-      There is no documented exit plan, no cloud-exit process (ISO-004), and the
-      bundle that carries the verifier is unreachable from the UI (AQ-002). The
-      strongest business-continuity story in the product is currently a property
-      of the architecture that no surface states.
+      There is no documented exit plan and no cloud-exit process (ISO-004). The
+      third leg — that the bundle carrying the verifier was unreachable from the
+      UI — is fixed in the repo by C3b and waits on the 2026-09-18 floor to be
+      live. The rest stands: the strongest business-continuity story in the
+      product is a property of the architecture that no surface states, and one
+      reachable download does not make it a plan.
     effort: small
 
   - id: AQ-036
@@ -1027,14 +1061,17 @@ questions:
 # COVERAGE — the inverse check
 #
 # The brief's rule: a `partial`/`gap` row with no question against it is a hole
-# worth noting. This is that check, run against the 98 non-`not-applicable` rows.
+# worth noting. This is that check, run against the 100 non-`not-applicable` rows
+# (98 when C3a wrote it; C3b added GDPR-011 and GDPR-012).
 # ---------------------------------------------------------------------------
 coverage:
-  rows_total: 103
-  rows_cited: 101
+  # ⚠ RE-DERIVED 2026-09-02 after C3b added GDPR-011 and GDPR-012 to the
+  # crosswalk (103 rows -> 105) and cited both from AQ-013 and AQ-014.
+  rows_total: 105
+  rows_cited: 103
   rows_uncited: 2
   # Counted by script, not by hand: every id in every `crosswalk_rows` list,
-  # checked against crosswalk.yaml. All 98 non-`not-applicable` rows are cited —
+  # checked against crosswalk.yaml. All 100 non-`not-applicable` rows are cited —
   # so there is no `partial`/`gap` row without a question against it. The two
   # uncited rows are both `not-applicable`.
 
@@ -1069,6 +1106,7 @@ coverage:
   crosswalk_findings:
     - id: CF-1
       severity: high
+      status: "FIXED in C3b, 2026-09-02 — GDPR-011 (Art. 15) and GDPR-012 (Art. 20) added"
       what: >-
         GDPR HAS NO DATA-SUBJECT-RIGHTS ROW. The ten GDPR rows are Art. 5(1)(c),
         25, 28(2), 28(3), 30(2), 32, 33(2), 44, 45, 46. There is no Art. 15
@@ -1087,8 +1125,16 @@ coverage:
         Art. 28(3)(e) — the processor's duty to ASSIST the controller with
         data-subject requests, which is the obligation that actually binds Foxy.
         A C3b/C0c task; not this phase's to write.
+      fixed_by: >-
+        C3b took the two-row route. Both are `partial`, both cite gdpr-info.eu
+        with the paragraph quoted and the fetch dated, and both are now cited by
+        AQ-013 and AQ-014 so this file's inverse check still holds. The
+        Art. 28(3)(e) assistance duty is named in GDPR-011's notes rather than
+        given a row of its own, because it is the mechanism by which Foxy answers
+        an Art. 15 request, not a separate obligation on the same facts.
     - id: CF-2
       severity: medium
+      status: "FIXED in C3b, 2026-09-02 — and it was in four more places than this finding named"
       what: >-
         SOC2-009 and HIPAA-005 both state that backups share a failure domain
         with the database they protect. That was true when C0 wrote it and is no
@@ -1104,6 +1150,16 @@ coverage:
       fix: >-
         Amend the two `notes` to name the EU snapshots and narrow the finding to
         the untested restore. Status stays `partial`/`gap` either way.
+      fixed_by: >-
+        C3b narrowed both, statuses unchanged. ⚠ AND FOUND THE SAME OVERSTATEMENT
+        IN FOUR PLACES THIS FINDING DID NOT NAME — `meta.hard_facts.backups`
+        (the root: it described the on-VM dumps as the whole arrangement, which
+        is where every downstream row got it), HIPAA-006 ("lose the VM and both
+        the database and every dump go together"), GDPR-005 and UAE-001. All six
+        were corrected in one pass. The lesson is the finding's own: a fact
+        recorded once in a `hard_facts` block is repeated by every row that
+        trusts it, so correcting the rows a reader noticed leaves the ones they
+        did not.
     - id: CF-3
       severity: low
       what: >-

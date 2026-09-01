@@ -857,6 +857,37 @@ textarea.cin{font-family:var(--mono);font-size:11px;resize:vertical;min-height:7
 .pbar-fill{height:100%;width:0;background:linear-gradient(90deg,var(--fox),var(--fox2));transition:width .4s;}
 .plbl{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:5px;}
 
+/* ════════ EXPORT COMPLETENESS NOTICE ════════
+   #284 · a download that is page 1 of 300 must not look like the ledger. The
+   backend writes a `page` block into every export (routers/logs.py
+   `_page_export`) saying what the file holds and where the rest is; until now
+   the download was an <a href> click, so nothing on this side ever read it and
+   only the file's recipient was told. This is where the file's own sentence
+   goes on screen.
+
+   AMBER, and deliberately the SAME PAIR .vres.unknown carries: a partial export
+   is neither a pass nor a failure, and the two surfaces that say so must not
+   say it in different colours. Ink measures 10.66:1 dark and 6.47:1 light on
+   its own fill.
+
+   The 1px --warn-ink edge is #113's fix, not decoration. MEASURED for THIS
+   block, against the .clay card it sits in (--surf2): the amber fill is
+   1.96:1 in light, so the plate has no boundary of its own, and the edge is
+   5.35:1. #113 reports 1.74:1 for the same fill against --bg — a different
+   background, the same finding. Do not swap this for var(--border): --bc is
+   the 1.03:1 hairline that rule condemned. See the .lockchip rule.
+
+   Left-aligned and body-weight because this one is a paragraph to act on, not
+   a verdict, and 11.5px rather than the verify note's 10px because an auditor
+   reads it. */
+.expnote{display:none;margin-top:12px;padding:13px 14px;border-radius:var(--r-md);
+  border:1px solid var(--warn-ink);background:var(--warn-bg);color:var(--warn-tx);
+  font-size:11.5px;line-height:1.65;overflow-wrap:break-word;}
+.expnote.on{display:block;}
+.expnote b{display:block;font-size:12.5px;font-weight:800;margin-bottom:5px;}
+.expnote .nexturl{display:block;margin-top:8px;font-family:var(--mono);font-size:10.5px;
+  color:inherit;word-break:break-all;}
+
 /* ════════ SPARK ════════ */
 .spark{display:flex;align-items:flex-end;gap:6px;height:68px;margin-top:12px;}
 .sbar{flex:1;border-radius:6px 6px 0 0;border:var(--border-sm);border-bottom:none;}
@@ -2611,13 +2642,17 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
             <div><div class="flabel" style="margin-top:0;">to</div><input class="cin" id="expTo" type="date"></div>
           </div>
           <div class="flabel">export type</div>
-          <select id="exportType"><option value="passport">Compliance passport · PDF</option><option value="logs_csv">Audit logs · CSV</option><option value="logs_json">Audit logs · JSON</option></select>
+          <select id="exportType"><option value="passport">Compliance passport · PDF</option><option value="logs_csv">Audit logs · CSV</option><option value="logs_json">Audit logs · JSON</option><option value="logs_bundle">Verification bundle · ZIP</option></select>
           <button class="btn pri" onclick="runExportFlow()">Generate export</button>
-          <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.5;">The passport is a self-contained PDF with content-blind hash-chain and capture-coverage evidence. For a live, no-login proof page, mint a <b onclick="go('settings',null)" style="color:var(--fox2);cursor:pointer;">public verify link</b> in Settings.</div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:10px;line-height:1.5;">The passport is a self-contained PDF with content-blind hash-chain and capture-coverage evidence. The verification bundle is <span style="font-family:var(--mono);">foxy-audit-export.zip</span> — the same ledger as the JSON export, plus the standalone verifier and the two commands to run it, so whoever holds the evidence holds the tool. For a live, no-login proof page, mint a <b onclick="go('settings',null)" style="color:var(--fox2);cursor:pointer;">public verify link</b> in Settings.</div>
           <div id="exportProgress" style="display:none;margin-top:10px;">
             <div class="pbar-wrap"><div class="pbar-fill" id="pbar"></div></div>
             <div class="plbl" id="plbl">aggregating hash chain…</div>
           </div>
+          <!-- #284 · filled from the `page` block of the export that was just
+               downloaded, never written here. role=status so a screen reader is
+               told too: an export that is page 1 of 300 is not a visual detail. -->
+          <div id="exportNotice" class="expnote" role="status" aria-live="polite"></div>
         </div>
         <div class="clay pad">
           <!-- §8.2 · the passport is the artefact this page produces, so the
@@ -3267,9 +3302,10 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
           </div>
           <div class="clay pad">
             <div style="font-weight:700;font-size:13px;margin-bottom:11px;color:var(--breach-bg);">Danger zone</div>
-            <button class="btn ghost" onclick="exportWorkspaceData()" style="margin-top:0;">export ledger (CSV)</button>
+            <button class="btn ghost" onclick="exportWorkspaceData(this)" style="margin-top:0;">export ledger (JSON)</button>
             <button class="btn ghost" onclick="downloadAccountExport(this)" style="margin-top:0;margin-left:8px;">full account export (JSON)</button>
             <button class="btn danger" onclick="deleteWorkspace()">delete workspace</button>
+            <div id="wsExportNotice" class="expnote" role="status" aria-live="polite"></div>
           </div>
         </div>
       </details>
@@ -3592,11 +3628,21 @@ function vHashValidate(){
 }
 let _exporting=false;
 // real data-export (5D.4): download this org's audit-log ledger (own data)
-function exportWorkspaceData(){
-  const a=document.createElement('a');
-  a.href='/v1/logs/export?format=json'; a.download='foxy-audit-logs.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  showToast('Exporting your audit logs…');
+//
+// #284 · this used to be its own <a href> click, which meant a second path that
+// could hand a customer page 1 of 300 and say nothing. It now goes through the
+// same window.foxLedgerDownload as the Export page, so both surfaces read the
+// `page` block out of the file they just produced and say the same sentence
+// about it. There is one implementation because there was one defect.
+//
+// The button beside this one has said "(CSV)" since 5D.4 while this function
+// has always asked for format=json and saved a .json — the label was corrected
+// with this change rather than the format, because the format is what the
+// account-export flow and every test around it expect.
+function exportWorkspaceData(btn){
+  if(!window.foxLedgerDownload){ showToast('Export is not ready yet — reload the page'); return; }
+  window.foxLedgerDownload({format:'json',notice:'wsExportNotice',progress:false,button:btn,
+                            type:'logs_json',label:'Ledger export (JSON)'});
 }
 // soft-delete the workspace (5D.3): confirm by typing the workspace name
 async function deleteWorkspace(){
@@ -6800,25 +6846,244 @@ async function loadLoginHistory(scope){
   var $=function(id){return document.getElementById(id);};
   var api=function(p){return fetch(p,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});};
   var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
-  // NON-async so window.open (passport) + the download link stay inside the click gesture
+  // ═══ #284 · one ledger download path, and it reads what it downloaded ═══
+  //
+  // Every export the backend produces carries a `page` block (routers/logs.py
+  // `_page_export`) naming the seq range in the file, whether the ledger
+  // continues past it, and the URL of the next page. Above EXPORT_PAGE_MAX
+  // (10,000) rows that block says `complete: false` — and until now every
+  // download here was an `<a href>` click, so no JavaScript ever saw the
+  // response. The FILE told an auditor it was page 1 of 300; the screen said
+  // "export started". Same family as #264/#270/#278/#283: the code is honest
+  // and the surface is not.
+  //
+  // ⚠ THE NOTICE IS NEVER WRITTEN HERE. It is `page.note`, verbatim, so the
+  // sentence on screen and the sentence inside the file cannot drift apart —
+  // which is the whole reason `_page_export` exists in one place rather than
+  // two. This side adds a headline and a way to fetch the next page; it makes
+  // no claim of its own about how complete anything is.
+  var LEDGER_PATH='/v1/logs/export';
+  var num=function(n){ return Number(n||0).toLocaleString(); };
+
+  // ⚠ A TERNARY ON THE EXPORT TYPE USED TO LIVE HERE, with json as its else
+  // branch, so every value it did not name became json: adding an option to the
+  // <select> above would have downloaded JSON while the UI reported the choice
+  // the user actually made. A table refuses what it does not know instead of
+  // guessing it. (The old expression is not quoted here on purpose —
+  // test_c3b_export_bundle.py greps for it, and a comment carrying it would
+  // fail that guard as surely as live code would. Register #52's lesson.)
+  var FORMAT_OF={logs_csv:'csv',logs_json:'json',logs_bundle:'bundle'};
+
+  function filenameFrom(res,fallback){
+    // The server names a partial page for the seq range it holds
+    // (foxy-audit-logs-seq-1-10000.json) SO THAT 300 of them can land side by
+    // side in one folder — VERIFY.txt tells the auditor exactly that. The old
+    // `a.download` attribute overrode it and every page arrived called
+    // foxy-audit-logs.json, overwriting the last.
+    var m=/filename="([^"]+)"/.exec(res.headers.get('content-disposition')||'');
+    return (m&&m[1])?m[1]:fallback;
+  }
+  function save(blob,name){
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download=name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+  }
+  function pageOfJson(text){
+    try{ var d=JSON.parse(text); return (d&&d.page)||null; }catch(e){ return null; }
+  }
+  function pageOfCsv(text){
+    // CSV has no field to put a `page` block in, so the backend writes the same
+    // note into leading `#` comment lines — and writes none at all when the file
+    // is the whole ledger from seq 1. That absence is the signal; nothing is
+    // parsed out of the prose except the `next:` line the backend puts first.
+    if(text.charAt(0)!=='#'){
+      // No comment block means the backend called this file complete from seq 1.
+      // A header row with nothing under it still deserves saying out loud — the
+      // JSON path says it, and one button must not describe the same range two
+      // different ways depending on which format was picked.
+      var nl=text.indexOf('\n');
+      var hasRows=nl>=0&&/\S/.test(text.substr(nl+1,64));
+      return hasRows?{from_seq:1,to_seq:null,complete:true,next:null,note:''}
+                    :{from_seq:null,to_seq:null,complete:true,next:null,note:'',csvEmpty:true};
+    }
+    var lines=text.split('\n'), note=[], next=null;
+    for(var i=0;i<lines.length;i++){
+      if(lines[i].charAt(0)!=='#')break;
+      var body=lines[i].replace(/^#\s?/,'').replace(/\r$/,'').trim();
+      if(body.indexOf('next:')===0)next=body.slice(5).trim(); else if(body)note.push(body);
+    }
+    // A CSV comment block means the backend called this file partial. Which KIND
+    // of partial is in the note, and the note is what gets shown.
+    return {from_seq:null,to_seq:null,complete:!next,next:next,note:note.join(' '),csv:true};
+  }
+  // The backend's own definition, and deliberately the same one: an export is
+  // partial when it has rows and is not the complete ledger from seq 1. A
+  // date-narrowed window that starts at seq 500 is partial too — it proves its
+  // own rows and nothing before them — and the note says which case it is.
+  function isPartial(page){
+    if(!page)return false;
+    if(page.csv)return true;
+    if(page.complete===false)return true;
+    return page.from_seq>1;
+  }
+  // Nothing to say about a complete ledger from seq 1 that holds rows. Every
+  // other shape gets the notice.
+  function worthSaying(page){
+    if(!page)return false;
+    if(isPartial(page)||page.csvEmpty)return true;
+    return !page.csv&&(page.from_seq===null||page.from_seq===undefined);
+  }
+  function headlineFor(page){
+    if(page.csvEmpty||page.from_seq===null||page.from_seq===undefined)
+      return 'This file holds no ledger rows for the range you asked for.';
+    if(page.csv)
+      return page.complete===false
+        ? 'This is one page of a longer ledger.'
+        : 'This file does not start at the beginning of the ledger.';
+    if(page.complete===false)
+      return 'This is one page of a longer ledger — rows '+num(page.from_seq)+' to '+num(page.to_seq)+'.';
+    return 'This file starts at row '+num(page.from_seq)+', not at the start of the ledger.';
+  }
+  function samePathAs(absolute){
+    // page.next is absolute. Take only the path and query off it: an app served
+    // through a proxy that does not forward the scheme would otherwise hand back
+    // an http:// URL that an https:// page cannot fetch.
+    try{
+      var u=new URL(absolute,location.href);
+      // page.next repeats the `format` the caller asked for, and withFormat()
+      // appends its own — two format params in one URL is an ambiguity nobody
+      // should have to resolve. Drop it here; the helper always states it.
+      u.searchParams.delete('format');
+      return u.pathname+u.search;
+    }catch(e){ return null; }
+  }
+  function hideNotice(el){ if(el){ el.className='expnote'; el.innerHTML=''; } }
+  function renderNotice(el,page,o){
+    if(!el)return;
+    if(!worthSaying(page)){ hideNotice(el); return; }
+    var next=page.next?samePathAs(page.next):null;
+    // ⚠ THE NEXT PAGE OF A BUNDLE IS A JSON PAGE, and that is VERIFY.txt's own
+    // instruction, not a shortcut: every bundle downloads as foxy-audit-export.zip
+    // because the Compliance Passport names that file in writing, so page 2 as a
+    // bundle would overwrite page 1. Take the verifier out of ONE bundle and point
+    // it at the JSON pages, each of which arrives named for its seq range.
+    var nextFmt=(o.format==='bundle')?'json':o.format;
+    el.innerHTML='<b>'+esc(headlineFor(page))+'</b>'+esc(page.note||'')
+      +(next?'<button type="button" class="btn sm" style="margin-top:10px;">Download the next page'
+             +(nextFmt!==o.format?' (JSON)':'')+'</button>'
+             +'<span class="nexturl">'+esc(page.next)+'</span>':'');
+    el.className='expnote on';
+    var btn=next?el.querySelector('button'):null;
+    if(btn)btn.onclick=function(){
+      // The next page goes through this same function, so page 2 is told what it
+      // is holding on exactly the terms page 1 was.
+      downloadLedger({url:next,format:nextFmt,notice:o.notice,progress:o.progress,
+                      type:o.type,label:(nextFmt==='json'&&o.format==='bundle')
+                                        ?'Ledger page (JSON)':o.label});
+    };
+  }
+
+  function downloadLedger(o){
+    var el=o.notice?$(o.notice):null;
+    hideNotice(el);
+    // The Settings surface has no progress bar, so the button carries the state
+    // there — the same shape downloadAccountExport already uses beside it.
+    var btn=o.button||null, btnText=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='exporting…'; }
+    function releaseButton(){ if(btn){ btn.disabled=false; btn.textContent=btnText; } }
+    var prog=$('exportProgress'), pbar=$('pbar'), plbl=$('plbl');
+    var live=!!o.progress&&!!prog;
+    function stage(msg,pct,tone){
+      if(!live)return;
+      prog.style.display='block';
+      if(pbar&&pct)pbar.style.width=pct;
+      if(plbl){ plbl.textContent=msg; plbl.style.color=tone||''; }
+    }
+    function fail(msg){
+      stage(msg,'100%','var(--breach-bg)');
+      releaseButton();
+      try{ showToast(msg); }catch(e){}
+    }
+    var base=o.url||(LEDGER_PATH+(o.query||''));
+    function withFormat(fmt){ return base+(base.indexOf('?')<0?'?':'&')+'format='+fmt; }
+    function get(url){ return fetch(url,{credentials:'same-origin'}); }
+
+    // Feedback for an operation that is no longer instant: the browser drew its
+    // own download chrome the moment a link was clicked, and a fetch draws
+    // nothing. At EXPORT_PAGE_MAX one page is 17.8-21.7 MB.
+    stage(o.format==='bundle'?'reading the ledger…':'exporting…','40%');
+
+    return Promise.resolve().then(function(){
+      if(o.format!=='bundle')return null;
+      // ⚠ THE BUNDLE COSTS A SECOND REQUEST, and that is the honest price. A ZIP
+      // carries no readable `page` block and this file ships no unzipper, so the
+      // completeness statement is read from the JSON the bundle is built FROM,
+      // with the same parameters and therefore the same answer. /v1/logs/export
+      // is rate limited to 6/minute, so a bundle download spends two of the six.
+      return get(withFormat('json'))
+        .then(function(r){ return r.ok?r.text().then(pageOfJson):null; })
+        .catch(function(){ return null; });
+    }).then(function(prePage){
+      stage(o.format==='bundle'?'building the bundle…':'exporting…','70%');
+      return get(withFormat(o.format)).then(function(res){
+        if(!res.ok){ fail(o.label+' failed (HTTP '+res.status+')'); return undefined; }
+        if(o.format==='bundle')
+          return res.blob().then(function(blob){
+            save(blob,filenameFrom(res,'foxy-audit-export.zip'));
+            return prePage;
+          });
+        return res.text().then(function(text){
+          save(new Blob([text],{type:o.format==='csv'?'text/csv':'application/json'}),
+               filenameFrom(res,'foxy-audit-logs.'+o.format));
+          return o.format==='csv'?pageOfCsv(text):pageOfJson(text);
+        });
+      });
+    }).then(function(page){
+      if(page===undefined)return;              // the request failed; fail() already said so
+      releaseButton();
+      if(page===null){
+        // The bytes are saved; what could not be done is read the page block.
+        // Say that, rather than let silence read as "this is the whole ledger".
+        if(el){
+          el.innerHTML='<b>Downloaded, but not described.</b>The completeness statement '
+            +'could not be read from this download. Open the file and read its `page` '
+            +'block before treating it as the whole ledger.';
+          el.className='expnote on';
+        }
+        stage(o.label+' downloaded','100%');
+        try{ showToast(o.label+' downloaded'); }catch(e){}
+        return;
+      }
+      renderNotice(el,page,o);
+      var partial=isPartial(page);
+      stage(o.label+' downloaded','100%',partial?'var(--warn-ink)':'var(--safe-bg)');
+      try{ showToast(o.label+' downloaded'+(partial?' — not the whole ledger':'')); }catch(e){}
+    }).catch(function(){ fail('could not reach the server'); });
+  }
+  window.foxLedgerDownload=downloadLedger;
+
+  // NON-async so window.open (passport) stays inside the click gesture
   window.runExportFlow=function(){
     var type=(($('exportType')||{}).value)||'passport';
     var from=(($('expFrom')||{}).value||'').trim(), to=(($('expTo')||{}).value||'').trim();
     var params={}; if(from)params.date_from=from; if(to)params.date_to=to; if(!from&&!to)params.days=365;
+    var fmt=(type==='passport')?null:FORMAT_OF[type];
+    if(type!=='passport'&&!fmt){
+      try{ showToast('Unknown export type — nothing was downloaded'); }catch(e){}
+      return;
+    }
     // record the export in history/audit (fire-and-forget so it never blocks the producer/popup)
     try{ fetch('/v1/exports',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},
       body:JSON.stringify({type:type,params:params})}).then(function(){ if(window.loadExportHistory)window.loadExportHistory(); }); }catch(e){}
-    if(type==='passport'){ if(window.runExport)window.runExport(); }
-    else {
-      var fmt=(type==='logs_csv')?'csv':'json';
-      // the pickers above are not decoration: send the window the user chose
-      var q='/v1/logs/export?format='+fmt;
-      if(from)q+='&date_from='+encodeURIComponent(from);
-      if(to)q+='&date_to='+encodeURIComponent(to);
-      var a=document.createElement('a'); a.href=q; a.download='foxy-audit-logs.'+fmt;
-      document.body.appendChild(a); a.click(); a.remove();
-      try{ showToast('Logs export ('+fmt.toUpperCase()+') started'); }catch(e){}
-    }
+    if(type==='passport'){ if(window.runExport)window.runExport(); return; }
+    // the pickers above are not decoration: send the window the user chose
+    var qs=[];
+    if(from)qs.push('date_from='+encodeURIComponent(from));
+    if(to)qs.push('date_to='+encodeURIComponent(to));
+    downloadLedger({query:qs.length?('?'+qs.join('&')):'',format:fmt,notice:'exportNotice',
+                    progress:true,type:type,
+                    label:(fmt==='bundle')?'Verification bundle':('Logs export ('+fmt.toUpperCase()+')')});
   };
   var _expPage={page:1,size:20}, _expItems=[];
   window.loadExportHistory=async function(){
@@ -6834,7 +7099,7 @@ async function loadLoginHistory(scope){
     // The same label as the #exportType option that produced the row — the
     // passport endpoint has been PDF-only for a while, and a history table that
     // still said HTML contradicted the dropdown directly above it.
-    var TYPE={passport:'Passport · PDF',logs_csv:'Logs · CSV',logs_json:'Logs · JSON'};
+    var TYPE={passport:'Passport · PDF',logs_csv:'Logs · CSV',logs_json:'Logs · JSON',logs_bundle:'Verification bundle · ZIP'};
     tb.innerHTML=items.length?items.map(function(j){
       var p=j.params||{};
       var range=p.date_from?(esc(p.date_from)+' → '+esc(p.date_to||'now')):(p.days?('last '+esc(String(p.days))+'d'):'all time');

@@ -892,7 +892,7 @@ claims:
 
   # ── the dashboard's Regulated-data policy row ────────────────────────────
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2360
+    line: 2391
     regime: PCI DSS
     kind: affirmative
     verdict: qualified
@@ -915,7 +915,7 @@ claims:
       it is a dashboard change, out of C2's page scope.
 
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2360
+    line: 2391
     regime: SOX
     kind: affirmative
     verdict: qualified
@@ -929,7 +929,7 @@ claims:
       payload carries no financial field.
 
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2360
+    line: 2391
     regime: EU AI Act
     kind: affirmative
     verdict: qualified
@@ -939,7 +939,7 @@ claims:
     why: "Same string, same verdict. EUAI-002 (Art. 26(6), deployer log-keeping) is the row the product genuinely speaks to."
 
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2360
+    line: 2391
     regime: HIPAA
     kind: affirmative
     verdict: backed
@@ -949,7 +949,7 @@ claims:
     why: "A real tag, unlike three of its neighbours."
 
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2360
+    line: 2391
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -959,7 +959,7 @@ claims:
     why: "A real tag."
 
   - file: foxy-dashboard/foxy-audit-premium.html
-    line: 2526
+    line: 2557
     regime: GDPR
     kind: affirmative
     verdict: backed

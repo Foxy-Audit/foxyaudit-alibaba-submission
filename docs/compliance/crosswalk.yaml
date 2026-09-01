@@ -10,8 +10,9 @@
 # article number is a defect, and this file will be read as authoritative.
 
 meta:
-  phase: "C0 + C0b"
+  phase: "C0 + C0b + C3b corrections"
   written: "2026-09-01"
+  updated: "2026-09-02"                # the C3b correction pass
   verified_against: "e7e1919"        # origin/main at the time of the C0b pass
   written_by: "executor chats, per docs/plans/compliance-program.md §4 C0 and C0b"
   c0b: >-
@@ -25,6 +26,28 @@ meta:
     NARROWED UAE-002, which cited the adequate-protection transfer article for a
     transfer where protection is not adequate. It resolved no other TBD: see
     KSA-004's note for a source that looked like corroboration and was not.
+  c3b: >-
+    C3b (2026-09-02) changed no product fact and added no regime. It applied the
+    two crosswalk findings C3a raised while deriving
+    docs/compliance/auditor-questions.yaml. CF-1: GDPR had NO data-subject-rights
+    row — C0b added that ground for LGPD (Art. 18), Saudi PDPL (Art. 4) and UAE
+    PDPL (Art. 13) and skipped the most-named regime on the product's surfaces.
+    Added GDPR-011 (Art. 15, access) and GDPR-012 (Art. 20, portability), both
+    against the primary-ish source the other GDPR rows use, both cited by AQ-013
+    and AQ-014 so the file's inverse check still holds. CF-2: SOC2-009 and
+    HIPAA-005 said backups share a failure domain with the database. Measured
+    2026-09-01, they do not — GCP `default-schedule-1` snapshots the production
+    disk daily into the `eu` multi-region and keeps the snapshots when the disk
+    is deleted. The finding was NARROWED, not deleted: what is missing is the
+    untested restore and the unauthored control, which SOC2-010 and HIPAA-007
+    already state. ⚠ THE SAME OVERSTATEMENT WAS IN FOUR MORE PLACES C3a did not
+    name — meta.hard_facts.backups, HIPAA-006, GDPR-005 and UAE-001 — and all
+    four were corrected in the same pass. Row count 103 -> 105.
+    ⚠ `verified_against` IS DELIBERATELY NOT RE-STAMPED. The two new rows and the
+    six corrected notes were checked against origin/main at `e9d9ecd`; the other
+    99 rows were not re-read, and moving the stamp would claim they were. C3a's
+    CF-3 (the stale `surface_claims` line numbers, now that C2 has merged) is the
+    re-stamp task and is still open.
   legal_review: "NONE — this file is engineering research, not legal advice"
   scope: >-
     Maps regulatory clauses onto Foxy controls and onto evidence a third party
@@ -33,7 +56,16 @@ meta:
   hard_facts:
     # Established before this file was written; do not re-derive them here.
     hosting: "GCP me-central1-a — Doha, Qatar. No EU adequacy decision for Qatar."
-    backups: "deploy/backup.sh writes to deploy/backups ON THE PRODUCTION VM, RETENTION_DAYS default 14."
+    backups: >-
+      deploy/backup.sh writes every pg_dump to deploy/backups ON THE PRODUCTION
+      VM, RETENTION_DAYS default 14. ⚠ CORRECTED 2026-09-02: those are not the
+      only copy. GCP resource policy `default-schedule-1` takes DAILY SNAPSHOTS
+      of the production disk, retained 14 days with
+      `onSourceDiskDelete: KEEP_AUTO_SNAPSHOTS`, and they are stored in the `eu`
+      MULTI-REGION — measured 5 of 5 sampled, 2026-09-01. So an off-VM,
+      off-region copy exists and survives deletion of the source disk. It is
+      crash-consistent (`guestFlush: false`), not application-consistent, and NO
+      RESTORE OF EITHER HAS EVER BEEN PERFORMED.
     baa: "No BAA exists anywhere in the repo, the sale page or the vault (searched 2026-09-01)."
     platform_keys: "backend/app/judge_routing.py platform_keys_allowed() lets Foxy's OWN provider keys carry customer event metadata to OpenAI and Google."
     policy_tags: "sdk/src/foxy_audit/policy.py KNOWN_POLICY_TAGS = {default, soc2, hipaa, gdpr} + aliases {hipaa_basic, gdpr_basic}. _POLICY_EXTRA maps soc2 -> () — baseline only."
@@ -384,7 +416,18 @@ rows:
     evidence: null
     status: partial
     source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
-    notes: "Copies exist. They are written to deploy/backups ON THE PRODUCTION VM, so they share a failure domain with the database they protect."
+    notes: >-
+      ⚠ NARROWED 2026-09-02 by C3b, per CF-2 in
+      docs/compliance/auditor-questions.yaml. This row used to say the copies
+      share a failure domain with the database they protect. MEASURED, they do
+      not: alongside the on-VM dumps, GCP `default-schedule-1` snapshots the
+      production disk daily into the `eu` multi-region and keeps the snapshots
+      when the disk is deleted (see meta.hard_facts.backups). The finding
+      survives, narrower, and it is the word RETRIEVABLE in the requirement:
+      the snapshots are crash-consistent rather than application-consistent,
+      and no restore of a dump or a snapshot has ever been performed — so
+      nothing establishes that a copy can actually be retrieved. HIPAA-007 is
+      the row for the testing itself.
 
   - id: HIPAA-006
     regime: HIPAA
@@ -394,7 +437,13 @@ rows:
     evidence: null
     status: gap
     source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
-    notes: "A comment is not a plan. Lose the VM and both the database and every dump go together."
+    notes: >-
+      A comment is not a plan. ⚠ Its second sentence — "lose the VM and both the
+      database and every dump go together" — was WITHDRAWN 2026-09-02 with
+      HIPAA-005 and SOC2-009: the EU disk snapshots survive the VM. The gap is
+      unchanged and is the plan, not the copy. There is no documented recovery
+      procedure, no RTO or RPO, no named owner, and nothing that says which
+      copy would be used or how long the restore would take.
 
   - id: HIPAA-007
     regime: HIPAA
@@ -616,9 +665,17 @@ rows:
     status: gap
     source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
     notes: >-
-      ⚠ THE FINDING THE PLAN NAMES IN C4. Backups are written to deploy/backups
-      on the production VM. There is no recovery infrastructure separate from the
-      thing being recovered. This is the question an auditor opens with.
+      ⚠ THE FINDING THE PLAN NAMES IN C4, NARROWED 2026-09-02 by C3b per CF-2 in
+      docs/compliance/auditor-questions.yaml. As written this row said there is
+      no recovery infrastructure separate from the thing being recovered. That
+      is no longer accurate: GCP `default-schedule-1` writes daily disk
+      snapshots to the `eu` multi-region and keeps them if the source disk is
+      deleted, which is infrastructure separate from the VM (see
+      meta.hard_facts.backups). What A1.2 still does not have is the OPERATED
+      half: the schedule was never authorised, designed or approved as a
+      control — it is a GCP default nobody chose, it pins no storage location,
+      it is crash-consistent, and it is monitored by nothing. Status stays
+      `gap`. SOC2-010 carries the untested restore.
 
   - id: SOC2-010
     regime: SOC2
@@ -723,7 +780,13 @@ rows:
     evidence: "The export plus verifier/foxy_verify.py evidences integrity. Nothing evidences availability or restoration."
     status: partial
     source: "GDPR Art. 32, gdpr-info.eu — https://gdpr-info.eu/art-32-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
-    notes: "Art. 32(1)(c) restoration and 32(1)(d) regular testing both fail on the same fact as SOC2-009 and SOC2-010: on-VM backups, never restored."
+    notes: >-
+      Art. 32(1)(c) restoration and 32(1)(d) regular testing fail on the same
+      facts as SOC2-009 and SOC2-010 — but on the NARROWED version of those
+      rows, corrected 2026-09-02: copies do exist off the VM and off the region
+      (EU disk snapshots), and what is absent is that nobody has ever restored
+      one, so the "ability to restore in a timely manner" and the "regular
+      testing" limbs are both unevidenced.
 
   - id: GDPR-006
     regime: GDPR
@@ -788,6 +851,72 @@ rows:
       hosting, and it is not established whether platform-key grading (which puts
       OpenAI/Google under Foxy's account in the chain) has ever been notified as
       a subprocessor engagement.
+
+  # C3b, 2026-09-02 — CF-1 from docs/compliance/auditor-questions.yaml. C0b added
+  # a data-subject-rights row for LGPD (Art. 18), Saudi PDPL (Art. 4) and UAE
+  # PDPL (Art. 13) and did not back-fill GDPR, which is the most-named regime on
+  # the product's surfaces. These two rows are that back-fill. Nothing about the
+  # product changed to produce them.
+  - id: GDPR-011
+    regime: GDPR
+    clause: "Art. 15"
+    requirement: >-
+      Right of access by the data subject — "The data subject shall have the
+      right to obtain from the controller confirmation as to whether or not
+      personal data concerning him or her are being processed, and, where that
+      is the case, access to the personal data" and to the information listed at
+      points (a) to (h). Art. 15(3): "The controller shall provide a copy of the
+      personal data undergoing processing", and where the request is made by
+      electronic means the information shall be provided in a commonly used
+      electronic form.
+    control: "GET /v1/account/export (admin only), wired to foxy-audit-premium.html's `downloadAccountExport`: 16 of the 23 org-scoped tables, with an `export_scope` block naming included tables, excluded tables with a reason each, and withheld fields. Account and organisation details are editable from the dashboard."
+    evidence: "foxy-account-export.json, which states its own boundaries in the file. foxy-sale-page/privacy.html §14 states access, correction, deletion and export rights with a 30-day response commitment."
+    status: partial
+    source: "GDPR Art. 15, gdpr-info.eu — https://gdpr-info.eu/art-15-gdpr/ (paragraphs 1 and 3 quoted, fetched 2026-09-02)"
+    notes: >-
+      Partial for two separate reasons and they point at different parties.
+      Art. 15 binds the CONTROLLER; for workspace data that is the customer, so
+      Foxy answers through the Art. 28(3)(e) duty to assist (GDPR-003) rather
+      than head-on — but Foxy IS the controller for account data, and there this
+      binds it directly. And the mechanism is org-scoped, not subject-scoped:
+      there is no per-subject filter and no record that a request was received,
+      answered, or answered in time. See AQ-013 and AQ-014.
+
+      ⚠ NOTED WHILE WRITING THIS ROW, 2026-09-02, and not fixed here because it
+      is a surface claim rather than a crosswalk row: privacy.html §14's "Access
+      and export" bullet names only the Compliance Passport as the export route.
+      The artefact that actually answers Art. 15(3) — "a copy of the personal
+      data undergoing processing" — is GET /v1/account/export, which §14 does not
+      mention. §14's regional list and its general commitment are correct and do
+      state GDPR access and portability with a 30-day response period citing
+      Art. 12; it is the bullet that points at the narrower artefact. C2's scope.
+
+  - id: GDPR-012
+    regime: GDPR
+    clause: "Art. 20"
+    requirement: >-
+      Right to data portability — "The data subject shall have the right to
+      receive the personal data concerning him or her, which he or she has
+      provided to a controller, in a structured, commonly used and
+      machine-readable format and have the right to transmit those data to
+      another controller without hindrance", where the processing is based on
+      consent or on a contract and is carried out by automated means. Art. 20(2)
+      adds a right to have the data transmitted directly from one controller to
+      another "where technically feasible".
+    control: "The same export. GET /v1/account/export returns JSON, and GET /v1/logs/export returns the ledger as JSON or CSV — structured, commonly used and machine-readable, and produced by the data subject's own organisation in one request."
+    evidence: "foxy-account-export.json and foxy-audit-logs.json."
+    status: partial
+    source: "GDPR Art. 20, gdpr-info.eu — https://gdpr-info.eu/art-20-gdpr/ (paragraphs 1 and 2 quoted, fetched 2026-09-02)"
+    notes: >-
+      The FORMAT limb is genuinely met — JSON and CSV are exactly what Art. 20(1)
+      asks for, and no conversion step stands between the customer and the file.
+      What is not met is the rest: Art. 20(2) direct controller-to-controller
+      transmission does not exist and nothing is planned, the scope of "data the
+      subject has provided" has never been drawn against this schema, and the
+      same subject-scoping gap as GDPR-011 applies. Recorded as its own row and
+      not folded into GDPR-011 because access and portability are different
+      rights with different triggers, and a reader looking for one must not find
+      only the other.
 
   # ------------------------------------------------------------ EU AI ACT ---
   - id: EUAI-001
@@ -966,8 +1095,10 @@ rows:
       Art. 20(1)(a) names encryption and pseudonymisation explicitly, and
       Art. 20(1)(c) requires measures ensuring timely retrieval of and access to
       personal data after an actual or technical failure — which is the same
-      recovery obligation as SOC 2 A1.2, and the same finding: deploy/backup.sh
-      writes to the production VM itself.
+      recovery obligation as SOC 2 A1.2, and the same finding in its narrowed
+      2026-09-02 form: copies exist off the VM, and TIMELY RETRIEVAL is
+      unevidenced because no restore has ever been performed (SOC2-009,
+      SOC2-010).
 
   - id: UAE-002
     regime: PDPL_UAE
