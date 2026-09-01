@@ -1,0 +1,1214 @@
+# Foxy Audit — the auditor question set, and what the ledger can answer today
+#
+# Phase C3a of docs/plans/compliance-program.md §4. READ
+# docs/compliance/README.md and docs/compliance/crosswalk.yaml FIRST — every
+# question here is derived from crosswalk rows, and `crosswalk_rows` on each
+# question is the derivation, not a decoration.
+#
+# ⚠ THE ONE RULE, AND IT IS NOT THE CROSSWALK'S RULE: `answerable: full` means a
+# customer could do it TODAY, unaided, and hand the output to a third party. Not
+# "the data is in the database somewhere", and not "we could write them a query".
+# If it needs a query someone would have to write for them, it is `partial` at
+# best. This file exists to be honest about the difference.
+#
+# ⚠ THE JUDGE CANNOT ASSESS MALICIOUSNESS. It sees hashes and counts. No question
+# here is marked answerable on the basis that the judge decides intent — see
+# AQ-008, which exists to make that permanent and to stop a later reader
+# promoting a `partial` row into an intent claim.
+
+meta:
+  phase: "C3a"
+  written: "2026-09-02"                 # the facts it rests on were established 2026-09-01
+  verified_against: "208d7d8"        # origin/main at the time of this pass
+  written_by: "executor chat, per docs/plans/compliance-program.md §4 C3"
+  scope: >-
+    WHAT an auditor asks, and WHICH of those the product can answer today. It
+    builds nothing. C3b is the build phase and should be scoped from the `gap`
+    and `effort` fields here, ranked by how many crosswalk rows each question
+    unblocks.
+  legal_review: "NONE — this file is engineering research, not legal advice"
+  derivation: >-
+    Every question was derived from the 103 rows in crosswalk.yaml, working
+    outwards from the clause to the question a third party would actually ask to
+    test it. A question with no crosswalk row behind it was not written. The
+    inverse check — a partial/gap row with no question against it — is reported
+    in `coverage` below.
+
+  # ⚠ THE FREEZE CHANGES WHAT "TODAY" MEANS FOR ANY PUBLISHED PAGE.
+  # foxyaudit.tech serves the FROZEN repo. The C2 corrections to privacy.html
+  # §8/§13, trust.html and the SOC 2 sentences are on THIS repo's main
+  # (verified at 208d7d8) and are NOT live. So where a question is answered by a
+  # published page, `how` says which text is live and which is waiting, and the
+  # verdict is set against the LIVE text. See docs/plans/compliance-program.md
+  # §9.3 — the merge floor is 2026-09-18 and it is a floor, not a deadline.
+  published_pages_caveat: >-
+    Verdicts for questions answered by a sale-page document are set against what
+    is LIVE on foxyaudit.tech, which is the frozen repo. Corrected text sitting
+    on this branch does not make a customer able to hand it to an auditor today.
+
+  # ⚠ AND `full` IS ABOUT THE CUSTOMER, NOT ABOUT FOXY. Several questions below
+  # are ones the auditor asks the CUSTOMER about FOXY (a BAA, a restore test, a
+  # record of processing). Those are answerable only if Foxy hands the customer
+  # an artefact. Where none exists, the verdict is `no` regardless of how good
+  # the underlying control is.
+  two_audiences: >-
+    Questions split into two kinds and both are real. LEDGER questions ask what
+    the evidence shows (AQ-001..AQ-012). VENDOR questions ask what Foxy the
+    company can produce (AQ-013..AQ-037). A customer facing an auditor gets both
+    in the same meeting.
+
+# ---------------------------------------------------------------------------
+# THE OWNER'S OPEN QUESTION — UNANSWERED AT THE TIME OF WRITING
+#
+# MAIN asked the owner whether any REAL customer or auditor has asked for
+# something specific. NO ANSWER HAD ARRIVED when this file was written. Nothing
+# below is a real customer ask, and none is presented as one: every entry is
+# derived from a crosswalk clause.
+#
+# If an answer arrives, it OUTRANKS everything derived here — a question a real
+# buyer gated a deal on is worth more than ten inferred from a regulation. Put
+# it in the block below, never in `questions`, so provenance can never be
+# confused. The block is empty because inventing a plausible customer ask would
+# be exactly the fabrication CLAUDE.md §6 forbids.
+# ---------------------------------------------------------------------------
+from_real_requests: []
+
+# ---------------------------------------------------------------------------
+# QUESTIONS
+#
+# answerable:
+#   full     a customer does this TODAY, unaided, and hands the output over.
+#            `how` must name the exact endpoint or field that delivers it.
+#   partial  the answer exists but is incomplete, needs a step the product does
+#            not offer, or cannot be handed to a third party as it stands.
+#   no       nothing answers it today.
+#
+# effort:    estimate of CLOSING the gap, not of answering the question.
+#   trivial  hours; no schema, no new surface, no legal input.
+#   small    days; a document, an endpoint, a UI control, a script's output.
+#   large    weeks, money, a lawyer, or an observation window nobody can compress.
+#
+# gap/effort are null only where nothing is missing.
+# ---------------------------------------------------------------------------
+questions:
+
+  # ═══════════════════════════ LEDGER QUESTIONS ════════════════════════════
+  # What the evidence shows. These are asked of the CUSTOMER, about their own
+  # AI activity, and answered from the product.
+
+  - id: AQ-001
+    question: >-
+      "Give me the complete audit record of your AI interactions for 1 July to
+      30 September, in a format I can open."
+    regimes: [HIPAA, EU_AI_ACT, PCI_DSS, ISO_27001]
+    crosswalk_rows: [HIPAA-001, HIPAA-010, EUAI-002, PCI-003, ISO-010]
+    answerable: full
+    how: >-
+      Dashboard -> Export -> "Audit logs · JSON" (or CSV) with the two date
+      pickers, which is GET /v1/logs/export?format=json&date_from=&date_to=.
+      Both bounds are inclusive of the whole `date_to` day, matching the
+      passport's semantics. The response carries `page` at the top level —
+      `page.complete`, `page.from_seq`, `page.to_seq`, `page.next`,
+      `page.note` — so a bounded page SAYS it is bounded rather than opening as
+      a complete file. The CSV carries the same notice as leading `#` lines.
+    evidence: >-
+      foxy-audit-logs.json (or .csv), one file per page, each naming the seq
+      range it holds. Content-blind by construction: 23 columns of hashes,
+      bounded labels, counts and timestamps, and no prompt or response text.
+    gap: >-
+      Completeness is stated, not proven — see AQ-003. And the export cannot be
+      narrowed to a data class or a policy tag, only to a date range: see
+      AQ-005.
+    effort: null
+
+  - id: AQ-002
+    question: >-
+      "Prove that record has not been edited since it was written — without me
+      having to take your vendor's word for it."
+    regimes: [HIPAA, PCI_DSS, ISO_27001, GDPR]
+    crosswalk_rows: [HIPAA-010, HIPAA-011, PCI-004, ISO-006, ISO-008, GDPR-005]
+    answerable: partial
+    how: >-
+      The mechanism is complete and genuinely strong. GET
+      /v1/logs/export?format=bundle returns foxy-audit-export.zip holding the
+      identical JSON body, the standalone verifier and VERIFY.txt; the auditor
+      runs `python foxy_verify.py foxy-audit-logs.json`, which recomputes every
+      chain hash from genesis with the standard library only and zero Foxy
+      imports (backend/app/export_bundle.py, verifier/foxy_verify.py). Exit 0 =
+      intact from genesis, 1 = tampering, 2 = nothing verified, 3 = a verified
+      SEGMENT and not the whole ledger. Paged exports verify together and must
+      join at both the sequence and the hash.
+    evidence: >-
+      foxy-audit-export.zip, and the verifier's own exit code. The tool travels
+      with the evidence, so verification needs neither Foxy's servers nor Foxy's
+      cooperation.
+    gap: >-
+      ⚠ THE CUSTOMER CANNOT GET THE BUNDLE FROM ANY SURFACE. `format=bundle`
+      appears nowhere a customer can see: grep over foxy-dashboard/,
+      foxy-sale-page/ and every .js returns ONE hit, an HTML comment inside
+      backend/app/templates/compliance_passport.html. The Export dropdown
+      (foxy-audit-premium.html:2614) offers passport / logs_csv / logs_json and
+      no bundle, while the same page at :4907 tells the reader to "Download the
+      verification bundle from Export", and the Passport at :575 tells the
+      AUDITOR to ask the customer for `foxy-audit-export.zip` by filename. The
+      backend already accepts `logs_bundle` as an export-history type
+      (routers/account.py:1113) with nothing in the UI producing one. Two
+      documents name a download the product does not offer; the only way to it
+      is hand-editing a URL. This is the strongest evidence asset in the
+      product, and it is one dropdown option away from being reachable.
+    effort: trivial
+
+  - id: AQ-003
+    question: >-
+      "Prove the record is complete — that no interaction is missing from it."
+    regimes: [HIPAA, EU_AI_ACT, ISO_27001]
+    crosswalk_rows: [HIPAA-001, HIPAA-010, EUAI-002, ISO-010]
+    answerable: partial
+    how: >-
+      Two halves, and only one is provable. WITHIN the ledger: the chain is
+      sequential, so a deleted row breaks the recompute, and a paged export must
+      join at both seq and hash — a page dropped from the middle cannot pass.
+      INTO the ledger: GET /v1/coverage (backend/app/evidence_coverage.py)
+      reports per-client continuity of the SDK's durable client_id/client_seq,
+      and event_metadata carries `client_seq_gap` where the SDK observed one.
+    evidence: >-
+      The verifier's genesis-to-head result, plus the coverage report, which the
+      dashboard renders and the Passport frames in writing as "evidence about
+      the SDK reporting boundary, not a claim every model call was observed".
+    gap: >-
+      A model call made without the decorator is outside the observable
+      boundary and nothing can see it — that is a property of any host-side
+      agent, not a defect, and the product says so rather than claiming
+      otherwise. What is missing is the artefact: GET /v1/coverage is not in
+      the account export, not in the ledger export, and reachable only as a
+      dashboard view, so the honest completeness statement cannot be handed to
+      an auditor alongside the evidence it qualifies.
+    effort: small
+
+  - id: AQ-004
+    question: >-
+      "This entry is dated 12 August. Show me it existed on 12 August and was
+      not written later."
+    regimes: [HIPAA, PCI_DSS, ISO_27001]
+    crosswalk_rows: [HIPAA-011, PCI-004, ISO-008]
+    answerable: partial
+    how: >-
+      Optional EVM anchoring publishes a periodic root hash of the chain head to
+      a public chain via the AnchorRegistry contract. GET /v1/anchors and
+      /v1/anchors/sla; the latest receipt rides in the export's `anchor` block
+      (chain, root_hash, last_seq, tx_hash, block_number, contract); the
+      verifier confirms it offline and, with `--anchor --rpc`, against the live
+      chain.
+    evidence: >-
+      The anchor receipt in the export, the transaction on a public block
+      explorer, and the verifier's own anchor check.
+    gap: >-
+      Anchoring is per-workspace and off by default, so most ledgers have no
+      receipt at all, and the default chain is `sepolia` — a TEST network
+      (config.py:240 anchor_evm_chain). An anchor on a testnet is weaker
+      evidence of existence-at-a-time than one on mainnet: testnet state carries
+      no economic guarantee of permanence. privacy.html:195 discloses both facts
+      accurately and says mainnet is configurable, which is the honest framing;
+      what is missing is mainnet actually being used, which costs money.
+    effort: large
+
+  - id: AQ-005
+    question: >-
+      "Show me every interaction that touched PHI in the quarter."
+    regimes: [HIPAA]
+    crosswalk_rows: [HIPAA-001, HIPAA-010, HIPAA-013]
+    answerable: partial
+    how: >-
+      GET /v1/logs?policy_tag=hipaa&since=&until= filters server-side and the
+      dashboard exposes it. The export carries `policy_tag` and `pii_signals` as
+      columns, so a reader can select rows in the file they were given.
+    evidence: >-
+      A filtered dashboard view, or the export plus the reader's own selection
+      over two columns.
+    gap: >-
+      THREE distinct problems, and the first is the one that matters.
+      (1) `policy_tag` is what the DEVELOPER typed in the decorator, not what
+      was detected — `policy="hipaa"` is a declaration of intent, and an
+      untagged call carrying PHI is tagged `default`. `pii_signals` is what the
+      local sweep actually found, and it is the honest column for this question.
+      (2) GET /v1/logs/export takes only a date range, so the filtered set
+      cannot be exported; the auditor filters the file by hand.
+      (3) A filtered subset is NOT independently verifiable — the verifier
+      requires contiguous seqs joined by hash, so any selection recomputes as a
+      break. Answering this in a verifiable form means shipping the whole range
+      plus a selection manifest, not a filtered chain.
+    effort: large
+
+  - id: AQ-006
+    question: >-
+      "Your system flagged this interaction. Show me why — which rule fired, and
+      what did that rule mean on the day it fired, not today?"
+    regimes: [HIPAA, SOC2, ISO_27001]
+    crosswalk_rows: [HIPAA-010, HIPAA-011, SOC2-005, ISO-006]
+    answerable: partial
+    how: >-
+      This is the reproducible-rules answer to the provability/privacy tension,
+      and it is shipped. A guarded row records `policy_rules` (the rule ids that
+      fired), `ruleset_version` and `ruleset_hash` in event_metadata — the last
+      two naming and digesting the FROZEN rule definitions that produced those
+      ids. `foxy explain --event-id … --prompt-file …`
+      (sdk/src/foxy_audit/introspect.py, cli.py) loads that row's own ruleset,
+      re-hashes it against the recorded digest, recomputes the commitment, and
+      prints the matched spans — locally, on the customer's machine, against a
+      prompt the customer already holds. It reports six could-not-run answers by
+      name (unknown_ruleset, ruleset_mismatch, ruleset_unrecorded,
+      salt_unavailable, hash_mismatch, export_unreadable) rather than guessing.
+    evidence: >-
+      The row's own rule ids and ruleset digest in the export, plus the customer
+      running `foxy explain` in front of the auditor.
+    gap: >-
+      It depends on the CUSTOMER still holding the prompt (and, for a salted
+      row, the salt sidecar) — Foxy holds neither, by design, and cannot. It is
+      documented for developers and named in no auditor-facing artefact: the
+      Compliance Passport does not mention `explain`, `ruleset_version` or
+      reproducible rules at all. The cheap half is documentation; the expensive
+      half is the sealed evidence locker that would remove the dependency on the
+      customer's own retention.
+    effort: small
+
+  - id: AQ-007
+    question: >-
+      "Your team says this ledger entry corresponds to that prompt. Prove the
+      two are actually bound together."
+    regimes: [HIPAA, ISO_27001, PCI_DSS]
+    crosswalk_rows: [HIPAA-011, ISO-006, PCI-004]
+    answerable: partial
+    how: >-
+      `python foxy_verify.py foxy-audit-logs.json --events sidecar.jsonl
+      --commitment-key <customer key>` recomputes the HMAC commitment from the
+      customer's own copy of the prompt and response and compares it to
+      `prompt_hash`/`response_hash` on the row. The salt never reaches Foxy; a
+      salted row with no salt in the sidecar is reported `unprovable`, never as
+      a pass and never as tampering.
+    evidence: >-
+      The verifier's commitment result, computed on the auditor's machine from
+      the customer's own key and content.
+    gap: >-
+      Same dependency as AQ-006 — the customer must have kept the content and
+      the sidecar — and the same discoverability problem as AQ-002: the verifier
+      arrives only in a bundle no surface offers. Neither the dashboard nor the
+      Passport mentions `--events` or the sidecar.
+    effort: small
+
+  - id: AQ-008
+    question: >-
+      "Your system marked these as breaches. Prove the interaction was actually
+      malicious."
+    regimes: [SOC2]
+    crosswalk_rows: [SOC2-005]
+    answerable: "no"
+    how: >-
+      Nothing answers this, and nothing in this product ever will. ⚠ THE JUDGE
+      SEES ONLY HASHES AND COUNTS — it has no content to read, so it cannot
+      assess maliciousness at all. What it detects is METADATA anomaly (repeated
+      hashes in a session, token spikes). SOC2-005 carries this warning in the
+      crosswalk and this question exists so a later reader cannot promote that
+      `partial` into an intent claim.
+    evidence: >-
+      None. The nearest true statements are: a deterministic rule fired and can
+      be re-run (AQ-006), and the record of what happened is intact (AQ-002).
+      "We can prove WHAT happened and that it was not tampered with; intent is a
+      human call" is the honest line, and it is the one to say.
+    gap: >-
+      Structural, not a missing feature. Semantic judgement needs the content,
+      and the content exists only on the customer's machine for an instant. The
+      four candidate routes are in the vault's "Issues — provability vs privacy
+      (the core tension)" — reproducible rules (shipped, AQ-006), a sealed
+      evidence locker under the customer's key, a local classifier in the guard,
+      and matched-pair commitment. Plan §7 puts all of them out of scope, and
+      C3b must not imply otherwise on any surface.
+    effort: large
+
+  - id: AQ-009
+    question: >-
+      "Who reviewed the flagged interactions, and when did they sign off?"
+    regimes: [HIPAA, SOC2, ISO_27001, PCI_DSS]
+    crosswalk_rows: [HIPAA-001, SOC2-006, ISO-005, PCI-007]
+    answerable: "no"
+    how: >-
+      Nothing. The ledger records what happened and how it was graded; it
+      records no human disposition. Grep over models.py and routers/ for
+      acknowledge/attest/reviewed_by returns only routers/admin_alerts.py, which
+      is FOXY STAFF acknowledging Foxy's own operational alerts in the admin
+      console — not a customer, not about a customer's flagged event, and not
+      visible to a customer.
+    evidence: null
+    gap: >-
+      A customer-side disposition record: who looked at a breach row, when,
+      what they concluded, and what they did. This is one of the two holes the
+      plan already names in C3, and it is the question that turns "we have a
+      log" into "we have a process". Note the design constraint: the chain is
+      append-only and a review happens AFTER the row is sealed, so an
+      attestation is a side record referencing seq/chain_hash — it cannot be an
+      edit, and making it a new chained event type is a wire-contract change on
+      a system with live customers.
+    effort: small
+
+  - id: AQ-010
+    question: >-
+      "Show me the administrative changes to this workspace — who changed the
+      policy, who created an API key, who removed a member."
+    regimes: [HIPAA, SOC2, ISO_27001]
+    crosswalk_rows: [HIPAA-001, SOC2-014, ISO-010]
+    answerable: full
+    how: >-
+      GET /v1/account/audit (admin only, RLS-scoped) returns the org's own
+      account-action trail newest first — actor_email, action, target, detail,
+      created_at — and the dashboard renders it. The same rows ship in the
+      `account_actions` section of GET /v1/account/export, so the record leaves
+      the building with the rest of the workspace.
+    evidence: >-
+      The account-action trail in foxy-account-export.json, or the dashboard
+      view.
+    gap: >-
+      It records the customer's own admin actions, not Foxy staff actions
+      against the workspace — those live in `admin_actions`, are purged at
+      admin_actions_retention_days (365, config.py:284) and are not exposed to
+      the customer at all. An auditor asking "did the vendor touch our data"
+      gets nothing. Note account_actions itself is NOT purged, which is the
+      right way round.
+    effort: small
+
+  - id: AQ-011
+    question: >-
+      "Which AI systems are in scope, and which one produced this evidence? Show
+      me the inventory — owner, purpose, risk tier, data classification."
+    regimes: [EU_AI_ACT, ISO_27001]
+    crosswalk_rows: [EUAI-004, EUAI-005]
+    answerable: full
+    how: >-
+      GET /v1/systems returns the org's declared AI systems with name,
+      owner_email, purpose, provider, model_name, environment,
+      data_classification, risk_tier, lifecycle_status and retired
+      (routers/systems.py). The dashboard has a Systems page for declaring and
+      retiring them; retirement is terminal and there is no DELETE, so a
+      declaration cannot be erased out from under evidence already chained
+      against it. The whole register ships in the `ai_systems` section of GET
+      /v1/account/export, and event_metadata carries `system_id` binding an
+      event to a declaration.
+    evidence: >-
+      The ai_systems section of foxy-account-export.json, and system_id on the
+      ledger rows.
+    gap: >-
+      It is a self-declared register, and nothing validates a declaration
+      against reality — `risk_tier: limited` is whatever the customer typed.
+      EU AI Act Art. 11 / Annex IV technical documentation is far more than
+      these ten fields, so the register supports that obligation without
+      discharging it (which is exactly what EUAI-004 says).
+    effort: large
+
+  - id: AQ-012
+    question: >-
+      "You are the deployer of a high-risk AI system. Show me you have kept its
+      automatically generated logs for at least six months."
+    regimes: [EU_AI_ACT]
+    crosswalk_rows: [EUAI-002, EUAI-003]
+    answerable: partial
+    how: >-
+      The per-org ledger retains event metadata for the life of the workspace —
+      no expiry job touches audit_logs (usage.maintain_partitions drops
+      traffic_events partitions; purge_admin_actions deletes admin_actions;
+      neither reaches the ledger) — and privacy.html §9 states it in writing:
+      "Records are retained for as long as your workspace remains active."
+      Exports are paged and independently verifiable.
+    evidence: >-
+      The export, the verifier, and privacy.html §9.
+    gap: >-
+      "As long as the workspace is active" is longer than six months but is not
+      a COMMITMENT TO six months: it is a description of current behaviour that
+      ends when the workspace does, and it names no minimum. A deployer who
+      cancels loses the surface that produces the export (privacy.html §9 is
+      explicit that cancelling leaves the workspace open, and deleting closes
+      access) — so the retention the clause asks for is the customer's to
+      arrange, by exporting. Nothing in the product states a floor, and nothing
+      prompts an exit export.
+    effort: small
+
+  # ═══════════════════════════ VENDOR QUESTIONS ════════════════════════════
+  # What Foxy the company can produce. The auditor asks the customer; the
+  # customer forwards. A control that is real but invisible answers none of
+  # these.
+
+  - id: AQ-013
+    question: >-
+      "Show me everything Foxy holds about this workspace — and tell me what it
+      deliberately leaves out, and why."
+    regimes: [GDPR, LGPD, PDPL_KSA, PDPL_UAE, SOC2]
+    crosswalk_rows: [GDPR-003, LGPD-005, KSA-005, UAE-006, SOC2-012]
+    answerable: full
+    how: >-
+      GET /v1/account/export (admin only), wired to a dashboard button
+      (foxy-audit-premium.html:5768 `downloadAccountExport`). It carries 16 of
+      the 23 org-scoped tables — org profile, users, policy, API-key metadata,
+      invoices, anchors, ai_systems, account_actions, sign-in history,
+      notifications, webhook and SSO configuration, the usage rollup, the export
+      history, billing-event metadata, and the full ledger — and, in
+      `export_scope`, it names `included_tables`, `excluded_tables` with a
+      reason each, and `withheld_fields` with what is held back and why. Two
+      tests walk the model registry so neither list can go stale silently.
+    evidence: >-
+      foxy-account-export.json, which describes its own boundaries in the file
+      rather than in a claim someone has to trust.
+    gap: >-
+      Deliberate and correct: credentials are never serialized (token_hash,
+      code_hash, client_secret, webhook secret, the Fernet-encrypted BYOK keys),
+      and 101 surrogate/plumbing columns are unnamed. The statement is scoped to
+      table completeness and credential completeness, both test-enforced, with a
+      route for a subject who wants a column it does not carry. Per-SUBJECT
+      narrowing is manual — see AQ-014.
+    effort: null
+
+  - id: AQ-014
+    question: >-
+      "One of our employees has made a subject access request. Show me how your
+      processor helps us answer it inside the statutory window."
+    regimes: [GDPR, LGPD, PDPL_KSA, PDPL_UAE, PDPA_SG, AU_PRIVACY]
+    crosswalk_rows: [GDPR-003, LGPD-005, KSA-005, UAE-006]
+    answerable: partial
+    how: >-
+      The workspace admin pulls GET /v1/account/export and extracts the subject's
+      rows (users, account_actions actor_email, ai_systems owner_email).
+      privacy.html §14 states access, correction, deletion and export rights with
+      a 30-day response commitment, and the mechanisms behind it are real and
+      exercisable.
+    evidence: >-
+      foxy-account-export.json plus privacy.html §14.
+    gap: >-
+      There is no per-subject filter and no DSAR workflow: the admin does the
+      extraction by hand, and nothing records that a request was received,
+      answered, or answered in time. The ledger itself is content-blind, so a
+      subject's PROMPTS are not in it — which is a strong answer to give and is
+      stated nowhere an auditor would find it.
+    effort: small
+
+  - id: AQ-015
+    question: >-
+      "Prove that our prompt and response text never reaches Foxy at all."
+    regimes: [GDPR, SOC2, HIPAA, PIPEDA, ISO_27001]
+    crosswalk_rows: [GDPR-001, GDPR-002, SOC2-003, SOC2-011, HIPAA-013, PIPEDA-001, ISO-009]
+    answerable: partial
+    how: >-
+      Three independent things a customer can point at. (1) The SDK is public on
+      PyPI (`pip foxy-audit`) and its wire payload is a closed field list a
+      customer can read and diff against what leaves their own process.
+      (2) `foxy check` evaluates a prompt locally and prints LABELS only — it
+      never echoes, logs or raises the text. (3) The backend REFUSES anything
+      else: schemas.py `_metadata_is_content_blind` validates event_metadata
+      against a 16-key allowlist and 422s the request, so content-blindness is
+      enforced at ingest, not merely intended by the client.
+    evidence: >-
+      The published SDK source, and the customer's own network capture of what
+      the process sends.
+    gap: >-
+      All three are arguments a technical reader can check; none is an artefact
+      a compliance reviewer can file. There is no one-page "what leaves your
+      process" field list with a captured example payload — even though the
+      field list already exists as a literal in schemas.py and in
+      _EXPORT_COLS. Writing it down is the cheapest credibility gain in this
+      file.
+    effort: trivial
+
+  - id: AQ-016
+    question: >-
+      "Does Foxy send anything about our interactions to OpenAI or Google, and
+      under whose contract?"
+    regimes: [HIPAA, SOC2, GDPR, PIPEDA]
+    crosswalk_rows: [HIPAA-015, SOC2-003, GDPR-010, PIPEDA-002]
+    answerable: partial
+    how: >-
+      Yes, and the honest answer has two branches. Under BYOK the customer's own
+      provider key is used and the customer contracts with the provider
+      directly. Under platform keys (judge_routing.py `platform_keys_allowed`)
+      some tiers grade on FOXY's keys, which sends event METADATA — never prompt
+      or response text — to OpenAI and Google under Foxy's account. GET
+      /v1/policies reports `gemini_key_set` / `openai_key_set` as booleans, and
+      the Passport counts ai_graded vs rules_graded vs grader_unrecorded events
+      from the record's own `graded_by`, never from a deployment setting.
+    evidence: >-
+      privacy.html §8 and §13 name Google and OpenAI as sub-processors, and §13
+      states plainly that no DPA has been executed with OpenAI and that Google's
+      clauses are expected rather than established. The Passport's grader
+      provenance counts. ⚠ That §13 text is on THIS branch and is not live.
+    gap: >-
+      No ledger field records WHICH key paid for a given grading, so a customer
+      cannot tell from their own evidence whether a specific event left on their
+      key or Foxy's — they can only infer it from a policy flag that describes
+      today. `graded_by` distinguishes ai / rules / host_enforcement / none but
+      not whose credential. Adding it affects new rows only. Underneath sits the
+      unresolved legal question of whether that metadata is identifiable, and
+      HIPAA-015's un-papered subcontractor relationship.
+    effort: small
+
+  - id: AQ-017
+    question: >-
+      "Where is our data stored, and what Article 46 safeguard covers the
+      transfer out of the EEA?"
+    regimes: [GDPR, PDPL_KSA, PDPL_UAE, QATAR_13_2016, PDPA_SG, AU_PRIVACY, LGPD]
+    crosswalk_rows: [GDPR-007, GDPR-008, GDPR-009, KSA-002, UAE-002, UAE-007, QAT-004, SGP-003, AUS-003, LGPD-003]
+    answerable: partial
+    how: >-
+      The location is now established and written down: GCP me-central1, Doha,
+      Qatar; nightly dumps on the VM (14 days); GCP daily disk snapshots in the
+      EU multi-region (14 days); judge metadata to the US. privacy.html §8 and
+      §13 on THIS branch set all of it out, including that Qatar has no adequacy
+      decision, that the Art. 46 safeguard "is not yet in place", and where each
+      US sub-processor stands.
+    evidence: >-
+      privacy.html §8 and §13 — once merged. ⚠ THE LIVE SITE STILL SAYS UNITED
+      STATES and still cites the EU SCCs for a US transfer that does not happen
+      (plan §9.1). The merge floor is 2026-09-18 and the owner has decided
+      nothing ships before it; that decision is settled and is not to be
+      re-opened.
+    gap: >-
+      Two things, one legal and one temporal. No Article 46 instrument or
+      transfer impact assessment exists for the EEA -> Qatar leg (C1
+      deliverable 3, gated on a lawyer and on budget), and the corrected pages
+      are not live, so a customer asked this question today can hand over only
+      text that is wrong. Ten crosswalk rows across seven regimes hang on this
+      one answer — it is the widest single gap in the file.
+    effort: large
+
+  - id: AQ-018
+    question: >-
+      "List your sub-processors, and show me what you assessed about each before
+      you engaged them."
+    regimes: [SOC2, PCI_DSS, ISO_27001, HIPAA]
+    crosswalk_rows: [SOC2-008, PCI-006, ISO-003, HIPAA-015, GDPR-010]
+    answerable: partial
+    how: >-
+      A roster is published on privacy.html §8 and repeated on trust.html, and
+      foxy-sale-page/test_site_wide_claims.py keeps the two pages from
+      disagreeing. dpa.html commits to advance email notice to the registered
+      administrator before a sub-processor is added or replaced.
+    evidence: The published roster and the published DPA.
+    gap: >-
+      The list answers "who", not "what did you assess" — no vendor risk
+      assessment exists for any provider, which is why SOC2-008 is `gap` despite
+      having a control. ⚠ And the guard proves the pages AGREE, not that they
+      are RIGHT: it read green while every page named the wrong hosting country.
+      Alchemy/Infura (Sepolia RPC) and Etherscan are reached by the code and
+      appear on no roster as processors — Etherscan is named at
+      privacy.html:195 only as a place to view a transaction.
+    effort: small
+
+  - id: AQ-019
+    question: >-
+      "What is your retention policy for this evidence, and show me it is
+      actually applied."
+    regimes: [SOC2, HIPAA, PCI_DSS, PDPA_SG, AU_PRIVACY, EU_AI_ACT]
+    crosswalk_rows: [SOC2-012, HIPAA-016, PCI-005, SGP-002, AUS-002, EUAI-003]
+    answerable: partial
+    how: >-
+      A written policy exists and is specific: privacy.html §9 — ledger records
+      for the life of the workspace, hashed IPs and user-agents 90 days, staff
+      audit logs up to 365 days. Two of the three are enforced by code the
+      customer can be told about: usage.maintain_partitions drops traffic_events
+      partitions past traffic_retention_days (90) and usage.purge_admin_actions
+      deletes admin_actions past admin_actions_retention_days (365).
+    evidence: privacy.html §9.
+    gap: >-
+      Three holes. (1) Nothing EVIDENCES that a purge ran — the jobs emit no
+      dated artefact a third party could inspect. (2) Retention is not
+      configurable per workspace, so a customer with a 7-year statutory duty and
+      one with a 30-day minimisation duty get the same behaviour. (3) The
+      ledger's own retention is a description ("as long as the workspace is
+      active"), not a schedule with a disposal date, which is what SOC2-012 /
+      C1.2 and SGP-002 / AUS-002 actually ask for — and those two ask the
+      OPPOSITE of PCI-005 and EUAI-003. A single global policy cannot satisfy
+      both directions.
+    effort: small
+
+  - id: AQ-020
+    question: >-
+      "We are terminating. Prove our data was deleted."
+    regimes: [SOC2, PDPA_SG, AU_PRIVACY, GDPR]
+    crosswalk_rows: [SOC2-012, SGP-002, AUS-002]
+    answerable: "no"
+    how: >-
+      Deleting a workspace from the dashboard immediately blocks sign-in and API
+      access and places records in a restricted, inaccessible state, reversible
+      for 30 days. privacy.html §9 then says plainly that automated permanent
+      purge is still being built and that erasure is performed by the team on
+      request.
+    evidence: >-
+      privacy.html §9, which is honest about the limitation rather than
+      claiming a purge that does not run.
+    gap: >-
+      Restriction is not deletion, and a manual erasure produces no artefact. An
+      auditor wants a certificate of deletion — what was deleted, when, by whom,
+      and confirmation the backups aged out. Note the backup interaction: 14-day
+      dumps on the VM and 14-day GCP EU snapshots mean a deleted workspace
+      genuinely persists in two backup sets for two weeks, which is normal and
+      should be STATED rather than discovered.
+    effort: small
+
+  - id: AQ-021
+    question: >-
+      "Do you have a signed business associate agreement with Foxy?"
+    regimes: [HIPAA]
+    crosswalk_rows: [HIPAA-008, HIPAA-014, HIPAA-015]
+    answerable: "no"
+    how: >-
+      Nothing. Searched the repo, the sale page and the vault on 2026-09-01: no
+      BAA exists, no BAA is offered, and there is no process to request one.
+    evidence: None.
+    gap: >-
+      ⚠ THE SHARPEST SINGLE GAP IN THE PRODUCT, and the only question on this
+      list that can end a healthcare deal in one sentence. A business associate
+      handling PHI needs the contract BEFORE data flows, and there are live
+      healthcare customers today. Detection working (`hipaa` -> `phi`,
+      mode="block" genuinely stopping the call) is a product feature, not
+      compliance, and must never be offered as an answer to this question. Three
+      HIPAA rows depend on it: 008 is the contract, 014 the incident-reporting
+      term it would carry, 015 the subcontractor flow-down that platform keys
+      make live. C1 deliverable 1 drafts it; signing is gated on a lawyer.
+    effort: small
+
+  - id: AQ-022
+    question: >-
+      "Show me your record of processing activities."
+    regimes: [GDPR, PDPL_KSA, PDPL_UAE, LGPD]
+    crosswalk_rows: [GDPR-004, KSA-003, UAE-005, LGPD-002]
+    answerable: "no"
+    how: Nothing. No record of processing exists in any form.
+    evidence: None.
+    gap: >-
+      Four regimes ask for the same artefact in four vocabularies — Art. 30(2)
+      for a processor, KSA Art. 30, UAE Art. 8(7)'s "special record", LGPD
+      Art. 37 — and one document written once answers all four. It is a
+      desk exercise, not engineering: categories of processing, the controllers
+      it is done for, transfers to third countries, and a description of the
+      security measures. Everything it needs is already established in this
+      repo and in the vault. Second-highest ratio of rows closed to effort
+      spent, after AQ-023.
+    effort: small
+
+  - id: AQ-023
+    question: >-
+      "Show me your incident response plan, and tell me how quickly you would
+      notify us of a breach."
+    regimes: [HIPAA, SOC2, GDPR, ISO_27001, PCI_DSS, PDPL_UAE, QATAR_13_2016, PDPL_KSA, LGPD, PIPEDA, PDPA_SG, AU_PRIVACY]
+    crosswalk_rows: [HIPAA-004, HIPAA-017, SOC2-006, GDPR-006, ISO-005, ISO-011, PCI-007, UAE-003, QAT-001, QAT-003, KSA-004, LGPD-004, PIPEDA-003, PIPEDA-004, SGP-004, SGP-005, AUS-004, AUS-005]
+    answerable: "no"
+    how: >-
+      There is one sentence: privacy.html §15 commits to notifying affected
+      workspace administrators without undue delay. There is no plan behind it —
+      no severity definitions, no roles, no clock, no register of past
+      incidents, no notification templates.
+    evidence: privacy.html §15, which is a commitment and not a plan.
+    gap: >-
+      ⚠ EIGHTEEN CROSSWALK ROWS ACROSS TWELVE REGIMES DEPEND ON ONE MISSING
+      DOCUMENT. It is by a wide margin the highest-leverage artefact in this
+      file. The regimes disagree on the clock — HIPAA 60 days to the covered
+      entity, GDPR "without undue delay" processor-to-controller, KSA reported
+      as 72 hours, PDPA s.26C(3)(a) for a data intermediary, PIPEDA s.10.3's
+      breach REGISTER (a standing obligation with no breach required to trigger
+      it), Australia's 30-day assessment — so the plan must carry a table of
+      duties, not one number. A two-person team can hold this: what it cannot do
+      is improvise it during an actual incident.
+    effort: small
+
+  - id: AQ-024
+    question: >-
+      "When did you last test a restore from backup, and what was the result?"
+    regimes: [HIPAA, SOC2, ISO_27001, GDPR]
+    crosswalk_rows: [HIPAA-005, HIPAA-006, HIPAA-007, SOC2-009, SOC2-010, ISO-008, GDPR-005]
+    answerable: "no"
+    how: >-
+      Backups exist — deploy/backup.sh writes nightly pg_dump plus an avatar
+      tarball, and GCP takes daily disk snapshots into the EU multi-region — but
+      no restore has been performed and there is no record of one. The only
+      "recovery plan" is a recipe in a shell script's header comment.
+    evidence: None.
+    gap: >-
+      An untested backup is a belief, not a control, and this is the question an
+      auditor opens with. ⚠ ONE CROSSWALK NOTE IS NOW STALE HERE: SOC2-009 and
+      HIPAA-005 say the backups share a failure domain with the database, which
+      was true when written and is no longer the whole picture — the GCP EU
+      snapshots are off-VM and off-region (recorded in the vault's operating
+      facts and now disclosed in privacy.html §8). The remaining finding is
+      real and narrower: an untested restore, and no documented recovery plan.
+      Running one restore and keeping the output moves SOC2-010 toward `met` and
+      is the cheapest high-value control in the whole programme.
+    effort: small
+
+  - id: AQ-025
+    question: >-
+      "Who at Foxy can reach our data, and how is that access reviewed?"
+    regimes: [SOC2, HIPAA, ISO_27001]
+    crosswalk_rows: [SOC2-001, SOC2-002, HIPAA-009, HIPAA-012, ISO-002]
+    answerable: partial
+    how: >-
+      The technical half is real and load-bearing: PostgreSQL row-level security
+      with per-org isolation, separate customer_api and admin_api ASGI apps,
+      per-user accounts, MFA, step-up authentication on sensitive staff actions,
+      and an IP allowlist. trust.html describes the posture.
+    evidence: >-
+      trust.html. Everything else is a control an outsider cannot inspect.
+    gap: >-
+      No access review happens and nothing records who holds staff access today.
+      This is a two-person team, so the review is short — which makes the
+      absence of any dated record of it harder to defend, not easier. It also
+      needs to self-evidence: a script that prints the current staff roster and
+      their roles, run and kept quarterly, is worth more than a calendar
+      reminder.
+    effort: small
+
+  - id: AQ-026
+    question: >-
+      "Who is your named security officer?"
+    regimes: [HIPAA]
+    crosswalk_rows: [HIPAA-002]
+    answerable: "no"
+    how: Nothing names one, anywhere.
+    evidence: None.
+    gap: >-
+      164.308(a)(2) is a REQUIRED specification and every security
+      questionnaire opens with it. On a two-person team the answer is obvious to
+      the team and invisible to everyone else. Writing one name into a policy
+      document closes it — the cheapest row in the entire crosswalk.
+    effort: trivial
+
+  - id: AQ-027
+    question: >-
+      "How does a change reach production, and who approved this one?"
+    regimes: [SOC2, ISO_27001]
+    crosswalk_rows: [SOC2-007, ISO-012]
+    answerable: partial
+    how: >-
+      The pipeline is real and unusually disciplined: branch per change, a merge
+      gate, .github/workflows/ci.yml and deploy.yml, Actions -> VM -> docker
+      compose up --build with a /health/ready smoke test and automatic rollback,
+      and a single-Alembic-head check on migrations.
+    evidence: >-
+      Commit and CI history — for anyone GIVEN repository access, which an
+      auditor of the customer normally is not.
+    gap: >-
+      Two things. The evidence is behind a private repository, so nothing is
+      handable without granting access; and APPROVAL is not recorded distinctly
+      from MERGE, which is precisely what CC8.1 asks for. This is the closest
+      thing to an already-operating SOC 2 control in the company, and it is
+      undersold because nobody outside can see it.
+    effort: small
+
+  - id: AQ-028
+    question: >-
+      "Does Foxy hold a SOC 2 report or an ISO 27001 certificate? May I see it?"
+    regimes: [SOC2, ISO_27001]
+    crosswalk_rows: [ISO-001, SOC2-013]
+    answerable: partial
+    how: >-
+      The honest answer is no, and on this branch every page says so
+      consistently: trust.html:150 "We do not currently hold SOC 2, ISO 27001,
+      or a comparable third-party attestation", trust.html:151's roadmap, and
+      the corrected faq.html:60 and pricing.html:121 now carrying the same
+      wording.
+    evidence: trust.html, faq.html and pricing.html — once merged.
+    gap: >-
+      ⚠ ON THE LIVE SITE THE ANSWER IS STILL SELF-CONTRADICTORY. faq.html and
+      pricing.html say "We're currently completing our SOC 2 Type I audit" while
+      trust.html says no auditor is engaged — and the vault records this same
+      sentence being softened once before, which is why C2 landed a guard rather
+      than only an edit. Beyond the wording, the certificate itself needs money
+      and an observation window (AQ-029).
+    effort: large
+
+  - id: AQ-029
+    question: >-
+      "Show me evidence your controls OPERATED over the last six months, not
+      just that they exist."
+    regimes: [SOC2, ISO_27001]
+    crosswalk_rows: [SOC2-013, SOC2-014]
+    answerable: "no"
+    how: >-
+      Nothing accumulates today. Some raw material exists (CI history, the staff
+      audit trail, observability) but no control emits a dated artefact on a
+      schedule, and nothing evaluates whether the controls are present and
+      functioning.
+    evidence: None.
+    gap: >-
+      CC4.1 is the clause behind the plan's §5 sequencing argument, and it is
+      the one input money cannot compress later: a Type II report needs an
+      OBSERVATION WINDOW, typically 3-12 months, and that window starts the day
+      someone starts collecting — not the day an auditor is paid. Every quarter
+      that passes without collection is a quarter that cannot be bought back.
+      This is why C4's evidence collection is scheduled beside C1 rather than
+      after C3.
+    effort: large
+
+  - id: AQ-030
+    question: >-
+      "What technical measures protect the data at rest and in transit?"
+    regimes: [GDPR, SOC2, QATAR_13_2016, PDPL_KSA, PDPL_UAE, LGPD, PDPA_SG, AU_PRIVACY, PIPEDA, ISO_27001]
+    crosswalk_rows: [GDPR-005, SOC2-011, QAT-002, KSA-001, UAE-001, LGPD-001, SGP-001, AUS-001, PIPEDA-001, ISO-002]
+    answerable: partial
+    how: >-
+      The most-asked vendor question, and ten crosswalk rows across ten regimes
+      resolve to the same answer. TLS everywhere via a terminating reverse
+      proxy; content-blindness, so the most sensitive material never arrives;
+      per-org PostgreSQL RLS; provider keys encrypted at rest under the KEK
+      (crypto_secrets.py); password_hash / key_hash / *_key_enc / session
+      token_hash never serialized; API keys shown once; the hash chain over
+      event metadata. privacy.html §10 states the posture publicly.
+    evidence: >-
+      privacy.html §10 and trust.html. The chain and the verifier are the one
+      part an outsider can actually TEST rather than read.
+    gap: >-
+      No statement of DISK-level encryption for the database volume (GCP
+      encrypts persistent disks by default, but the product asserts it nowhere,
+      and an unstated default is not an answer), no data-classification scheme —
+      which is what SOC2-011 / C1.1 asks for by name — and no penetration test
+      or external security assessment of any kind. The individual controls are
+      strong; what is missing is the one-page statement that collects them.
+    effort: small
+
+  - id: AQ-031
+    question: >-
+      "Do your staff receive security awareness training, and can you show the
+      records?"
+    regimes: [HIPAA, ISO_27001]
+    crosswalk_rows: [HIPAA-003]
+    answerable: "no"
+    how: Nothing exists.
+    evidence: None.
+    gap: >-
+      164.308(a)(5) is required, and on a two-person team it is a short annual
+      exercise with a dated record rather than a programme. It is on this list
+      because a `gap` row with no question against it is a hole, and because it
+      is one of the three or four things a questionnaire always asks that costs
+      almost nothing to close.
+    effort: small
+
+  - id: AQ-032
+    question: >-
+      "How do you prevent unauthorised or malicious code reaching production?"
+    regimes: [SOC2, ISO_27001]
+    crosswalk_rows: [SOC2-004, SOC2-007]
+    answerable: "no"
+    how: >-
+      Nothing specific. The change pipeline in AQ-027 controls WHO merges, not
+      what the dependencies contain: no dependency scanning, no image scanning
+      and no endpoint control is recorded anywhere in .github/workflows/.
+    evidence: None.
+    gap: >-
+      CC6.8. Distinct from change management (AQ-027) and often confused with
+      it. A dependency-audit step in ci.yml emits a dated artefact on every run,
+      which makes it evidence for AQ-029 as well as an answer here.
+    effort: small
+
+  - id: AQ-033
+    question: >-
+      "Do you store cardholder data, and are you PCI DSS compliant?"
+    regimes: [PCI_DSS]
+    crosswalk_rows: [PCI-001, PCI-002]
+    answerable: full
+    how: >-
+      No, and the answer is documented rather than asserted. Foxy is not a
+      merchant, not a service provider in a cardholder data environment, and
+      stores no account data: paid plans are sold through Paddle.com Market Ltd
+      as authorised reseller and MERCHANT OF RECORD (terms.html §6), so the
+      purchase is made from Paddle and card details are held by Paddle, never by
+      Foxy. The SDK's local PII sweep detects card-number patterns before the
+      model call; the pattern never leaves the customer's process.
+    evidence: >-
+      terms.html §6, the published sub-processor roster naming Paddle, and
+      docs/compliance/not-applicable.md.
+    gap: >-
+      The answer is clean; the CLAIM SURFACE is not. foxy-dashboard's regulated
+      data mode lists `pci` beside `hipaa` and `gdpr` as if it were a policy
+      mode — three of the five tags it names are not in the SDK's
+      KNOWN_POLICY_TAGS — which invites this question and then makes it harder
+      to answer. C2 owns that string.
+    effort: trivial
+
+  - id: AQ-034
+    question: >-
+      "Give me your data processing agreement, and show me it covers what you
+      actually do."
+    regimes: [GDPR, PDPL_UAE, LGPD, PDPA_SG]
+    crosswalk_rows: [GDPR-003, GDPR-010, UAE-004, LGPD-006]
+    answerable: partial
+    how: >-
+      A DPA is published at dpa.html, backed by a policy .docx and pinned by
+      foxy-sale-page/test_dpa_v14.py. It defines the controller/processor split
+      in GDPR and CCPA/CPRA terms, states the processing terms, and commits to
+      advance notice before a sub-processor changes. The instruction surface it
+      describes is unusually narrow and therefore unusually easy to honour: the
+      customer chooses policy, mode and agent per call, and no other processing
+      of content happens anywhere.
+    evidence: dpa.html.
+    gap: >-
+      It has not been reviewed by a lawyer, it is a published page rather than a
+      counter-signable instrument, and its transfer terms inherit the residency
+      problem in AQ-017 — dpa.html commits to the EU SCCs where a destination is
+      not adequate, and no SCCs have been executed for Qatar. A customer's
+      counsel asking for a signed DPA gets a web page.
+    effort: large
+
+  - id: AQ-035
+    question: >-
+      "If Foxy shuts down, or loses its cloud provider tomorrow, what happens to
+      the evidence we are relying on?"
+    regimes: [ISO_27001, SOC2, HIPAA]
+    crosswalk_rows: [ISO-004, ISO-008, SOC2-009, HIPAA-006]
+    answerable: partial
+    how: >-
+      The genuinely good answer, and one nobody is being told: the evidence
+      SURVIVES Foxy. An export plus the bundled verifier recomputes the chain
+      from genesis with the standard library only, no network and no Foxy
+      imports — so a customer who has exported their ledger can still prove its
+      integrity to a regulator with Foxy gone. Where anchoring is enabled, the
+      root is on a public chain Foxy does not control.
+    evidence: >-
+      Any export the customer has already downloaded, plus foxy_verify.py.
+    gap: >-
+      It only works for evidence already exported, and nothing prompts, schedules
+      or automates an export — so in practice most customers would have nothing.
+      There is no documented exit plan, no cloud-exit process (ISO-004), and the
+      bundle that carries the verifier is unreachable from the UI (AQ-002). The
+      strongest business-continuity story in the product is currently a property
+      of the architecture that no surface states.
+    effort: small
+
+  - id: AQ-036
+    question: >-
+      "Your Compliance Passport says it is mapped to NIST AI RMF and the EU AI
+      Act. Show me the mapping."
+    regimes: [NIST_AI_RMF, EU_AI_ACT]
+    crosswalk_rows: [NIST-001, EUAI-002, EUAI-004]
+    answerable: "no"
+    how: >-
+      Nothing. backend/app/templates/compliance_passport.html contains zero
+      occurrences of "NIST", "AI RMF", "AI Act" or any clause number. The
+      document is grouped by policy_tag, so no statistic in it says which
+      REQUIREMENT it speaks to.
+    evidence: >-
+      None. passport.html:36 and docs.html:68 claim the mapping; C0 recorded the
+      claim as `delete` for exactly this reason.
+    gap: >-
+      Two halves with very different costs. The EU AI Act half is bounded: five
+      crosswalk rows exist, so the Passport can cite Art. 12 / 26(6) / 26(5)
+      against statistics it already computes. The NIST half cannot be done
+      honestly at all yet — NIST AI RMF has ONE crosswalk row and it is a
+      placeholder with `clause: TBD`, so mapping the Passport to it means first
+      mapping the regime. This question is the direct justification for C3b's
+      "Passport as evidence map" deliverable, and its trap: whatever it cites
+      must respect AQ-008 and never imply the judge assesses intent.
+    effort: large
+
+  - id: AQ-037
+    question: >-
+      "How do you know which regulations apply to you, and when did you last
+      review that?"
+    regimes: [ISO_27001]
+    crosswalk_rows: [ISO-007]
+    answerable: partial
+    how: >-
+      docs/compliance/crosswalk.yaml — 103 rows across 15 regimes, each with a
+      verified clause source and a dated fetch, plus not-applicable.md for the
+      regimes and clauses ruled out with their reasoning, all in version control
+      with a `verified_against` SHA.
+    evidence: >-
+      The files exist and are exactly what A.5.31 asks for. They are in a
+      private repository, so today they are a control and not evidence.
+    gap: >-
+      Nothing publishes it, and nothing schedules a review of it. A quarterly
+      re-verification of the clause sources with the fetch dates updated would
+      turn a snapshot into a maintained register — and would itself be an
+      artefact for AQ-029.
+    effort: small
+
+# ---------------------------------------------------------------------------
+# COVERAGE — the inverse check
+#
+# The brief's rule: a `partial`/`gap` row with no question against it is a hole
+# worth noting. This is that check, run against the 98 non-`not-applicable` rows.
+# ---------------------------------------------------------------------------
+coverage:
+  rows_total: 103
+  rows_cited: 101
+  rows_uncited: 2
+  # Counted by script, not by hand: every id in every `crosswalk_rows` list,
+  # checked against crosswalk.yaml. All 98 non-`not-applicable` rows are cited —
+  # so there is no `partial`/`gap` row without a question against it. The two
+  # uncited rows are both `not-applicable`.
+
+  deliberately_uncited:
+    - rows: [SOC1-001, EUAI-001]
+      why: >-
+        Both `not-applicable`, and neither generates a question of its own.
+        SOC1-001: a SOC 1 report is about controls relevant to a user entity's
+        financial reporting, which Foxy's system does not touch — an auditor
+        asks "do we need a SOC 1 from you", and the answer is
+        not-applicable.md's reasoning, not a ledger capability. EUAI-001:
+        Art. 12 binds the PROVIDER of a high-risk system; Foxy is neither
+        provider nor deployer, so the question belongs to the deployer and is
+        asked as AQ-012 against Art. 26(6) instead.
+    - rows: [GDPR-008, PCI-001, PCI-002]
+      why: >-
+        Also `not-applicable`, and cited anyway rather than skipped. GDPR-008
+        (Art. 45 adequacy) is cited by AQ-017 because "is there an adequacy
+        decision" is the first thing asked about the transfer, and "no" is the
+        answer that makes Art. 46 bite. PCI-001/002 are cited by AQ-033 because
+        "do you store cardholder data" IS asked, and the not-applicable
+        reasoning is exactly the answer to give.
+    - rows: [KSA-005]
+      why: >-
+        Cited by AQ-013 and AQ-014 as a Gulf data-subject-rights row, and noted
+        here because its own record carries a live sub-gap those questions do
+        not: privacy.html §14 names no Gulf jurisdiction while Saudi and UAE
+        customers are live. That is a claims problem (C2's scope), not an
+        auditor question.
+
+  # ⚠ THE INVERSE CHECK FOUND A HOLE IN THE CROSSWALK, NOT IN THIS FILE.
+  crosswalk_findings:
+    - id: CF-1
+      severity: high
+      what: >-
+        GDPR HAS NO DATA-SUBJECT-RIGHTS ROW. The ten GDPR rows are Art. 5(1)(c),
+        25, 28(2), 28(3), 30(2), 32, 33(2), 44, 45, 46. There is no Art. 15
+        (access) and no Art. 20 (portability) — while LGPD-005 (Art. 18),
+        KSA-005 (Art. 4) and UAE-006 (Art. 13) all carry exactly that ground for
+        their own regimes, added by C0b.
+      why_it_matters: >-
+        GDPR is the most-named regime on the product's surfaces and the one with
+        the most live customers behind it. AQ-013 and AQ-014 are the two
+        questions most likely to be asked in practice, and the only GDPR row
+        they can cite is Art. 28(3), which is about the contract rather than the
+        right. C0b added rights rows for four newer regimes and did not
+        back-fill the oldest.
+      fix: >-
+        Add GDPR-011 (Art. 15) and GDPR-012 (Art. 20), or one row citing
+        Art. 28(3)(e) — the processor's duty to ASSIST the controller with
+        data-subject requests, which is the obligation that actually binds Foxy.
+        A C3b/C0c task; not this phase's to write.
+    - id: CF-2
+      severity: medium
+      what: >-
+        SOC2-009 and HIPAA-005 both state that backups share a failure domain
+        with the database they protect. That was true when C0 wrote it and is no
+        longer the whole picture: GCP schedule `default-schedule-1` takes daily
+        disk snapshots into the EU multi-region (measured 5/5 by the owner on
+        2026-09-01, recorded in the vault's "Compliance — operating facts" and
+        now disclosed in privacy.html §8).
+      why_it_matters: >-
+        The rows overstate a real finding. The finding survives in narrower form
+        — no restore has ever been tested, and there is no recovery plan — and
+        that is what SOC2-010 and HIPAA-007 already say. Leaving the wider claim
+        in place risks a C4 executor solving a problem that is partly solved.
+      fix: >-
+        Amend the two `notes` to name the EU snapshots and narrow the finding to
+        the untested restore. Status stays `partial`/`gap` either way.
+    - id: CF-3
+      severity: low
+      what: >-
+        Several `surface_claims` entries are now stale against this repo. The
+        SOC 2 sentences at faq.html:60 and pricing.html:121 have been corrected
+        (both now read "No. We do not currently hold SOC 2..."), and
+        privacy.html §8/§13 now state Qatar, the EU snapshots, and that no
+        Art. 46 safeguard is in place.
+      why_it_matters: >-
+        Not an error — the crosswalk carries `verified_against: e7e1919` and C2
+        landed after it, so the drift is honest and dated. It matters only
+        because a reader checking those line numbers today finds different text
+        and may conclude the file is wrong. The claims are still LIVE on
+        foxyaudit.tech, which serves the frozen repo, so the verdicts remain
+        correct about the world.
+      fix: >-
+        Re-stamp `verified_against` when C2's branch merges here, and note in
+        each affected entry that the correction exists and awaits the
+        2026-09-18 floor.
+
+# ---------------------------------------------------------------------------
+# SUMMARY
+# ---------------------------------------------------------------------------
+summary:
+  questions_total: 37
+
+  # ⚠ COUNTED BY SCRIPT OVER THE PARSED FILE, NOT BY HAND. The first hand count
+  # said 18 partial and 14 "no" and was wrong in both directions, which is the
+  # ordinary fate of a tally written beside a list rather than derived from it.
+  by_answerable:
+    full: 5          # AQ-001, AQ-010, AQ-011, AQ-013, AQ-033
+    partial: 20
+    "no": 12         # AQ-008, 009, 020, 021, 022, 023, 024, 026, 029, 031, 032, 036
+
+  # ⚠ AND `no` IS QUOTED HERE AND ON EVERY QUESTION FOR A REASON. YAML 1.1 reads
+  # a bare `no` as the boolean false, so `answerable: no` parsed as `False` and
+  # any consumer grouping by the string would have silently lost all twelve.
+  # Caught by parsing the file rather than by reading it.
+
+  # ⚠ THE "ZERO FULL ANSWERS" CASE THE BRIEF ALLOWED FOR DID NOT HAPPEN, AND THE
+  # FIVE THAT ARE `full` ARE NOT THE ONES A READER WOULD GUESS. Not one of them
+  # is about proving the ledger is untampered — the product's headline claim —
+  # because the tool that proves it cannot be downloaded from any surface. What
+  # IS `full` is unglamorous and real: getting the data out (AQ-001, AQ-013),
+  # the workspace's own admin trail (AQ-010), the AI system register (AQ-011),
+  # and one honest "no, and here is why" (AQ-033). The pattern is worth naming:
+  # every `full` answer is a self-describing artefact a customer downloads in
+  # one click. Every `partial` needs a step the product knows about and does not
+  # offer.
+  what_the_full_answers_have_in_common: >-
+    One click, one file, and the file describes its own boundaries. AQ-001's
+    `page` block, AQ-013's `export_scope`, AQ-011's terminal-retirement register
+    and AQ-010's actor trail all state what they do not cover inside the artefact
+    itself, which is why a third party can act on them without a conversation.
+
+  # Every question carries a `gap` field. Two of them (AQ-001, AQ-013) describe
+  # a limitation whose closing work is tracked under another question, so they
+  # carry `effort: null` rather than double-counting it.
+  by_effort_for_the_gaps:
+    trivial: 4                 # AQ-002 the bundle dropdown · AQ-015 the field list · AQ-026 name the officer · AQ-033 the `pci` string
+    small: 22
+    large: 9                   # AQ-004, 005, 008, 011, 017, 028, 029, 034, 036
+    "null": 2                  # AQ-001, AQ-013 — limitation only, effort tracked elsewhere
+
+  # ⚠ `effort` IS THE COST OF CLOSING, NOT THE VALUE OF CLOSING. Three of the
+  # `large` ones (AQ-008, AQ-029, AQ-017) are large because of a structural
+  # limit, an observation window, and a lawyer respectively — none of which more
+  # engineering can compress.
+
+  rows_per_question_leaders:
+    - question: AQ-023
+      rows: 18
+      note: "one incident-response document, eighteen rows, twelve regimes"
+    - question: AQ-017
+      rows: 10
+      note: "residency and the Art. 46 safeguard — the widest LEGAL gap"
+    - question: AQ-030
+      rows: 10
+      note: "the security-measures answer ten regimes all resolve to"
+
+  # The three worth closing first, and why these three.
+  highest_value_to_close:
+    - question: AQ-002
+      why: >-
+        The single best ratio in the file. The verification bundle EXISTS, is
+        tested, is byte-guarded against verifier drift, and is what two separate
+        documents instruct the reader to obtain — and there is no way to obtain
+        it. One option in the Export dropdown (`logs_bundle` is already an
+        accepted export type in the backend) converts the product's strongest
+        genuine evidence asset from unreachable to one click, and converts
+        AQ-002, AQ-007 and half of AQ-035 with it.
+      effort: trivial
+    - question: AQ-023
+      why: >-
+        Eighteen crosswalk rows across twelve regimes close on ONE document that
+        needs no code, no schema and no lawyer to draft. Nothing else in this
+        file moves that many rows. And unlike most compliance paperwork it has
+        standalone operational value: a two-person team improvising during a
+        real incident is the failure mode it prevents.
+      effort: small
+    - question: AQ-021
+      why: >-
+        The only question here that can lose a deal in one sentence, and there
+        are live healthcare customers today. It is not the widest gap; it is the
+        sharpest. C1 drafts it; the owner signs after a lawyer. Listed third
+        only because the drafting is already scheduled in C1 while AQ-002 and
+        AQ-023 are not scheduled anywhere.
+      effort: small

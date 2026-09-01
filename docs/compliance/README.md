@@ -8,6 +8,7 @@ Written 2026-09-01 against `origin/main` at **`01e87ad`** (C0) and **`e7e1919`**
 |---|---|
 | [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **103 rows across 15 regimes.** |
 | [`claims.yaml`](claims.yaml) | **C2.** Every compliance claim on every customer-facing surface, each with a verdict and a crosswalk row that backs it — plus the claims C2 deleted, each pinning a pattern that must never come back. |
+| [`auditor-questions.yaml`](auditor-questions.yaml) | **C3a.** The questions a third party actually asks, each derived from crosswalk rows, with an honest verdict on whether a customer could answer it TODAY — **37 questions: 5 `full`, 20 `partial`, 12 `no`.** Also the inverse check: which crosswalk rows no question reaches. |
 | [`not-applicable.md`](not-applicable.md) | Regimes and clauses that cannot bind Foxy, each with the reasoning. A register of *"we checked, and here is why not"*. |
 | this file | How to read the crosswalk, and how to add a regime. |
 
