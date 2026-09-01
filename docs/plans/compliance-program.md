@@ -117,6 +117,14 @@ and that a reviewer can check.
 - Regimes in scope: **HIPAA · SOC 2 · GDPR · EU AI Act · PDPL (Saudi/UAE) ·
   Qatar Law 13/2016 · PCI DSS · ISO 27001**, each explicitly marked for whether
   we *claim* it or merely *map* it.
+
+⚠ **C0b — scope extended 2026-09-01, by owner decision.** `privacy.html` §14
+names **LGPD (Brazil) · PIPEDA (Canada) · Singapore PDPA · Australia Privacy
+Act** with zero crosswalk rows. C0 flagged the choice as "give them rows or stop
+naming them". **The owner chose rows.** Add all four, plus the **PDPL** rows the
+same page omits while Gulf customers are live. A regime named on a live legal
+page and absent from the crosswalk is exactly the asymmetry this phase exists to
+remove.
 - A `not-applicable` register — SOC 1 is already established as not applicable
   (`Issues — SOC 1 is not applicable.md`); that reasoning belongs here.
 
@@ -337,27 +345,25 @@ I audit."* `trust.html:151`: *"no auditor is engaged yet."* One is false, and it
 is the first. Verdict **delete**, not qualify — and a guard, because the vault
 records this same sentence being softened once before.
 
-### 9.3 · The decision this forces
+### 9.3 · ⚠ DECIDED 2026-09-01 — do not raise this again
 
-The real repo is frozen until **2026-09-18**, so these pages cannot be corrected
-through the normal path. That leaves three options and they are the owner's, not
-mine:
+**The owner's decision, in his words: "nothing's on the frozen repo till 18,
+nothing, don't ask me this again — we will merge everything once there."**
 
-1. **Hotfix the legal pages on the real repo despite the freeze.** These are
-   static HTML legal texts — no feature, no competitive surface, nothing a judge
-   is evaluating. **This is MAIN's recommendation.** A factual correction to a
-   privacy policy is the most defensible possible exception to a submission
-   freeze.
-2. **Accept them until 18 Sep** — a deliberate ~2.5 week choice, now made
-   knowingly.
-3. Something else the owner sees that I do not.
+So: **option 2.** The corrections do not ship before **2026-09-18**. This is a
+knowing choice by the person entitled to make it, and it is settled. Any future
+session that rediscovers §9.1 or §9.2 should read this line and move on rather
+than re-open it.
 
-⚠ **The knowing changes the character of it.** A privacy policy wrong by accident
-is a defect. One left up after it is known to be wrong is a decision, and it is
-the kind of decision a regulator and a customer read differently. That is the
-whole reason this section exists rather than sitting in a backlog row.
+**What that obliges us to do instead.** If the fix cannot ship early, it must be
+*finished* early, so 18 Sep is a merge and not a project:
 
-⚠ **Do NOT "fix" this by changing the region.** The pages must match reality;
-reality must not be bent to match the pages. Moving production to a US region to
-make the sentence true would be a far larger change with its own PDPL
-consequences, and is not on the table here.
+* C2 produces the **corrected `privacy.html` §8/§13, `trust.html` table, and the
+  SOC 2 sentences** as a ready branch, reviewed and guarded, sitting waiting.
+* The guards land with them, so the corrected text cannot silently regress —
+  particularly the SOC 2 sentence, which the vault records being softened once
+  before.
+* Nothing is merged to the real repo. Everything is merged **here**.
+
+This is the same posture the owner takes to certification: have it built so the
+only remaining input is the one you cannot buy — there, money; here, a date.
