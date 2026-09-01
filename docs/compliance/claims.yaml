@@ -28,9 +28,25 @@
 meta:
   phase: C2
   written: "2026-09-01"
-  verified_against: "e7e1919"       # origin/main the branch was cut from
+  verified_against: "4466996"       # re-stamped by C1-SYNC, 2026-09-02
   branch: "feat/compliance-c2"
   written_by: "executor chat, per docs/plans/compliance-program.md §4 C2"
+  c1_sync: >-
+    ⚠ C1-SYNC re-stamped `verified_against` on 2026-09-02 and changed nothing
+    else in this file. It could re-stamp with confidence because unlike the
+    crosswalk's `surface_claims`, EVERY `line` here is asserted by a test:
+    foxy-sale-page/test_compliance_claims.py
+    ::test_the_recorded_line_numbers_are_current locates each claim by its
+    `anchor` and fails the build if the recorded line is not where the anchor
+    is. The suite was green at 4466996, so the numbers below are current by
+    proof rather than by assertion.
+
+    That test is also the reason crosswalk.yaml's `meta.line_number_semantics`
+    decided the way it did: line numbers in these files track THIS repository,
+    at the SHA in `verified_against`, because that is the only claim a script
+    can check. See that block for the full reasoning and for how the four
+    `delete` verdicts stay correct about a live site this repo no longer
+    matches.
   legal_review: "NONE — no wording in this file or on the pages it governs has been reviewed by a lawyer"
   surfaces: ["foxy-sale-page/", "foxy-dashboard/"]
   not_a_surface: >-

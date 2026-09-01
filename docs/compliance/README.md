@@ -2,13 +2,14 @@
 
 Phases **C0**, **C0b** and **C2** of [`docs/plans/compliance-program.md`](../plans/compliance-program.md).
 Written 2026-09-01 against `origin/main` at **`01e87ad`** (C0) and **`e7e1919`**
-(C0b and C2).
+(C0b and C2). The three YAML files carry `meta.verified_against: 4466996`, re-stamped
+2026-09-02 by the C1-SYNC pass that carried C1, C3a and C3b into them.
 
 | File | What it is |
 |---|---|
 | [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **105 rows across 15 regimes.** |
 | [`claims.yaml`](claims.yaml) | **C2.** Every compliance claim on every customer-facing surface, each with a verdict and a crosswalk row that backs it — plus the claims C2 deleted, each pinning a pattern that must never come back. |
-| [`auditor-questions.yaml`](auditor-questions.yaml) | **C3a.** The questions a third party actually asks, each derived from crosswalk rows, with an honest verdict on whether a customer could answer it TODAY — **37 questions: 5 `full`, 20 `partial`, 12 `no`.** Also the inverse check: which crosswalk rows no question reaches. |
+| [`auditor-questions.yaml`](auditor-questions.yaml) | **C3a.** The questions a third party actually asks, each derived from crosswalk rows, with an honest verdict on whether a customer could answer it TODAY — **37 questions: 5 `full`, 21 `partial`, 11 `no`.** Also the inverse check: which crosswalk rows no question reaches. |
 | [`incident-response.md`](incident-response.md) | **C1 deliverable 6.** The breach-response plan. A duty table over **18 crosswalk rows across 12 regimes** — the highest-leverage single artefact in the programme (AQ-023) — plus what a Foxy breach actually exposes, roles for a two-person team, and a tabletop scenario. ⚠ Never exercised; until it is, it is a document, not a control. |
 | [`breach-register.md`](breach-register.md) | **C1 deliverable 6.** The PIPEDA s. 10.3 register of *every* breach of security safeguards. **Empty, and empty is correct** — the duty has no trigger, so the register must exist on a day when nothing has happened. |
 | [`not-applicable.md`](not-applicable.md) | Regimes and clauses that cannot bind Foxy, each with the reasoning. A register of *"we checked, and here is why not"*. |
@@ -91,9 +92,53 @@ customer's auditor runs it without trusting us.
 `evidence: null` is common here and is the honest answer. Do not fill it in with
 a file path to make a row look better.
 
+### A published commitment is a control, and it is never a `gap`
+
+Added after [[#305]], which found `GDPR-006` and `HIPAA-017` citing the *same*
+sentence of `privacy.html` §15 as their control and the *same* published policy
+as their evidence, and grading it `partial` and `gap` respectively. Under the
+definitions above only one of those can be right.
+
+> **A published commitment is a control with inspectable evidence** — the
+> sentence is on a page anyone can read without Foxy's cooperation — **so a row
+> citing one is `partial`.** `gap` is for no control, or a control that *fails*
+> the clause. **How much of a clause the commitment discharges is a `notes`
+> question, never a `status` question.**
+
+Grading the shortfall as `gap` throws away the fact that the commitment exists
+and is enforceable against Foxy. The shortfall is still real and still has to be
+written down — `HIPAA-017` discharges less of 45 CFR 164.410 (which wants a
+60-day outer bound and a defined content set) than `GDPR-006` does of Art. 33(2)
+(which wants "without undue delay", §15's exact words) — and that difference now
+lives in both rows' `notes`, where it can be read rather than inferred from a
+status word.
+
+⚠ **The pattern is wider than the pair #305 named, and C1-SYNC did not chase
+it.** Measured over the parsed file: **six** rows carry `status: gap` with a
+non-null `evidence` — `HIPAA-017` (fixed), and `SOC2-008`, `GDPR-009`,
+`KSA-005`, `UAE-006`, `PCI-006`. Each of the five needs its own clause read
+before it is re-graded — `GDPR-009` in particular may be a genuine `gap`, since
+Art. 46 wants an *executed* safeguard and a promise to use the SCCs is arguably
+not a partial version of one. **Do not sweep them.** Read the clause, then
+decide, one row at a time.
+
 ### Why nothing is `met`
 
-**There are zero `met` rows.** 44 `partial`, 54 `gap`, 5 `not-applicable`.
+**There are zero `met` rows.** 60 `partial`, 40 `gap`, 5 `not-applicable`
+— counted by parsing the file, never by hand.
+
+⚠ **The 2026-09-02 movement was 14 rows `gap` → `partial`, and not one reached
+`met`.** C1 wrote [`incident-response.md`](incident-response.md), and its §12
+records exactly which rows it moves and on what. **Four rows named in that
+section deliberately did not move** and a later reader should not tidy them:
+`ISO-011` (the plan documents the monitoring gap, it does not close it),
+`QAT-001` (Art. 11(5) wants a personal-data management system, wider than an IR
+plan), `KSA-004` (**the clause is still `TBD`, and a row whose citation nobody
+has verified must not be upgraded however well attested its 72 hours is**), and
+`GDPR-006` (already `partial`). The plan is in a private repository and has never
+been exercised, so it is a control and not evidence: the first inspectable
+evidence any of the fourteen will have is the dated artefact from §10's tabletop,
+which nobody has run.
 
 That is not modesty and it is not a placeholder. `met` requires named evidence a
 third party could inspect, and the artefacts that would carry it — a BAA, a
@@ -104,8 +149,11 @@ still is not `met`, because integrity is one clause of many and no one outside
 Foxy has been asked to check it.
 
 When C1 lands a signed BAA, `HIPAA-008` becomes `met`. When a restore is actually
-run and its output kept, `SOC2-010` becomes `met`. That is the shape of progress
-this file is built to show. **Do not promote a row by reading the code.**
+run and its output kept, `SOC2-010` becomes `met`. When somebody runs the
+tabletop and keeps the output, the fourteen incident-response rows get their
+first inspectable evidence. That is the shape of progress this file is built to
+show. **Do not promote a row by reading the code** — and do not promote one by
+reading a document either.
 
 ### `source`
 
@@ -164,6 +212,18 @@ with a verdict:
 | `qualify` | True, but overclaims as written. C2 narrows it. |
 | `delete` | Not true, or not supportable. C2 removes it. |
 
+⚠ **The line numbers in `where` name a location in THIS repository**, at the SHA
+in `meta.verified_against` — not on foxyaudit.tech, which still serves the
+uncorrected pages until the 2026-09-18 floor. Where C2 applied a verdict and the
+text is gone from this repo, `where` names the last SHA at which it was present
+and says which commit removed it. The full reasoning is in
+`crosswalk.yaml` `meta.line_number_semantics`; the short version is that
+`git show <sha>:<path>` can check a number and nothing can check a number
+attributed to a website. **Re-derive them by script, never by hand** — C2b's own
+guard caught a hand-edited line number twice.
+
+**A verdict is about the claim, not about the line.** A `delete` whose text this
+repo no longer contains is still `delete`, because the live site still serves it.
 Four `delete` verdicts stand today. Three of them are one defect:
 **the published hosting region is wrong.** `privacy.html` §8 and §13, and the
 `trust.html` subprocessor table, all state that hosting is in the **United

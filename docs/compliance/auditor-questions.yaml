@@ -19,7 +19,7 @@
 meta:
   phase: "C3a"
   written: "2026-09-02"                 # the facts it rests on were established 2026-09-01
-  verified_against: "208d7d8"        # origin/main at the time of this pass
+  verified_against: "4466996"        # origin/main this branch was cut from
   written_by: "executor chat, per docs/plans/compliance-program.md §4 C3"
   scope: >-
     WHAT an auditor asks, and WHICH of those the product can answer today. It
@@ -28,7 +28,8 @@ meta:
     unblocks.
   legal_review: "NONE — this file is engineering research, not legal advice"
   derivation: >-
-    Every question was derived from the 103 rows in crosswalk.yaml, working
+    Every question was derived from the rows in crosswalk.yaml (103 when C3a
+    wrote it; 105 today), working
     outwards from the clause to the question a third party would actually ask to
     test it. A question with no crosswalk row behind it was not written. The
     inverse check — a partial/gap row with no question against it — is reported
@@ -41,6 +42,21 @@ meta:
   # published page, `how` says which text is live and which is waiting, and the
   # verdict is set against the LIVE text. See docs/plans/compliance-program.md
   # §9.3 — the merge floor is 2026-09-18 and it is a floor, not a deadline.
+  c1_sync: >-
+    ⚠ C1-SYNC (2026-09-02) re-graded this file after C1 shipped
+    docs/compliance/incident-response.md and docs/compliance/breach-register.md.
+    ONE QUESTION CHANGED: AQ-023, "no" -> "partial", and it is the one C3a named
+    as the highest-leverage gap in the file — eighteen crosswalk rows across
+    twelve regimes. Two more were checked and deliberately left alone: AQ-026
+    (the plan §5 considered the named security officer and refused to answer it
+    from the wrong file) and AQ-009 (the plan creates a FOXY-side incident
+    record; AQ-009 asks for a CUSTOMER-side disposition record on flagged
+    interactions, which is a different artefact and does not exist). AQ-021,
+    AQ-022, AQ-024 and AQ-034 are untouched because C1 shipped only its sixth
+    deliverable — the BAA, the record of processing and the DPA are still
+    unwritten. AQ-002 and AQ-035 keep their C3b wording: the verification bundle
+    is reachable in this repo and not on foxyaudit.tech, and this file grades
+    against what is live. Counts below re-derived by parsing.
   published_pages_caveat: >-
     Verdicts for questions answered by a sale-page document are set against what
     is LIVE on foxyaudit.tech, which is the frozen repo. Corrected text sitting
@@ -726,23 +742,56 @@ questions:
       notify us of a breach."
     regimes: [HIPAA, SOC2, GDPR, ISO_27001, PCI_DSS, PDPL_UAE, QATAR_13_2016, PDPL_KSA, LGPD, PIPEDA, PDPA_SG, AU_PRIVACY]
     crosswalk_rows: [HIPAA-004, HIPAA-017, SOC2-006, GDPR-006, ISO-005, ISO-011, PCI-007, UAE-003, QAT-001, QAT-003, KSA-004, LGPD-004, PIPEDA-003, PIPEDA-004, SGP-004, SGP-005, AUS-004, AUS-005]
-    answerable: "no"
+    answerable: "partial"
     how: >-
-      There is one sentence: privacy.html §15 commits to notifying affected
-      workspace administrators without undue delay. There is no plan behind it —
-      no severity definitions, no roles, no clock, no register of past
-      incidents, no notification templates.
-    evidence: privacy.html §15, which is a commitment and not a plan.
+      ⚠ RE-GRADED "no" -> "partial" 2026-09-02 by C1-SYNC. THE DOCUMENT EXISTS
+      NOW: docs/compliance/incident-response.md, with
+      docs/compliance/breach-register.md beside it for the PIPEDA s. 10.3
+      record. §2 is a duty table over twelve regimes, every clock quoted from
+      the crosswalk row that carries its verified source rather than from
+      memory — HIPAA's 60 days to the covered entity, Singapore's 3 calendar
+      days from assessment, Australia's 30-day assessment window, Qatar's 72
+      hours from detection, and the processor-to-controller duties that carry no
+      number at all. §4 is the severity standard privacy.html §15's "that we
+      determine" presupposes and did not have. §5 assigns the roles as hats one
+      of two people can wear. §7 is the procedure and §8 says what a
+      notification must contain. It also adopts an internal target no statute
+      imposes — notify within 24 hours of the severity determination and within
+      72 hours of first awareness — on the reasoning that Foxy's deadline is
+      really the customer's deadline minus their processing time.
+    evidence: >-
+      privacy.html §15 and dpa.html §10 — published commitments anyone can read,
+      and still the only part of this a customer can hand to an auditor today.
+      The plan and the register are in a private repository, so under this
+      file's own rule they are a CONTROL and not EVIDENCE.
     gap: >-
-      ⚠ EIGHTEEN CROSSWALK ROWS ACROSS TWELVE REGIMES DEPEND ON ONE MISSING
-      DOCUMENT. It is by a wide margin the highest-leverage artefact in this
-      file. The regimes disagree on the clock — HIPAA 60 days to the covered
-      entity, GDPR "without undue delay" processor-to-controller, KSA reported
-      as 72 hours, PDPA s.26C(3)(a) for a data intermediary, PIPEDA s.10.3's
-      breach REGISTER (a standing obligation with no breach required to trigger
-      it), Australia's 30-day assessment — so the plan must carry a table of
-      duties, not one number. A two-person team can hold this: what it cannot do
-      is improvise it during an actual incident.
+      ⚠ `partial` AND NOT `full`, FOR THREE REASONS, AND THE FIRST IS THE ONE
+      THAT DECIDES IT.
+
+      (1) A CUSTOMER CANNOT PRODUCE IT. The plan is in Foxy's private repository
+      and no customer-facing surface points at it, and `full` here means the
+      customer can answer TODAY, unaided. Publishing a pointer from
+      privacy.html §15 is the cheapest step — a POINTER, not a number, per the
+      plan's own §0, because a published "within N hours" would create a duty
+      tighter than any statute in its §2 imposes — and it is behind the
+      2026-09-18 merge floor with everything else on this branch.
+
+      (2) IT HAS NEVER BEEN EXERCISED. §10 specifies a tabletop and nothing
+      records one having been run. Until it is, this is a document rather than a
+      control, and the dated artefact that exercise produces is the FIRST
+      inspectable evidence any of the eighteen crosswalk rows would have — which
+      is why fourteen of them moved to `partial` and none to `met`.
+
+      (3) TWO OF §6's DETECTION DEPENDENCIES ARE OPEN: GCP Essential Contacts are
+      unset ([[#303]]) and nothing monitors Foxy's own infrastructure (ISO-011,
+      deliberately still `gap`). A plan whose first step is "we become aware" is
+      deliverable only for incidents somebody tells us about.
+
+      ⚠ WHAT MOVED IN THE CROSSWALK, so this is checkable: fourteen rows
+      gap -> partial (HIPAA-004, HIPAA-017, SOC2-006, ISO-005, PCI-007, UAE-003,
+      QAT-003, LGPD-004, PIPEDA-003, PIPEDA-004, SGP-004, SGP-005, AUS-004,
+      AUS-005). ISO-011, QAT-001 and KSA-004 did not move, each for a stated
+      reason, and GDPR-006 was already `partial`.
     effort: small
 
   - id: AQ-024
@@ -804,6 +853,12 @@ questions:
       questionnaire opens with it. On a two-person team the answer is obvious to
       the team and invisible to everyone else. Writing one name into a policy
       document closes it — the cheapest row in the entire crosswalk.
+
+      ⚠ STILL `no` AFTER C1, AND DELIBERATELY. incident-response.md §5 reached
+      this question while assigning its own roles, and declined to answer it:
+      the security officer belongs in a security policy document, not in an
+      incident-response plan, and naming a person there would be the wrong file
+      answering the right question. Recorded there, left open here.
     effort: trivial
 
   - id: AQ-027
@@ -1043,10 +1098,11 @@ questions:
     crosswalk_rows: [ISO-007]
     answerable: partial
     how: >-
-      docs/compliance/crosswalk.yaml — 103 rows across 15 regimes, each with a
-      verified clause source and a dated fetch, plus not-applicable.md for the
-      regimes and clauses ruled out with their reasoning, all in version control
-      with a `verified_against` SHA.
+      docs/compliance/crosswalk.yaml — 105 rows across 15 regimes (counted by
+      parsing the file, 2026-09-02), each with a verified clause source and a
+      dated fetch, plus not-applicable.md for the regimes and clauses ruled out
+      with their reasoning, all in version control with a `verified_against`
+      SHA that now names the commit the rows were last read at.
     evidence: >-
       The files exist and are exactly what A.5.31 asks for. They are in a
       private repository, so today they are a control and not evidence.
@@ -1179,6 +1235,31 @@ coverage:
         Re-stamp `verified_against` when C2's branch merges here, and note in
         each affected entry that the correction exists and awaits the
         2026-09-18 floor.
+      fixed_by: >-
+        ⚠ FIXED IN C1-SYNC, 2026-09-02, AND THE SEMANTIC QUESTION UNDER IT WAS
+        DECIDED FIRST — see crosswalk.yaml `meta.line_number_semantics`. The
+        finding read as a refresh task; it was not, because four of the thirteen
+        `surface_claims` entries have NO line in this repo any more (C2 deleted
+        the text) and a refresh has nothing to write for them. The decision:
+        `where` names a location in THIS repository at `meta.verified_against`,
+        and where C2 applied a verdict it names the last SHA at which the claim
+        was present and says which commit removed it. Tracking foxyaudit.tech
+        was rejected because no script can check it — this repo has never held a
+        copy of the frozen tree.
+
+        Every number was re-derived by script over `git show` at e7e1919 and
+        4466996, never by hand. TWO HAD ACTUALLY DRIFTED and this finding named
+        neither: the dashboard claim moved 2360 -> 2391 when C3b added the
+        bundle export above it, and the three privacy.html §14 rights lists
+        moved 223/224/225 -> 230/231/232 when C2 lengthened §13. The two the
+        finding DID name were subtler than "stale": the SOC 2 sentences and §13
+        are gone from this repo entirely, and privacy.html:175 / trust.html:144
+        did not move at all — the TEXT on those unmoved lines was rewritten,
+        which a line-number refresh would not have caught in either direction.
+
+        NO VERDICT CHANGED. The claims are still live on foxyaudit.tech, so
+        `delete` is still `delete`; each such entry now says "STILL LIVE" in
+        those words rather than going quiet.
 
 # ---------------------------------------------------------------------------
 # SUMMARY
@@ -1191,8 +1272,12 @@ summary:
   # ordinary fate of a tally written beside a list rather than derived from it.
   by_answerable:
     full: 5          # AQ-001, AQ-010, AQ-011, AQ-013, AQ-033
-    partial: 20
-    "no": 12         # AQ-008, 009, 020, 021, 022, 023, 024, 026, 029, 031, 032, 036
+    partial: 21
+    "no": 11         # AQ-008, 009, 020, 021, 022, 024, 026, 029, 031, 032, 036
+    #: ⚠ 2026-09-02, C1-SYNC: 20/12 -> 21/11. AQ-023 moved "no" -> "partial" on
+    #: docs/compliance/incident-response.md. One question, and it is the one
+    #: `highest_value_to_close` ranked second — see the entry below, which now
+    #: records what was actually bought and what was not.
 
   # ⚠ AND `no` IS QUOTED HERE AND ON EVERY QUESTION FOR A REASON. YAML 1.1 reads
   # a bare `no` as the boolean false, so `answerable: no` parsed as `False` and
@@ -1232,7 +1317,10 @@ summary:
   rows_per_question_leaders:
     - question: AQ-023
       rows: 18
-      note: "one incident-response document, eighteen rows, twelve regimes"
+      note: >-
+        one incident-response document, eighteen rows, twelve regimes. WRITTEN
+        2026-09-02; fourteen of the eighteen rows moved gap -> partial and none
+        reached `met`, because the plan is unexercised and unpublished.
     - question: AQ-017
       rows: 10
       note: "residency and the Art. 46 safeguard — the widest LEGAL gap"
@@ -1254,11 +1342,17 @@ summary:
       effort: trivial
     - question: AQ-023
       why: >-
-        Eighteen crosswalk rows across twelve regimes close on ONE document that
-        needs no code, no schema and no lawyer to draft. Nothing else in this
-        file moves that many rows. And unlike most compliance paperwork it has
-        standalone operational value: a two-person team improvising during a
-        real incident is the failure mode it prevents.
+        ✅ WRITTEN 2026-09-02 — docs/compliance/incident-response.md and
+        docs/compliance/breach-register.md. Eighteen crosswalk rows across twelve
+        regimes closed on ONE document that needed no code, no schema and no
+        lawyer to draft, and fourteen of them moved gap -> partial on it. It is
+        left in this list because the ranking's argument held and is worth
+        keeping visible, and because WHAT REMAINS IS NOT ZERO and is much
+        cheaper than what was done: run the §10 tabletop and keep the dated
+        artefact (that is the first inspectable evidence any of the fourteen
+        rows will have), and publish a pointer to the plan from privacy.html §15
+        — a pointer, never a number. Both are small; the second is behind the
+        2026-09-18 floor.
       effort: small
     - question: AQ-021
       why: >-

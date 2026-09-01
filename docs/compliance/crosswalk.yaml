@@ -10,10 +10,10 @@
 # article number is a defect, and this file will be read as authoritative.
 
 meta:
-  phase: "C0 + C0b + C3b corrections"
+  phase: "C0 + C0b + C3b corrections + C1-SYNC"
   written: "2026-09-01"
-  updated: "2026-09-02"                # the C3b correction pass
-  verified_against: "e7e1919"        # origin/main at the time of the C0b pass
+  updated: "2026-09-02"                # C3b, then the C1-SYNC pass below
+  verified_against: "4466996"        # origin/main this branch was cut from
   written_by: "executor chats, per docs/plans/compliance-program.md §4 C0 and C0b"
   c0b: >-
     C0b (2026-09-01, same day) closed the completeness hole C0 recorded in
@@ -43,11 +43,89 @@ meta:
     already state. ⚠ THE SAME OVERSTATEMENT WAS IN FOUR MORE PLACES C3a did not
     name — meta.hard_facts.backups, HIPAA-006, GDPR-005 and UAE-001 — and all
     four were corrected in the same pass. Row count 103 -> 105.
-    ⚠ `verified_against` IS DELIBERATELY NOT RE-STAMPED. The two new rows and the
-    six corrected notes were checked against origin/main at `e9d9ecd`; the other
-    99 rows were not re-read, and moving the stamp would claim they were. C3a's
-    CF-3 (the stale `surface_claims` line numbers, now that C2 has merged) is the
-    re-stamp task and is still open.
+    ⚠ C3b DELIBERATELY DID NOT RE-STAMP `verified_against`, because it had not
+    re-read the other 99 rows. C1-SYNC has now done the re-stamp, and the
+    honesty it was protecting is preserved a different way: `line_number_semantics`
+    below says exactly what the stamp is a stamp OF, and every line number under
+    `surface_claims` was re-derived against it by script.
+  c1_sync: >-
+    C1-SYNC (2026-09-02) added no regime and researched no clause. It carried
+    three shipped phases into this file, which had begun to UNDERSTATE what
+    exists. (1) It applied the fourteen row movements
+    docs/compliance/incident-response.md §12 records — HIPAA-004, HIPAA-017,
+    SOC2-006, ISO-005, PCI-007, UAE-003, QAT-003, LGPD-004, PIPEDA-003,
+    PIPEDA-004, SGP-004, SGP-005, AUS-004, AUS-005, all gap -> partial — and
+    left the four §12 names as hold-outs untouched: ISO-011 (the plan documents
+    the monitoring gap, it does not close it), QAT-001 (Art. 11(5) wants a
+    personal-data management system, wider than an IR plan), KSA-004 (the clause
+    is still TBD, and a row whose citation nobody has verified must not be
+    upgraded however well-attested its 72 hours) and GDPR-006 (already partial).
+    ⚠ NOTHING REACHED `met` AND NOTHING SHOULD HAVE: the first inspectable
+    evidence for any of these is §10's tabletop artefact, which has no date.
+    (2) It fixed [[#305]] — see HIPAA-017 and GDPR-006, which now state the same
+    grading rule in both directions. (3) It re-derived every `surface_claims`
+    line number by script; see `line_number_semantics`. Status tally 46/54/5 ->
+    60 partial / 40 gap / 5 not-applicable, 0 met, 105 rows, all counted by
+    parsing this file.
+  line_number_semantics: >-
+    ⚠ DECIDED BY C1-SYNC 2026-09-02, BECAUSE THE NUMBERS ARE DOWNSTREAM OF THE
+    DECISION AND C3A'S CF-3 LEFT IT OPEN.
+
+    `surface_claims[].where` NAMES A LOCATION IN THIS REPOSITORY, AT THE SHA IN
+    `meta.verified_against`. Where C2 applied a verdict and the claim is no
+    longer present at that SHA, `where` names the last SHA in this repo's
+    history at which it WAS present, says which commit removed it, and says so
+    in those words.
+
+    The alternative was to track foxyaudit.tech, which still serves the
+    uncorrected pages until the 2026-09-18 merge floor. It was rejected because
+    nobody can check it. This repository has never held a copy of the frozen
+    repo's tree, so a line number attributed to the live site would be an
+    assertion about a tree we cannot read — the same defect as a clause number
+    filled in from memory, one column over. Every number below is checkable with
+    `git show <sha>:<path>`; a number attributed to a website is checkable by
+    nobody.
+
+    It also makes ONE rule serve both files: claims.yaml already tracks this
+    repo, and foxy-sale-page/test_compliance_claims.py already fails the build
+    on a stale number there
+    (test_the_recorded_line_numbers_are_current).
+
+    ⚠ AND NO VERDICT MOVED. A verdict is about the CLAIM, not about the line. A
+    `delete` whose text this repo no longer contains is still `delete`, because
+    foxyaudit.tech still serves it and the verdict describes what is published —
+    which is why each such entry says "STILL LIVE" rather than quietly going
+    quiet. Four `delete` verdicts stood before this pass and four stand after it.
+    Every number was re-derived by script over `git show` at both e7e1919 and
+    4466996; none was counted by hand, because C2b's own guard caught a
+    hand-edited line number twice.
+  needs_a_later_phase: >-
+    ⚠ TWO REGISTER ENTRIES C1-SYNC RECORDED AND DID NOT GIVE ROWS TO, AND THE
+    REASON IS THE SAME BOTH TIMES: the clause that squarely names the control is
+    not in this file, and researching one here would be the invention this
+    file's one rule forbids.
+
+    [[#302]] — the KEK shares a host with the ciphertext it protects. The
+    clauses already here that touch it are the generic "appropriate technical
+    measures" family (GDPR-005 Art. 32, which names encryption in the clause
+    text itself; SOC2-001 CC6.1; KSA-001, UAE-001, QAT-002, LGPD-001,
+    PIPEDA-001, SGP-001, AUS-001) and they all have rows. A second row on the
+    same clause would be a duplicate, so the fact is recorded once in
+    `hard_facts.kek_colocation` and pointed at from the rows that present
+    encryption at rest as a working measure. WHAT IS MISSING is a cryptographic
+    key-management clause of its own — HIPAA's encryption implementation
+    specification and ISO 27001's cryptography control both have one and neither
+    is in this file. Their numbers are NOT written here because neither has been
+    verified against a source. PCI is not the gap it looks like: PCI-001 and
+    PCI-002 are already `not-applicable` because Foxy stores no account data,
+    and its key-management requirements fall the same way.
+
+    [[#304]] — nothing produces an off-host record of the chain heads. This one
+    needs no new clause at all: HIPAA-011 (164.312(c)(1)), PCI-004 (Req.
+    10.3.2), ISO-008 (A.5.33) and ISO-006 (A.5.28) are the rows, they exist, and
+    they are already `partial`. It is a LIMITATION ON THEM rather than a new
+    obligation, and it is recorded in `hard_facts.chain_head_witness` and in
+    those rows.
   legal_review: "NONE — this file is engineering research, not legal advice"
   scope: >-
     Maps regulatory clauses onto Foxy controls and onto evidence a third party
@@ -66,6 +144,33 @@ meta:
       off-region copy exists and survives deletion of the source disk. It is
       crash-consistent (`guestFlush: false`), not application-consistent, and NO
       RESTORE OF EITHER HAS EVER BEEN PERFORMED.
+    kek_colocation: >-
+      ⚠ ADDED 2026-09-02 by C1-SYNC, from [[#302]]. ENCRYPTION AT REST IS NOT A
+      TWO-FACTOR CONTROL IN THIS DEPLOYMENT. deploy/docker-compose.prod.yml
+      sources PROVIDER_KEY_ENCRYPTION_KEY from deploy/.env on the production VM,
+      and the same compose stack runs the Postgres holding the *_key_enc
+      ciphertext on that same host — so whoever can read the database can read
+      the key that decrypts it, and a host compromise is full BYOK plaintext
+      exposure from minute one. It defends against a stolen disk or a leaked
+      dump, which is real and is not nothing; it does not defend against the
+      host. This is the ordinary posture of a single-VM deployment and is not
+      negligence — it is recorded because several rows below cite "KEK-encrypted
+      provider keys" as a security measure and a reader is entitled to know what
+      it is a measure against. CLAUDE.md §6 names the KEK a crown jewel for the
+      AVAILABILITY risk (lose it and every stored key is unrecoverable); this is
+      the CONFIDENTIALITY one and it was unrecorded until now.
+    chain_head_witness: >-
+      ⚠ ADDED 2026-09-02 by C1-SYNC, from [[#304]]. NOTHING IS ESTABLISHED TO
+      PRODUCE AN OFF-HOST RECORD OF THE CHAIN HEADS. incident-response.md §7's
+      recovery step wants a chain-head record kept somewhere other than the
+      machine being recovered, so that "was the ledger altered during the
+      incident?" is answerable from something the incident did not touch. The
+      EVM/Sepolia anchoring path may already be most of the answer and several
+      rows cite it — but it is OPTIONAL, and whether it is enabled in production
+      has not been established here. Do not read those rows as asserting that it
+      is. The GCP EU snapshots are off-host and off-region but crash-consistent
+      and never restored, so they are a recovery hope and not an integrity
+      witness.
     baa: "No BAA exists anywhere in the repo, the sale page or the vault (searched 2026-09-01)."
     platform_keys: "backend/app/judge_routing.py platform_keys_allowed() lets Foxy's OWN provider keys carry customer event metadata to OpenAI and Google."
     policy_tags: "sdk/src/foxy_audit/policy.py KNOWN_POLICY_TAGS = {default, soc2, hipaa, gdpr} + aliases {hipaa_basic, gdpr_basic}. _POLICY_EXTRA maps soc2 -> () — baseline only."
@@ -221,7 +326,13 @@ regimes:
 # ---------------------------------------------------------------------------
 surface_claims:
   - claim: "We're currently completing our SOC 2 Type I audit."
-    where: "foxy-sale-page/faq.html:60 and foxy-sale-page/pricing.html:121"
+    where: >-
+      REMOVED FROM THIS REPO by C2 (2d03a2e). Last present at e7e1919:
+      foxy-sale-page/faq.html:60 and foxy-sale-page/pricing.html:121. Both now
+      carry trust.html's wording ("No. We do not currently hold SOC 2..."); the
+      removed sentence is pinned in claims.yaml `retired` so it cannot come back.
+      ⚠ STILL LIVE on foxyaudit.tech, which serves the frozen repo, so the
+      verdict below is about a claim a reader can still find today.
     verdict: delete
     why: >-
       foxy-sale-page/trust.html:151 says the opposite on the same site: "SOC 2
@@ -231,7 +342,14 @@ surface_claims:
     regime: SOC2
 
   - claim: "Infrastructure / hosting provider (Google Cloud, Ubuntu VM) — United States."
-    where: "foxy-sale-page/privacy.html:175, and the same row in foxy-sale-page/trust.html:144"
+    where: >-
+      foxy-sale-page/privacy.html:175 and foxy-sale-page/trust.html:144 — ⚠ THE
+      LINE NUMBERS DID NOT MOVE AND THE TEXT ON THEM DID. C2 (2d03a2e) rewrote
+      both lines in place: privacy.html:175 now reads "Qatar (Google Cloud region
+      me-central1, Doha)" and trust.html:144's cell now reads "Qatar
+      (me-central1, Doha)". This is the entry that shows why a line number is not
+      an identifier — claims.yaml locates its claims by `anchor` for exactly this
+      reason. ⚠ STILL LIVE on foxyaudit.tech; the verdict stands.
     verdict: delete
     why: >-
       ⚠ FOUND BY THIS PHASE, NOT ANTICIPATED BY THE PLAN. Production runs in GCP
@@ -244,7 +362,14 @@ surface_claims:
     regime: GDPR
 
   - claim: "Your data is processed in the United States (our hosting infrastructure, Google, OpenAI, and Paddle) and the European Union (Brevo). ... Where personal data is transferred from the EEA, UK, or Switzerland to the United States, we rely on the EU Standard Contractual Clauses..."
-    where: "foxy-sale-page/privacy.html:208-209 (§13 International Data Transfers)"
+    where: >-
+      REMOVED FROM THIS REPO by C2 (2d03a2e). Last present at e7e1919:
+      foxy-sale-page/privacy.html:208-209 (§13 International Data Transfers). §13
+      at HEAD names Qatar as the hosting region, the EU multi-region disk
+      snapshots, the United States sub-processor leg with its SCC position stated
+      per sub-processor, and that no Art. 46 safeguard is in place for the Qatar
+      leg. ⚠ STILL LIVE on foxyaudit.tech; the verdict stands, and GDPR-007 and
+      GDPR-009 are still the rows behind it.
     verdict: delete
     why: >-
       Same defect, one section further on, and worse: it names a transfer
@@ -255,7 +380,13 @@ surface_claims:
     regime: GDPR
 
   - claim: "Mapped to standards: aligned to NIST AI RMF and the EU AI Act so reviewers recognize it on sight."
-    where: "foxy-sale-page/passport.html:36, and passport.html:7 / docs.html:68 in the same words"
+    where: >-
+      REMOVED FROM THIS REPO by C2 (2d03a2e). Last present at e7e1919:
+      foxy-sale-page/passport.html:36, passport.html:7 (the meta description) and
+      docs.html:68 in the same words. Measured 2026-09-02: the string "NIST" now
+      occurs zero times in either file. ⚠ STILL LIVE on foxyaudit.tech; the
+      verdict stands, and NIST-001 is still `clause: TBD` because nothing was ever
+      mapped.
     verdict: delete
     why: >-
       backend/app/templates/compliance_passport.html contains zero occurrences
@@ -266,7 +397,11 @@ surface_claims:
     regime: NIST_AI_RMF
 
   - claim: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act is risk-scored 60 or higher unless it is clearly compliant."
-    where: "foxy-dashboard/foxy-audit-premium.html:2360 (Regulated data mode — HIPAA / financial)"
+    where: >-
+      foxy-dashboard/foxy-audit-premium.html:2391 (Regulated data mode — HIPAA /
+      financial). ⚠ MOVED from :2360 by C3b (ac7b2f0), which added the
+      verification-bundle export option above it. The sentence itself is
+      unchanged, and so is the `qualify` verdict.
     verdict: qualify
     why: >-
       Three of the five tags named — `pci`, `sox`, `eu_ai_act` — are not in the
@@ -278,7 +413,7 @@ surface_claims:
     regime: PCI_DSS
 
   - claim: "@foxy.audit(policy=\"soc2\")"
-    where: "foxy-sale-page/how-it-works.html:38, foxy-sale-page/sdk.html:38, foxy-sale-page/install.html:58"
+    where: "foxy-sale-page/how-it-works.html:38, foxy-sale-page/sdk.html:38, foxy-sale-page/install.html:58 — all three unmoved since e7e1919"
     verdict: qualify
     why: >-
       _POLICY_EXTRA maps "soc2": () — baseline injection and secret checks only,
@@ -289,7 +424,7 @@ surface_claims:
     regime: SOC2
 
   - claim: "@foxy.audit(policy=\"hipaa\")"
-    where: "foxy-sale-page/install.html:54, foxy-sale-page/welcome.html:88 (as hipaa_basic)"
+    where: "foxy-sale-page/install.html:54, foxy-sale-page/welcome.html:88 (as hipaa_basic) — both unmoved since e7e1919"
     verdict: backed
     why: >-
       `hipaa` -> ("phi",) is a real detection family and mode=\"block\" genuinely
@@ -299,25 +434,38 @@ surface_claims:
     regime: HIPAA
 
   - claim: "Its verdict is a review signal — not a HIPAA or SOC 2 certification — and unavailable judge results remain visibly unknown."
-    where: "foxy-sale-page/how-it-works.html:56"
+    where: "foxy-sale-page/how-it-works.html:56 — unmoved since e7e1919"
     verdict: backed
     why: "A disclaimer, and an accurate one. This is the sentence other pages should sound like."
     regime: SOC2
 
   - claim: "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation."
-    where: "foxy-sale-page/trust.html:150 and foxy-sale-page/privacy.html:177"
+    where: >-
+      foxy-sale-page/trust.html:150 and foxy-sale-page/privacy.html:177 — both
+      unmoved since e7e1919. ⚠ FOUND WHILE RE-DERIVING THESE NUMBERS: the two
+      pages do not use identical wording. trust.html says "SOC 2, ISO 27001, or a
+      comparable third-party attestation"; privacy.html says "a SOC 2, ISO 27001,
+      or comparable third-party attestation". The claim quoted above is
+      trust.html's, which claims.yaml `assertions.soc2_status` makes canonical.
+      Both are true and neither is a defect — recorded so the next reader who
+      greps for one string and finds one page does not conclude a page is
+      missing it.
     verdict: backed
     why: "True, and stated plainly. Nothing to change."
     regime: ISO_27001
 
   - claim: "Roadmap: ISO 27001 gap analysis — Q2 2027. SOC 2 Type I — intended, but no auditor is engaged yet, so we are not putting a date on it."
-    where: "foxy-sale-page/trust.html:151"
+    where: "foxy-sale-page/trust.html:151 — unmoved since e7e1919"
     verdict: backed
     why: "True. It is also the sentence that makes faq.html:60 and pricing.html:121 indefensible."
     regime: SOC2
 
   - claim: "EU / EEA / UK (GDPR): analytics is off until you opt in ... California (CCPA/CPRA): we don't sell or share personal information"
-    where: "foxy-sale-page/cookie-policy.html:116-117, foxy-sale-page/index.html:1389-1460, and foxy-sale-page/dpa.html:99 (which defines the controller/processor split in CCPA/CPRA terms as well as GDPR terms)"
+    where: >-
+      foxy-sale-page/cookie-policy.html:116-117, foxy-sale-page/index.html:1389-1460
+      (the geo-aware `consent()` function), and foxy-sale-page/dpa.html:99 (which
+      defines the controller/processor split in CCPA/CPRA terms as well as GDPR
+      terms) — all unmoved since e7e1919.
     verdict: backed
     why: >-
       A geo-aware consent gate that is actually implemented in index.html. The
@@ -325,7 +473,10 @@ surface_claims:
     regime: GDPR
 
   - claim: "Rights lists for Brazil (LGPD), Canada (PIPEDA), Singapore (PDPA), Australia (Privacy Act 1988)"
-    where: "foxy-sale-page/privacy.html:223, :224, :225"
+    where: >-
+      foxy-sale-page/privacy.html:230, :231, :232. ⚠ MOVED from :223, :224, :225
+      by C2 (2d03a2e), which lengthened §13 above them. The three rights lists
+      are unchanged and so is the `backed` verdict.
     verdict: backed
     why: >-
       ✓ RESOLVED BY C0b, 2026-09-01. C0 recorded this as `qualify` for one
@@ -402,12 +553,21 @@ rows:
     regime: HIPAA
     clause: "164.308(a)(6)(ii)"
     requirement: "Response and reporting (Required) — identify and respond to suspected or known security incidents; mitigate harmful effects; document incidents and their outcomes."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md — §7 is the procedure (identify,
+      contain, mitigate), §4 the severity standard that decides whether an
+      event is an incident, and §7 step 8 plus §9's register are where the
+      documentation duty lands.
     evidence: null
-    status: gap
+    status: partial
     source: "45 CFR 164.308, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.308 (fetched 2026-09-01)"
-    notes: "No incident-response plan exists. C1 deliverable 6."
-
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      164.308(a)(6)(ii) asks for four things — identify, respond, mitigate,
+      document — and the plan supplies a written procedure for all four. It
+      does not discharge the clause: §6 records that Foxy's own infrastructure
+      is not monitored, so "identify" holds only for incidents somebody
+      reports to us. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: HIPAA-005
     regime: HIPAA
     clause: "164.308(a)(7)(ii)(A)"
@@ -484,12 +644,15 @@ rows:
     status: partial
     source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
     notes: >-
-      The strongest genuine row in this file, and still not `met`: Foxy's system
-      does not contain ePHI (content-blindness), so what the chain evidences is
-      activity ABOUT ePHI-bearing interactions, not the covered system itself.
-      Whether the metadata is identifiable — and so itself PHI — is a legal
-      question and is TBD.
+      The strongest genuine row in this file, and still not `met`: Foxy's
+      system does not contain ePHI (content-blindness), so what the chain
+      evidences is activity ABOUT ePHI-bearing interactions, not the covered
+      system itself. Whether the metadata is identifiable — and so itself PHI
+      — is a legal question and is TBD.
 
+      ⚠ [[#304]]: anchoring is OPTIONAL and whether it runs in production is
+      not established here, so nothing off-host is known to witness the chain
+      head — see meta.hard_facts.chain_head_witness. Status unchanged; the on-ledger integrity control is untouched.
   - id: HIPAA-011
     regime: HIPAA
     clause: "164.312(c)(1)"
@@ -498,8 +661,13 @@ rows:
     evidence: "The verifier detects any post-hoc edit of an exported chain."
     status: partial
     source: "45 CFR 164.312, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.312 (fetched 2026-09-01)"
-    notes: "Tamper-EVIDENT, not tamper-proof, and the distinction is the product's honest line."
+    notes: >-
+      Tamper-EVIDENT, not tamper-proof, and the distinction is the product's
+      honest line.
 
+      ⚠ [[#304]]: anchoring is OPTIONAL and whether it runs in production is
+      not established here, so nothing off-host is known to witness the chain
+      head — see meta.hard_facts.chain_head_witness. Status unchanged; the on-ledger integrity control is untouched.
   - id: HIPAA-012
     regime: HIPAA
     clause: "164.312(d)"
@@ -560,13 +728,43 @@ rows:
     regime: HIPAA
     clause: "164.410"
     requirement: "Notification by a business associate — following the discovery of a breach of unsecured protected health information, a business associate shall notify the covered entity without unreasonable delay and in no case later than 60 calendar days after discovery."
-    control: "foxy-sale-page/privacy.html §15 commits to notifying affected workspace administrators without undue delay."
-    evidence: "The published privacy policy, which anyone can read."
-    status: gap
+    control: >-
+      Two controls, and they are different kinds. PUBLISHED: foxy-sale-page/
+      privacy.html §15 commits to notifying affected workspace administrators
+      without undue delay, and dpa.html §10 commits to notifying the Customer
+      after becoming aware. INTERNAL: docs/compliance/incident-response.md
+      §2 names the 60-day outer bound as a row of the duty table, §8 defines
+      what the notice must contain, and §5 reserves sending it to the owner.
+    evidence: >-
+      The published privacy policy and DPA, which anyone can read. The plan
+      behind them is not inspectable — see notes.
+    status: partial
     source: "45 CFR 164.410, Cornell LII — https://www.law.cornell.edu/cfr/text/45/164.410 (fetched 2026-09-01)"
-    notes: "A privacy-policy sentence is not a breach-response plan and does not name the 60-day duty. C1 deliverable 6."
+    notes: >-
+      ⚠ MOVED gap -> partial 2026-09-02 by C1-SYNC, for TWO INDEPENDENT
+      REASONS, and it matters that they are separable.
 
-  # ---------------------------------------------------------------- SOC 2 ---
+      (1) [[#305]] — THE ROW WAS MIS-GRADED FROM THE START. It cited a
+      published sentence as its control and the published policy as its
+      evidence, and then said `gap`. GDPR-006 cited the same sentence and the
+      same evidence and said `partial`. Under README.md's definitions only one
+      of those can be right, and it is GDPR-006. THE RULE, stated here and in
+      GDPR-006 so neither row can drift again: A PUBLISHED COMMITMENT IS A
+      CONTROL WITH INSPECTABLE EVIDENCE — the sentence is on a page anyone can
+      read without Foxy's cooperation — SO A ROW CITING ONE IS `partial`.
+      `gap` is for no control, or a control that FAILS the clause. How MUCH of
+      a clause the commitment discharges is a `notes` question, never a
+      `status` question; grading the shortfall as `gap` throws away the fact
+      that the commitment exists and is enforceable against Foxy.
+
+      (2) The shortfall itself, which is real and is what these notes are for.
+      164.410 asks for more than Art. 33(2) does: an outer bound of 60 calendar
+      days from DISCOVERY, and the content set of 164.410(c). §15 names
+      neither. incident-response.md §2 now carries the 60-day row and §8 the
+      notice contents, so the shortfall is narrower than it was — but the plan
+      is internal and the published sentence still does not point at it.
+
+      The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: SOC2-001
     regime: SOC2
     clause: "CC6.1"
@@ -595,8 +793,15 @@ rows:
     evidence: "The public SDK's wire payload is a closed field list; a customer can verify what leaves their own process."
     status: partial
     source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
-    notes: "The platform-key leg (see HIPAA-015) is an authorized-by-Foxy movement the customer has not separately authorized."
+    notes: >-
+      The platform-key leg (see HIPAA-015) is an authorized-by-Foxy movement
+      the customer has not separately authorized.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: SOC2-004
     regime: SOC2
     clause: "CC6.8"
@@ -627,12 +832,20 @@ rows:
     regime: SOC2
     clause: "CC7.3"
     requirement: "The entity evaluates security events to determine whether they could or have resulted in a failure of the entity to meet its objectives (security incidents) and, if so, takes actions to prevent or address such failures."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §4 — a four-level severity standard
+      carrying the determination privacy.html §15 presupposes, and §7's
+      procedure for acting on it.
     evidence: null
-    status: gap
+    status: partial
     source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
-    notes: "Same gap as HIPAA-004: no incident-response process exists."
-
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      CC7.3 asks the entity to EVALUATE security events against its objectives;
+      §4 is that evaluation standard and it did not exist before. CC7.3 is a
+      control that must exist AND OPERATE, and nothing yet evidences operation
+      — that is SOC2-013 (CC4.1) and the observation-window argument in the
+      plan's §5. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: SOC2-007
     regime: SOC2
     clause: "CC8.1"
@@ -695,8 +908,15 @@ rows:
     evidence: "The public SDK shows what is and is not sent."
     status: partial
     source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
-    notes: "No written data-classification scheme, which is what C1.1 asks for in an audit."
+    notes: >-
+      No written data-classification scheme, which is what C1.1 asks for in an
+      audit.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: SOC2-012
     regime: SOC2
     clause: "C1.2"
@@ -783,11 +1003,16 @@ rows:
     notes: >-
       Art. 32(1)(c) restoration and 32(1)(d) regular testing fail on the same
       facts as SOC2-009 and SOC2-010 — but on the NARROWED version of those
-      rows, corrected 2026-09-02: copies do exist off the VM and off the region
-      (EU disk snapshots), and what is absent is that nobody has ever restored
-      one, so the "ability to restore in a timely manner" and the "regular
-      testing" limbs are both unevidenced.
+      rows, corrected 2026-09-02: copies do exist off the VM and off the
+      region (EU disk snapshots), and what is absent is that nobody has ever
+      restored one, so the "ability to restore in a timely manner" and the
+      "regular testing" limbs are both unevidenced.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: GDPR-006
     regime: GDPR
     clause: "Art. 33(2)"
@@ -796,8 +1021,31 @@ rows:
     evidence: "The published privacy policy."
     status: partial
     source: "GDPR Art. 33, gdpr-info.eu — https://gdpr-info.eu/art-33-gdpr/ (paragraphs 1 and 2 quoted, fetched 2026-09-01)"
-    notes: "The commitment is published and uses the right words. There is no plan behind it — no decision tree, no named owner, no template. C1 deliverable 6."
+    notes: >-
+      ⚠ UNCHANGED at `partial` 2026-09-02 by C1-SYNC, and deliberately so —
+      incident-response.md §12 lists it among the eighteen rows the plan
+      touches and moves it nowhere.
 
+      [[#305]] — THIS ROW IS THE CORRECT HALF OF THE PAIR. HIPAA-017 cited the
+      same published sentence as its control and the same published policy as
+      its evidence, and graded itself `gap`. THE RULE, stated here and in
+      HIPAA-017 so neither can drift again: A PUBLISHED COMMITMENT IS A CONTROL
+      WITH INSPECTABLE EVIDENCE — anyone can read the page without Foxy's
+      cooperation — SO A ROW CITING ONE IS `partial`. `gap` is for no control,
+      or a control that FAILS the clause. How much of the clause a commitment
+      discharges belongs in `notes`, never in `status`.
+
+      What this row discharges is unusually much: Art. 33(2) states no period
+      at all — "without undue delay" — and those are §15's exact words, so the
+      published sentence matches the clause rather than approximating it. What
+      is still missing is the process behind it, and that is now less missing
+      than it was: incident-response.md §5 names the roles, §7 the procedure,
+      §8 the notice contents, and its §2 note A records why GDPR's famous 72
+      hours is Art. 33(1)'s CONTROLLER duty and not this row's. Reaching `met`
+      needs the process EXERCISED, not written — §10's tabletop, undated.
+
+      ⚠ Do not read the pair as "HIPAA-017 was promoted to match". It was
+      mis-graded, and it would have moved on the plan regardless.
   - id: GDPR-007
     regime: GDPR
     clause: "Art. 44"
@@ -1007,8 +1255,15 @@ rows:
     evidence: null
     status: partial
     source: "Secondary — Securiti and saudiprivacylaw.com, cross-checked 2026-09-01. ⚠ The official SDAIA English PDF (sdaia.gov.sa/en/SDAIA/about/Documents/Personal Data English V2-23April2023-Reviewed-.pdf) returns 'Request Rejected' to automated fetches, so this article number rests on secondary sources only."
-    notes: "Verify against the official text before this row is shown to a customer or a lawyer."
+    notes: >-
+      Verify against the official text before this row is shown to a customer
+      or a lawyer.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: KSA-002
     regime: PDPL_KSA
     clause: "Art. 29"
@@ -1092,14 +1347,19 @@ rows:
     source: "PRIMARY — the official UAE government text of Federal Decree-Law No. (45) of 2021, Article (20) \"Personal Data Security\", from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01. ✓ C0b UPGRADED THIS FROM SECONDARY: C0 could only reach Securiti and Bird & Bird commentary; the official English PDF turned out to be reachable and confirms Art. 20."
     notes: >-
       The official text is more specific than the secondary sources suggested:
-      Art. 20(1)(a) names encryption and pseudonymisation explicitly, and
-      Art. 20(1)(c) requires measures ensuring timely retrieval of and access to
+      Art. 20(1)(a) names encryption and pseudonymisation explicitly, and Art.
+      20(1)(c) requires measures ensuring timely retrieval of and access to
       personal data after an actual or technical failure — which is the same
       recovery obligation as SOC 2 A1.2, and the same finding in its narrowed
       2026-09-02 form: copies exist off the VM, and TIMELY RETRIEVAL is
       unevidenced because no restore has ever been performed (SOC2-009,
       SOC2-010).
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: UAE-002
     regime: PDPL_UAE
     clause: "Art. 22"
@@ -1132,11 +1392,20 @@ rows:
       Art. 9(3): "If the Processor becomes aware of any breach of Personal Data,
       it shall notify the Controller of such breach as soon as it becomes aware
       of the same."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 names Art. 9(3) as a row of the
+      duty table with Foxy's posture as Processor and the Controller as
+      recipient; §7 routes it and §8 defines the notice.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — the official UAE government text of Federal Decree-Law No. (45) of 2021, Article (9), downloaded from uaelegislation.gov.ae (legislation 1972) and text-extracted 2026-09-01 — https://uaelegislation.gov.ae/en/legislations/1972/download"
     notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      ONLY THE Art. 9(3) LEG MOVES — the processor's duty to tell the
+      Controller, which is the leg that binds Foxy. Art. 9(1) and 9(2) bind the
+      Controller and defer the period to the Executive Regulations, so there is
+      nothing there for Foxy to discharge and nothing was claimed.
+
       ⚠ C0b RESOLVED THIS TBD, AND CORRECTED THE REQUIREMENT WITH IT. C0 could
       reach only Securiti's overview, which asserts the duty without an article
       number and phrases the deadline as "immediately after having become
@@ -1145,11 +1414,10 @@ rows:
       old requirement text was wrong on the deadline as well as missing the
       number. The lesson is worth keeping — the OFFICIAL UAE portal serves the
       full English PDF to a plain curl with a browser user-agent; only SDAIA
-      (Saudi) actually blocks.
-      Art. 9(3) is the leg that binds Foxy directly, and it joins GDPR-006,
-      QAT-002 and SGP-004 in the same unmet duty: the processor must tell the
-      controller, and there is no process behind it.
+      (Saudi) actually blocks. Art. 9(3) joins GDPR-006, QAT-002 and SGP-004 in
+      the same duty, and one plan is now the process behind all four.
 
+      The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: UAE-004
     regime: PDPL_UAE
     clause: "Art. 8(1)–(6), 8(8)–(10)"
@@ -1270,18 +1538,37 @@ rows:
     evidence: null
     status: partial
     source: "Quoted verbatim by the regulator: NCSA (Qatar), 'Personal Data Breach Notifications — Guideline for Regulated Entities' v2.0, §4, extracted 2026-09-01"
-    notes: "The precautions half is substantially met in substance. The processor-notifies-controller half has no process behind it — same gap as GDPR-006."
+    notes: >-
+      The precautions half is substantially met in substance. The processor-notifies-controller half has no process behind it — same gap as
+      GDPR-006.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: QAT-003
     regime: QATAR_13_2016
     clause: "Art. 14"
     requirement: "\"The Controller shall inform both the relevant individual and Competent Department upon occurrence of a breach\" — the NCSA guideline sets a 72-hour deadline from detection and lists the content the notification must carry."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 carries 72 hours from detection
+      as a row of the duty table, with the NCSA penalties beside it; §4's
+      severity determination starts the clock and §5 rule 4 makes the
+      timestamps contemporaneous.
     evidence: null
-    status: gap
+    status: partial
     source: "NCSA (Qatar), 'Personal Data Breach Notifications — Guideline for Regulated Entities' v2.0, §§4 and 6, extracted 2026-09-01. The guideline cites Articles 11(5), 13 and 14 as the breach provisions and Articles 23 and 24 as the penalty provisions."
-    notes: "Penalties cited by the regulator: up to QAR 1,000,000 (Art. 23) for failure to notify, up to QAR 5,000,000 (Art. 24) for failure to take appropriate precautions or for a processor's failure to inform a controller."
-
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      The 72 hours is in the table and the clock discipline is in §5. Whether
+      the duty reaches Foxy at all is still the open legal question — §2 note C
+      records that Qatar reaches Foxy through HOSTING rather than through
+      customers, does not decide it, and plans as though it applies because the
+      cost of assuming so is low. Penalties cited by the regulator: up to QAR
+      1,000,000 (Art. 23) for failure to notify, up to QAR 5,000,000 (Art. 24)
+      for failure to take appropriate precautions or for a processor's failure
+      to inform a controller. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: QAT-004
     regime: QATAR_13_2016
     clause: TBD
@@ -1334,8 +1621,14 @@ rows:
     evidence: "The independent verifier detects any modification of an exported chain, with zero Foxy imports."
     status: partial
     source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
-    notes: "The single best-fitting PCI requirement in the standard for what Foxy actually is, and it is a log-integrity requirement, not a card requirement. Worth remembering when someone asks whether to 'do PCI'."
+    notes: >-
+      The single best-fitting PCI requirement in the standard for what Foxy
+      actually is, and it is a log-integrity requirement, not a card
+      requirement. Worth remembering when someone asks whether to 'do PCI'.
 
+      ⚠ [[#304]]: anchoring is OPTIONAL and whether it runs in production is
+      not established here, so nothing off-host is known to witness the chain
+      head — see meta.hard_facts.chain_head_witness. Status unchanged; the on-ledger integrity control is untouched.
   - id: PCI-005
     regime: PCI_DSS
     clause: "Req. 10.5.1"
@@ -1360,13 +1653,26 @@ rows:
     regime: PCI_DSS
     clause: "Req. 12.10.1"
     requirement: "An incident response plan exists and is ready to be activated in the event of a suspected or confirmed security incident, including roles, responsibilities and communication strategies."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md — a plan that exists and is ready
+      to be activated, with roles (5), responsibilities (5, 7) and a
+      communication strategy (8).
     evidence: null
-    status: gap
+    status: partial
     source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
-    notes: "Fourth regime to record the same missing plan — see HIPAA-004, SOC2-006, GDPR-006."
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
 
-  # ------------------------------------------------------------ ISO 27001 ---
+      ⚠ READ incident-response.md §2 NOTE B BEFORE CITING THIS ROW ANYWHERE.
+      PCI DOES NOT BIND FOXY. Per not-applicable.md 2, Foxy is not a merchant,
+      not a service provider in a cardholder data environment, and stores no
+      account data — Paddle is the merchant of record, and PCI-001 and PCI-002
+      are `not-applicable` for exactly that reason. This row moves because
+      Req. 12.10.1 happens to DESCRIBE a plan Foxy needs for eleven other
+      regimes, not because PCI applies. Citing it as evidence that Foxy "does
+      PCI" is the overclaim the vault has flagged since 2026-08-17.
+
+      The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: ISO-001
     regime: ISO_27001
     clause: "A.5.1"
@@ -1411,12 +1717,20 @@ rows:
     regime: ISO_27001
     clause: "A.5.24"
     requirement: "Information security incident management planning and preparation — the organization shall plan and prepare for managing information security incidents by defining, establishing and communicating incident management processes, roles and responsibilities."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md — §5 defines the roles as hats a
+      two-person team can wear, §7 establishes the process, and §4 the
+      severity standard.
     evidence: null
-    status: gap
+    status: partial
     source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
-    notes: "Fifth regime naming the same missing plan."
-
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      A.5.24 asks for incident management processes, roles and responsibilities
+      to be defined, established AND COMMUNICATED. Two of the three are done.
+      COMMUNICATED is the limb still open on a two-person team where the plan
+      has never been walked through — §10's tabletop is what would close it.
+      ⚠ Secondary source; see ISO-001. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: ISO-006
     regime: ISO_27001
     clause: "A.5.28"
@@ -1445,8 +1759,13 @@ rows:
     evidence: "The verifier, for the falsification half."
     status: partial
     source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
-    notes: "Half a control. Falsification is the half the product is built around; loss is the half SOC2-009 fails."
+    notes: >-
+      Half a control. Falsification is the half the product is built around;
+      loss is the half SOC2-009 fails.
 
+      ⚠ [[#304]]: anchoring is OPTIONAL and whether it runs in production is
+      not established here, so nothing off-host is known to witness the chain
+      head — see meta.hard_facts.chain_head_witness. Status unchanged; the on-ledger integrity control is untouched.
   - id: ISO-009
     regime: ISO_27001
     clause: "A.5.34"
@@ -1508,8 +1827,16 @@ rows:
     evidence: null
     status: partial
     source: "PRIMARY — Planalto, the Brazilian government's own consolidated text of Lei nº 13.709/2018, Art. 46 — https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm (fetched 2026-09-01)"
-    notes: "The measures are real and unusually strong. No one outside Foxy can inspect them, so the row cannot exceed partial. Same ceiling as GDPR-005."
+    notes: >-
+      The measures are real and unusually strong. No one outside Foxy can
+      inspect them, so the row cannot exceed partial. Same ceiling as
+      GDPR-005.
 
+      ⚠ [[#302]]: the KEK sits in deploy/.env on the same host as the
+      ciphertext it protects, so encryption at rest here defends against a
+      stolen disk and not against a host compromise — see
+      meta.hard_facts.kek_colocation. Status unchanged; this narrows what the
+      cited measure claims, it does not remove it.
   - id: LGPD-002
     regime: LGPD
     clause: "Art. 37"
@@ -1561,17 +1888,22 @@ rows:
       bring relevant risk or damage. §1 requires the communication within a
       reasonable period as defined by the authority and lists the six items it
       must carry.
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §1 states the dual posture — Foxy
+      is controlador for account data and operador for workspace data — and
+      §2 carries Art. 48 with the ANPD and the data subject as recipients.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 48 and §1 (fetched 2026-09-01)"
     notes: >-
-      Same gap as GDPR-006, QAT-003 and KSA-004: there is no breach-response
-      plan and no notification path. Art. 48 names the controller, so for
-      workspace data Foxy's exposure runs through the Art. 39 instruction duty
-      (LGPD-006) — but Foxy is the controller for account data, and there this
-      binds it head-on.
-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      Art. 48 names the controlador, so the row bites two different ways and
+      the plan is the first document to say which is which: for workspace data
+      Foxy's exposure runs through the Art. 39 instruction duty (LGPD-006); for
+      account data Foxy is the controlador and Art. 48 binds it head-on. §1 is
+      that statement. The statute fixes no period — Art. 48 §1 defers it to the
+      authority — so the plan's internal 24/72-hour target governs here.
+       The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: LGPD-005
     regime: LGPD
     clause: "Art. 18"
@@ -1663,16 +1995,25 @@ rows:
       real risk of significant harm to an individual." s. 10.1(3): the same
       trigger obliges the organization to notify the affected individual, unless
       otherwise prohibited by law.
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 names the Commissioner and the
+      individual as recipients and "real risk of significant harm" as the
+      trigger; §4's severity standard is what makes that determination.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — Justice Laws Canada, PIPEDA ss. 10.1(1) and 10.1(3) — https://laws-lois.justice.gc.ca/eng/acts/P-8.6/FullText.html (fetched 2026-09-01)"
     notes: >-
-      Same gap as GDPR-006, LGPD-004, QAT-003, KSA-004, SGP-005 and AUS-005. One
-      breach-response plan closes the notification half of all of them, but the
-      deadlines and the recipients differ per regime, so the plan has to carry a
-      table rather than a single sentence.
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      The recipients and the trigger are now defined and a determination
+      procedure exists behind them.
 
+      ⚠ THE PERIOD IS TBD AND THE MOVE DOES NOT CHANGE THAT. §2 note E: the
+      verified quotes of s. 10.1(1) and s. 10.1(3) state no deadline, and
+      s. 10.1(2) is not in this crosswalk and was not quoted. Resolve against
+      Justice Laws Canada before this row is relied on for a clock. The
+      register duty (PIPEDA-004) is unaffected and is the more urgent half.
+
+      The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: PIPEDA-004
     regime: PIPEDA
     clause: "s. 10.3"
@@ -1680,18 +2021,25 @@ rows:
       "An organization shall, in accordance with any prescribed requirements,
       keep and maintain a record of every breach of security safeguards
       involving personal information under its control."
-    control: null
+    control: >-
+      docs/compliance/breach-register.md — the s. 10.3 register itself, with
+      the recording procedure in incident-response.md §9 and the Recorder hat
+      reserved to the Incident Lead in §5.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — Justice Laws Canada, PIPEDA s. 10.3 (fetched 2026-09-01)"
     notes: >-
-      Distinct from PIPEDA-003 and easy to miss: the record duty covers EVERY
-      breach, including the ones below the real-risk-of-significant-harm
-      threshold that are never reported. A breach register is a C4 artefact,
-      not a product feature.
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      ⚠ THE ONLY ONE OF THE FOURTEEN WHERE THE ARTEFACT ITSELF NOW EXISTS
+      RATHER THAN A PLAN TO PRODUCE ONE. s. 10.3 is a standing obligation with
+      no trigger: it covers EVERY breach of security safeguards, including the
+      ones below the real-risk-of-significant-harm threshold that are never
+      reported, so the register has to exist on a day when nothing has
+      happened. It does, and it is empty, and empty is its correct state.
 
-  # --------------------------------------------------- PDPA (SINGAPORE) ---
-
+      It is `partial` and not `met` for one reason only, and it is the reason
+      this file exists: the register is in a private repository and no third
+      party can inspect it. Nothing about the artefact is unfinished.
   - id: SGP-001
     regime: PDPA_SG
     clause: "s. 24"
@@ -1752,17 +2100,21 @@ rows:
       processing on behalf of and for the purposes of another organisation —
       (a) the data intermediary must, without undue delay, notify that other
       organisation of the occurrence of the data breach."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 names the s. 26C(3)(a) duty as
+      FOXY'S OWN, in the capacity of data intermediary, with the customer as
+      recipient; §7 routes it and §8 defines the notice.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 26C(3)(a), official PDF (extracted 2026-09-01)"
     notes: >-
-      ⚠ THE PDPA ROW THAT BINDS FOXY DIRECTLY. Foxy is the data intermediary, so
-      this duty is its own and does not run through the customer. Identical in
-      substance to GDPR-006, the second half of QAT-002, and UAE-003 clause 3 —
-      four regimes now oblige the processor to tell the controller, and there is
-      no process behind any of them.
-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      ⚠ THE PDPA ROW THAT BINDS FOXY DIRECTLY. Foxy is the data intermediary,
+      so this duty is its own and does not run through the customer — and the
+      plan is the first document that says so. Identical in substance to
+      GDPR-006, the second half of QAT-002, and UAE-003 clause 3: four regimes
+      oblige the processor to tell the controller, and one plan is now the
+      process behind all four. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: SGP-005
     regime: PDPA_SG
     clause: "s. 26D(1)"
@@ -1771,28 +2123,24 @@ rows:
       data breach is a notifiable data breach, the organisation must notify the
       Commission as soon as is practicable, but in any case no later than 3
       calendar days after the day the organisation makes that assessment."
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 carries the 3-calendar-day
+      period as the tightest clock in the duty table, and it is what drives
+      the self-imposed internal target at the end of §2 — notify within 24
+      hours of the severity determination and within 72 hours of awareness.
     evidence: null
-    status: gap
+    status: partial
     source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 26D(1), official PDF (extracted 2026-09-01)"
     notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
       Three calendar days is the tightest deadline in this file. The clock
-      starts at the assessment rather than at awareness, and s. 26C(2) requires
+      starts at the ASSESSMENT rather than at awareness, and s. 26C(2) requires
       the assessment itself to be made in a reasonable and expeditious manner,
       so the two together are tighter than they look. For Foxy's own account
-      data Foxy is the organisation and this is its duty directly.
-
-  # ----------------------------------------- PRIVACY ACT 1988 (AUSTRALIA) ---
-  #
-  # ⚠ READ THE SOURCE FIELDS ON THESE FIVE. The APP and section NUMBERS are
-  # verified against the OAIC — the regulator itself. The exact statutory
-  # WORDING is not: legislation.gov.au's text endpoints returned a DIFFERENT
-  # paraphrase on each of three fetches (one of them dropped "interference"
-  # from APP 11.1, another rewrote APP 8.1 entirely), and AustLII 403s. So
-  # `requirement` on these rows is a SUMMARY and says so in its first words,
-  # rather than a paraphrase dressed up as a quotation. Do not promote them to
-  # quotations without the primary text.
-
+      data Foxy is the organisation and this is its duty directly. This row is
+      why the plan carries an internal target no statute imposes: a Foxy
+      notification that takes 48 hours has spent two thirds of a Singaporean
+      customer's budget before they read the first sentence. The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: AUS-001
     regime: AU_PRIVACY
     clause: "APP 11.1 (Schedule 1)"
@@ -1844,12 +2192,20 @@ rows:
       An entity that suspects an eligible data breach must take all reasonable
       steps to complete its assessment within 30 calendar days after the day it
       became aware of the grounds that caused it to suspect the breach.
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §2 carries the 30-day assessment
+      window, bound to §4's SEV-2 trigger so a suspicion becomes a tracked
+      assessment rather than an open question.
     evidence: null
-    status: gap
+    status: partial
     source: "SECTION NUMBER AND THE 30-DAY PERIOD verified against the regulator quoting its own text: OAIC, 'Data breach preparation and response — Part 4: Notifiable Data Breach (NDB) scheme' — '...within 30 calendar days after the day the entity became aware of the grounds (or information) that caused it to suspect an eligible data breach (s 26WH(2))' (fetched 2026-09-01)"
-    notes: null
-
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      s. 26WH(2) is an ASSESSMENT duty, not a notification duty, and it is the
+      one an entity fails by drifting rather than by deciding wrongly — which
+      is exactly what binding it to a severity trigger prevents. Whether Foxy
+      is an APP entity at all is TBD and the plan does not decide it.
+       The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: AUS-005
     regime: AU_PRIVACY
     clause: "s. 26WK(2) and s. 26WL(3)"
@@ -1858,13 +2214,21 @@ rows:
       breach and give a copy to the Commissioner as soon as practicable after
       becoming aware of the breach. s. 26WL(3): the entity must notify
       individuals as soon as practicable after completing that statement.
-    control: null
+    control: >-
+      docs/compliance/incident-response.md §8 defines what a notification must
+      contain, and its contents map onto the s. 26WK(2) statement; §2 carries
+      both subsections and their recipients.
     evidence: null
-    status: gap
+    status: partial
     source: "SECTION NUMBERS verified against the regulator quoting its own text: OAIC, 'Data breach preparation and response — Part 4: NDB scheme' — '(s 26WK(2))' and '(s 26WL(3))' (fetched 2026-09-01)"
-    notes: "Same gap as PIPEDA-003, LGPD-004, GDPR-006, QAT-003, SGP-005 and KSA-004."
-
-  # ---------------------------------------------------------------- SOC 1 ---
+    notes: >-
+      MOVED gap -> partial 2026-09-02 by C1-SYNC, on incident-response.md §12.
+      Same gap as PIPEDA-003, LGPD-004, GDPR-006, QAT-003, SGP-005 and KSA-004
+      — and the same plan now stands behind all of them. §8's contents are
+      written to the union of the regimes' requirements rather than to any one,
+      which is why one section satisfies the s. 26WK(2) statement without an
+      Australia-specific template. Whether Foxy is an APP entity is TBD.
+       The plan is in a private repository, so it is a CONTROL and not EVIDENCE — see README.md. `met` needs the dated tabletop artefact of incident-response.md §10, which has not been run.
   - id: SOC1-001
     regime: SOC1
     clause: "SSAE 18 AT-C 320 (SOC 1) scope"
