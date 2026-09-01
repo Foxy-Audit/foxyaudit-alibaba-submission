@@ -2,7 +2,9 @@
 
 Everything here is **machine-local**: nothing in the repo creates it, and no
 test will tell you it is missing until a count comes out wrong. Verified on
-Windows against `1007a02`, 2026-08-30.
+Windows against `1007a02`, 2026-08-30; re-verified on a second Windows machine
+against `8498ce0`, 2026-09-01, which is where §2's last two notes and §4's third
+come from.
 
 ---
 
@@ -67,6 +69,7 @@ FROM pg_stat_activity WHERE datname='foxy_pytest';
 | PyQt6 | `desktop/` | suite cannot run |
 | Node | `node --check` on inline `<script>` blocks | a syntax error ships |
 | **Chrome** | the rendered dashboard guards | **they skip silently** |
+| **Git Bash before `system32` on PATH** | the timezone-independence guards | **they skip silently** |
 | `gh` (+ `gh auth login`) | checking CI before merging | — |
 | Docker | the Linux desktop repro only | — |
 
@@ -74,6 +77,31 @@ FROM pg_stat_activity WHERE datname='foxy_pytest';
 page in headless Chrome and read the DOM back. They once caught a CSS comment
 that closed early — balanced braces, green `node --check`, green suite, and a
 chip shipping at 1.21:1 contrast. Only the browser saw it.
+
+**Check the installed versions, not just that `pip install -r` ran.** On a
+machine that otherwise looked complete, two of `backend/requirements.txt`'s
+twenty pins were wrong: `python-multipart` was **absent** and `pillow` was
+12.0.0 against a 12.3.0 pin. The first is not a test failure — the avatar route
+in `routers/account.py` needs it at import time, so the whole suite dies at
+collection with `RuntimeError: Form data requires "python-multipart"` and no
+count is produced at all.
+
+**Which `bash` wins is part of the gate.** `shutil.which("bash")` finds
+`C:\Windows\system32\bash.EXE` — the WSL launcher — ahead of Git Bash on any
+Windows box where WSL is present but unprovisioned. The four
+`test_timezone_independence.py` guards then **skip**, with *"bash on PATH but
+not usable"*, and the backend reads **1563 passed / 7 skipped** where it should
+read 1567 / 3. Put Git Bash first for the run:
+
+```powershell
+$env:PATH = "C:\Program Files\Git\bin;$env:PATH"
+```
+
+Not permanently: that directory also ships `find.exe` and `sort.exe`, which
+shadow the Windows ones and break unrelated scripts. `test_skip_inventory.py`
+declares this site as `NEITHER` — "false in CI and on a dev machine" — which
+this machine disproves; the registry checks that a declaration exists, not that
+it is true.
 
 ---
 
@@ -106,6 +134,16 @@ raises `OSError: cannot load library … libgobject-2.0-0.dll`. That is *why*
 runs locally and **skips in CI**. On a machine with working GTK your count
 differs by one and that is right. `test_skip_inventory.py` pins every skip site
 and fails if an undeclared one appears.
+
+**Three `test_account.py` quota tests fail for the first hours of a month.**
+The one entry in this section that is genuinely broken rather than merely
+different — but it is filed as #30 and predates you, so do not chase it.
+`/v1/usage` takes `date.today()`, which is server-**local**, and stamps that
+date with `tzinfo=timezone.utc`; east of UTC the month boundary then sits in the
+future and `used_this_month` reads 0. At `Asia/Karachi` the window is local
+midnight to 05:00 on the 1st, where the count reads **1564 passed / 3 failed**
+— and 1564 + 3 is the expected 1567. Latent in production, which runs UTC, and
+it fails open.
 
 **The Postgres session timezone is deliberately unpinned.** CI runs
 `America/Los_Angeles`; the reference machine ran `Asia/Karachi`. Four
