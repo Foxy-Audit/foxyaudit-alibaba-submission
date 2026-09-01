@@ -105,7 +105,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ./sdk
-          pip install pytest
+          # pyyaml is NOT optional here: foxy-sale-page/test_compliance_claims.py
+          # imports it at module scope to read docs/compliance/claims.yaml. Absent,
+          # the module fails to IMPORT, pytest aborts the whole step at collection,
+          # and all 661 sale-page guards go dark while the step merely looks red.
+          # Do NOT "fix" a future recurrence with importorskip -- that is #258,
+          # where a missing runner dependency silently turned four guards into
+          # four skips and hid a genuine failure.
+          pip install pytest pyyaml
       - name: SDK tests
         run: pytest sdk/tests -q
       # The compliance testbed ships in the same wheel but is a SEPARATE package
