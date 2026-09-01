@@ -89,10 +89,83 @@ assertions:
     value: "no auditor engaged"
     detail: >-
       Foxy holds no SOC 2 report of any type and no auditor is engaged. SOC 2
-      Type I is intended with no date attached. trust.html:151 is the canonical
+      Type I is intended with no date attached. trust.html is the canonical
       wording and the other pages defer to it.
     established: "foxy-sale-page/trust.html §7, unchanged since before this phase; confirmed against the repo and the vault 2026-09-01"
     canonical_page: "foxy-sale-page/trust.html"
+
+    #: ⚠ #292 — WHY THIS CLASS EXISTS AT ALL.
+    #: C2 guarded SOC 2 by banning phrases that had already been wrong. MAIN
+    #: broke it with one line the guard had never seen:
+    #:   "Our SOC 2 Type I report is expected shortly and fieldwork is already
+    #:    underway."
+    #: — as false as the sentence that was removed, and all nine tests stayed
+    #: green. A blacklist pins the sentence that WAS wrong; the expected failure
+    #: mode here is a human REWRITING it, and a human rewriting it will not
+    #: reuse a banned phrase.
+    #: `sentence_pattern` + `approved_sentences` invert that: every sentence on
+    #: the subject must be one written down here. Novel text fails by default.
+    sentence_pattern: '\bSOC ?2\b'
+    #: ⚠ CASE-SENSITIVE. Under re.I this also matches the `soc2` POLICY TAG in
+    #: the code samples on how-it-works.html, sdk.html and install.html. Those
+    #: are a different claim — recorded `qualified` under `claims` — and pulling
+    #: them in here would force code samples into a prose approval list.
+    case_sensitive: true
+
+    #: Phrases that must appear on `canonical_page` AND on every page in
+    #: `must_carry_canonical`. This is what makes trust.html the single source:
+    #: change it there and the failure names trust.html first.
+    canonical_phrases:
+      - "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation."
+      - "no auditor is engaged yet"
+    must_carry_canonical:
+      - "foxy-sale-page/faq.html"
+      - "foxy-sale-page/pricing.html"
+
+    #: Every sentence naming SOC 2 on any customer-facing surface. Extracted
+    #: from the pages, not typed. Adding one is the moment somebody has to
+    #: decide whether it is true.
+    approved_sentences:
+      - "Is this SOC 2 certified?"
+      - "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation."
+      - "SOC 2 Type I is intended, but no auditor is engaged yet, so we are not putting a date on it."
+      - "Its verdict is a review signal — not a HIPAA or SOC 2 certification — and unavailable judge results remain visibly unknown."
+      - "SOC 2 Type I is intended, but no auditor is engaged yet, so we are not putting a date on it — the current status is always on our Trust & Security page."
+      - "We do not currently hold a SOC 2, ISO 27001, or comparable third-party attestation."
+      - "Certifications status today We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation."
+      - "SOC 2 Type I — intended, but no auditor is engaged yet, so we are not putting a date on it."
+
+  backup_locations:
+    value: "two locations, and only one is Qatar"
+    detail: >-
+      Nightly pg_dump and avatar archives -> deploy/backups ON THE PRODUCTION VM,
+      in Qatar, RETENTION_DAYS default 14. GCP disk snapshots of the `devops`
+      disk -> daily, 14 kept, storageLocations ['eu'] — the EU MULTI-REGION.
+      guestFlush is false, so the snapshots are crash-consistent, not
+      application-consistent.
+    established: >-
+      Measured against GCP by MAIN 2026-09-01 and systematic, not a one-off:
+      5 of 5 sampled `devops` / me-central1-a snapshots return ['eu']. The
+      schedule `default-schedule-1` pins no storageLocations, so GCP applied its
+      default and chose the nearest multi-region. ⚠ The console showing
+      me-central1 and gcloud showing eu is NOT a contradiction — a snapshot is a
+      separate storage object and its location is independent of the disk's zone.
+      Vault issue #291.
+    must_appear_on:
+      - "foxy-sale-page/privacy.html"
+    must_mention: ["Qatar", "European Union"]
+    sentence_pattern: '\bbackups?\b|\bsnapshots?\b|\bdumps?\b'
+    #: ⚠ `dumps?` is in the pattern so the sentence that puts the DUMPS in Qatar
+    #: joins the class. Without it, deleting that sentence would leave the page
+    #: saying only that a copy is in the EU, and `must_mention` would still pass
+    #: because "Qatar" appears elsewhere on the page a dozen times.
+    approved_sentences:
+      - "Backups are kept in two places, and only one of them is in Qatar."
+      - "Nightly database dumps and avatar archives are written to the server itself, in Qatar, and kept for 14 days."
+      - "Separately, Google Cloud takes a daily snapshot of the server's disk and stores it in the European Union multi-region, also kept for 14 days, so a complete copy of the data we host in Qatar is held in the EU as well."
+      - "Those snapshots are taken while the machine is running, so they capture the disk as it stood at that moment rather than a cleanly closed database, which is why we keep the nightly dumps as well."
+      - "International Data Transfers In short: Your workspace data is hosted in Qatar, and daily snapshots of that server's disk are stored in the European Union."
+      - "Daily snapshots of our server's disk are also stored in the European Union multi-region (see Section 8 ), so a complete copy of the hosted data is held there as well as in Qatar."
 
 # ---------------------------------------------------------------------------
 # REGIME WORDS
@@ -620,7 +693,36 @@ claims:
     why: "A statement about which law the document is written to, not a claim of compliance with it."
 
   - file: foxy-sale-page/privacy.html
-    line: 211
+    line: 210
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "The safeguard Article 46 GDPR requires for a transfer"
+    claim: >-
+      "Transfers to the United States. The safeguard Article 46 GDPR requires ...
+      is the EU Standard Contractual Clauses ... We cannot evidence that
+      safeguard for every US sub-processor." Followed by a per-sub-processor
+      list: OpenAI — no DPA executed, so no SCCs cover the transfer; Google —
+      expected via incorporated cloud terms, not established; Paddle and
+      Payoneer — nothing evidenced.
+    backing: ["GDPR-009", "GDPR-010"]
+    why: >-
+      ✓ C2b WROTE THIS, and it is the second false statement removed from this
+      one section. The paragraph previously asserted flatly that "we rely on the
+      EU Standard Contractual Clauses" for the US transfer. Confirmed by the
+      owner 2026-09-01: **no DPA or SCCs were ever executed with OpenAI**, which
+      receives customer event metadata — under Foxy's own key on platform-key
+      tiers. See vault #293 and `retired.unqualified-us-scc-reliance`.
+      ⚠ IT DOES NOT ASSERT SCCS FOR THE ONES THAT MIGHT HAVE THEM. Google's
+      status is "probably, via incorporated terms" and nobody has produced the
+      artefact, so the page says "expected, not established" in those words.
+      GDPR-010 (Art. 28(2), engaging another processor) is cited alongside
+      GDPR-009 because the OpenAI leg is a sub-processor with no contract at all,
+      not merely a transfer with no safeguard.
+    mechanism: TBD-LEGAL
+
+  - file: foxy-sale-page/privacy.html
+    line: 217
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -645,7 +747,7 @@ claims:
     mechanism: TBD-LEGAL
 
   - file: foxy-sale-page/privacy.html
-    line: 223
+    line: 229
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -658,7 +760,7 @@ claims:
     why: "The rights exist, the export and deletion paths implement them, and §14's general commitment extends them."
 
   - file: foxy-sale-page/privacy.html
-    line: 224
+    line: 230
     regime: CCPA/CPRA
     kind: affirmative
     verdict: backed
@@ -668,7 +770,7 @@ claims:
     why: "Same missing-CCPA-rows caveat as cookie-policy.html:117. The substance — we do not sell or share — is implemented."
 
   - file: foxy-sale-page/privacy.html
-    line: 225
+    line: 231
     regime: LGPD
     kind: affirmative
     verdict: backed
@@ -685,7 +787,7 @@ claims:
       Art. 18 and enumerates the same rights this bullet promises.
 
   - file: foxy-sale-page/privacy.html
-    line: 226
+    line: 232
     regime: PIPEDA
     kind: affirmative
     verdict: backed
@@ -698,7 +800,7 @@ claims:
     why: "✓ BACKED BY C0b. Four PIPEDA rows now exist, all from the official Justice Laws text."
 
   - file: foxy-sale-page/privacy.html
-    line: 227
+    line: 233
     regime: PDPA (SG)
     kind: affirmative
     verdict: backed
@@ -711,7 +813,7 @@ claims:
     why: "✓ BACKED BY C0b. Five PDPA rows now exist, from the official Singapore Statutes Online PDF."
 
   - file: foxy-sale-page/privacy.html
-    line: 227
+    line: 233
     regime: Privacy Act
     kind: affirmative
     verdict: backed
@@ -725,7 +827,7 @@ claims:
       those rows say so in their first words.
 
   - file: foxy-sale-page/privacy.html
-    line: 231
+    line: 237
     regime: GDPR
     kind: affirmative
     verdict: backed
@@ -916,6 +1018,63 @@ retired:
       C3 is the phase that could make the original claim true — the plan says
       the Passport should group by crosswalk row id rather than by policy_tag.
       When it does, this entry moves out of `retired`.
+
+  - id: backups-do-not-leave-qatar
+    claim: "Backups are retained in the same region and do not leave Qatar."
+    was_at: ["foxy-sale-page/privacy.html:175 (§8, the hosting bullet)"]
+    verdict: delete
+    regime: GDPR
+    replaced_with: >-
+      Both locations, stated: nightly dumps on the VM in Qatar for 14 days, and
+      daily GCP disk snapshots in the EU multi-region for 14 days.
+    scope: text
+    must_not_match:
+      - "[Bb]ackups are retained in the same region"
+      - "backups?[^.]{0,60}do(?:es)? not leave Qatar"
+      - "(?:backups?|snapshots?)[^.]{0,80}(?:stay|remain|are kept|are held|are stored)[^.]{0,30}(?:in|within) Qatar\\b(?![^.]{0,80}European Union)"
+    why: >-
+      ⚠ VAULT #294, AND THE SHARPEST LESSON OF THIS WHOLE PHASE. C2 corrected the
+      hosting country and, in the very same bullet, published a NEW false
+      residency sentence. Measured hours later: the GCP disk snapshots are in the
+      `eu` multi-region, 5 of 5 sampled.
+      ⚠ IT WAS A PLANNING ERROR, NOT A BUILDING ERROR. MAIN read
+      deploy/backup.sh, saw it write to a path on the VM, and wrote "backups do
+      not leave Qatar" into the plan as an established fact; the executor carried
+      a stated fact faithfully onto the page. **The application layer is not the
+      infrastructure layer.** backup.sh is what the REPO does; the snapshot
+      schedule is what the PLATFORM does underneath it, and nothing in the repo
+      mentions it. A residency claim has to be verified where the bytes are, not
+      where the code puts them.
+      The third pattern is the general form — any claim that backups stay in
+      Qatar, unless the same sentence also names the European Union.
+
+  - id: unqualified-us-scc-reliance
+    claim: "Where personal data is transferred from the EEA, UK, or Switzerland to the United States, we rely on the EU Standard Contractual Clauses ... as our transfer mechanisms."
+    was_at: ["foxy-sale-page/privacy.html:210 (§13, Transfers to the United States)"]
+    verdict: delete
+    regime: GDPR
+    replaced_with: >-
+      The same paragraph, per sub-processor, saying what can be evidenced —
+      including that no DPA has been executed with OpenAI.
+    scope: text
+    must_not_match:
+      - "we rely on the (?:<strong>)?EU Standard Contractual Clauses"
+      - "(?:are|is) covered by (?:the )?(?:EU )?Standard Contractual Clauses"
+      - "Standard Contractual Clauses (?:are|is) in place"
+    why: >-
+      ⚠ VAULT #293, CONFIRMED BY THE OWNER 2026-09-01, NOT HYPOTHETICAL. The C2
+      executor raised this about text it had not written and left it untouched
+      because it predated the branch. It could not be left: **no DPA or SCCs were
+      ever executed with OpenAI** — a key is set, and that is all — while OpenAI
+      receives customer event metadata, under Foxy's own key on platform-key
+      tiers. Google Cloud is *probably* covered by auto-incorporated terms and
+      nobody has produced the artefact; Paddle is sandbox; Payoneer has nothing.
+      So the sentence asserted a safeguard for a transfer that has none.
+      ⚠ THE REPLACEMENT DOES NOT SAY SCCS ARE IN PLACE FOR THE ONES THAT MIGHT
+      BE. "Probably, via incorporated terms" is not evidence, and the page says
+      "expected, not established" for Google in those words. The right fix for
+      OpenAI is to execute the DPA — it is self-serve and free — at which point
+      this entry moves and the paragraph gets rewritten with a date.
 
 # ---------------------------------------------------------------------------
 # SUB-PROCESSOR RECONCILIATION

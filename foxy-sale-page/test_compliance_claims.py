@@ -61,6 +61,7 @@ Run:  pytest foxy-sale-page -q
 
 from __future__ import annotations
 
+import html
 import pathlib
 import re
 
@@ -223,8 +224,14 @@ _PLACES = re.compile(
 
 
 def _prose(path: pathlib.Path) -> str:
+    """Rendered-ish text: tags out, entities resolved, whitespace flattened.
+
+    ⚠ ENTITIES ARE RESOLVED. ``Trust &amp; Security`` is ``Trust & Security`` to
+    a reader, and the approved-sentence lists below are maintained by hand — a
+    list full of ``&amp;`` invites someone to "fix" it and silently unapprove a
+    sentence that is still on the page."""
     text = _TAG.sub(" ", _scrubbed(path))
-    return re.sub(r"\s+", " ", text)
+    return re.sub(r"\s+", " ", html.unescape(text))
 
 
 def test_every_hosting_statement_names_qatar(register):
@@ -330,3 +337,134 @@ def test_every_hosting_exemption_still_matches_a_real_sentence(register):
         + "\n\nIf the sentence was reworded, update the exemption to the new "
           "text after checking it is still a NEGATIVE hosting statement. If it "
           "was removed, delete the exemption.")
+# ── 4 · CLAIM CLASSES — every sentence on the subject is one we approved ────
+#
+# ⚠ #292. THIS IS THE RULE THAT REPLACES BLACKLISTING, AND WHY.
+#
+# The first version of this file guarded SOC 2 by banning the phrases that had
+# already been wrong. MAIN broke it in one line: injecting
+#
+#     "Our SOC 2 Type I report is expected shortly and fieldwork is already
+#      underway."
+#
+# into faq.html left all nine tests green. It is as false as the sentence that
+# was removed, in words the guard had never seen — and the expected failure mode
+# here is *a human rewriting the sentence*, who will not reuse a banned phrase.
+#
+# The hosting-country rule never had that hole, because it asserts POSITIVELY:
+# every hosting statement must name Qatar, so a consistently-wrong "Germany"
+# fails. These classes generalise that shape. Every sentence matching the class
+# pattern must be one the register lists. A novel sentence is an unapproved
+# sentence, whatever it says.
+#
+# The cost is real and is the point: rewording an approved sentence fails the
+# build until someone updates the register. That is a claims register doing its
+# job, not friction.
+
+
+def _classes(register: dict) -> dict:
+    return {k: v for k, v in register["assertions"].items()
+            if v.get("sentence_pattern")}
+
+
+def _class_pattern(spec: dict) -> "re.Pattern":
+    # ⚠ CASE-SENSITIVE FOR SOC 2, DELIBERATELY. `\bSOC ?2\b` under re.I also
+    # matches the `soc2` POLICY TAG in the code samples on how-it-works.html,
+    # sdk.html and install.html. Those are a different claim — a per-call tag,
+    # recorded `qualified` in `claims` — and pulling them into this class would
+    # force code samples into a prose approval list.
+    flags = 0 if spec.get("case_sensitive") else re.I
+    return re.compile(spec["sentence_pattern"], flags)
+
+
+def _sentences_in_class(spec: dict) -> list[tuple[str, str]]:
+    pat = _class_pattern(spec)
+    out = []
+    for path in _pages():
+        for sentence in _SENTENCE.split(_prose(path)):
+            sentence = sentence.strip()
+            if pat.search(sentence):
+                out.append((_rel(path), sentence))
+    return out
+
+
+def test_every_sentence_in_a_claim_class_is_one_the_register_approved(register):
+    """The positive rule. A sentence the register has never seen fails, whether
+    or not it repeats anything previously banned."""
+    problems = []
+    for name, spec in _classes(register).items():
+        approved = set(spec["approved_sentences"])
+        for rel, sentence in _sentences_in_class(spec):
+            if sentence not in approved:
+                problems.append(f"[{name}] {rel}: {sentence[:200]!r}")
+    assert not problems, (
+        "an unapproved sentence makes a claim in a guarded class:\n  "
+        + "\n  ".join(problems)
+        + "\n\nIf the sentence is TRUE and intended, add it verbatim to that "
+          "class's `approved_sentences` in docs/compliance/claims.yaml — which "
+          "is the moment someone has to decide whether it is true. If it is not, "
+          "take it off the page.")
+
+
+def test_every_approved_sentence_is_still_on_a_page(register):
+    """The other direction. An approval nobody ships is an approval waiting to
+    excuse text it was never written for — and it hides a deletion: if the
+    honest sentence is quietly removed, only this test notices."""
+    orphans = []
+    for name, spec in _classes(register).items():
+        live = {s for _, s in _sentences_in_class(spec)}
+        for approved in spec["approved_sentences"]:
+            if approved not in live:
+                orphans.append(f"[{name}] {approved[:150]!r}")
+    assert not orphans, (
+        "claims.yaml approves a sentence that is on no page any more:\n  "
+        + "\n  ".join(orphans)
+        + "\n\nIt was reworded (update the approval, after deciding the new "
+          "wording is true) or removed (delete the approval — and check the "
+          "claim it made is not now missing).")
+
+
+def test_the_soc2_answer_matches_the_canonical_page(register):
+    """⚠ #292's actual fix: faq.html and pricing.html must carry trust.html's
+    wording, so divergence fails rather than only known-bad strings failing.
+
+    trust.html is the single source. Each phrase is asserted on the canonical
+    page FIRST — so if someone edits trust.html, the failure names trust.html
+    rather than sending them to hunt through the two pages that copy it."""
+    spec = register["assertions"]["soc2_status"]
+    canonical = _prose(ROOT / spec["canonical_page"])
+
+    missing = [p for p in spec["canonical_phrases"] if p not in canonical]
+    assert not missing, (
+        f"{spec['canonical_page']} no longer carries the canonical SOC 2 "
+        f"wording: {missing}. It is the page the others are checked against, so "
+        f"fix it here first.")
+
+    problems = []
+    for rel in spec["must_carry_canonical"]:
+        text = _prose(ROOT / rel)
+        for phrase in spec["canonical_phrases"]:
+            if phrase not in text:
+                problems.append(f"{rel} is missing {phrase[:90]!r}")
+    assert not problems, (
+        "\n  ".join([""] + problems)
+        + f"\n\nThese pages must answer the SOC 2 question in "
+          f"{spec['canonical_page']}'s words. The vault records this disclosure "
+          f"being softened once already; one wording in one place is the only "
+          f"arrangement that cannot drift apart again.")
+
+
+def test_the_backup_locations_are_both_stated(register):
+    """#294. C2 corrected the hosting country and, in the same bullet, published
+    "Backups are retained in the same region and do not leave Qatar." Measured
+    the same day: the nightly dumps are on the VM in Qatar, but the GCP disk
+    snapshots are in the `eu` multi-region — 5 of 5 sampled. Both locations are
+    true and both have to be on the page, so naming only the flattering one is
+    a failure rather than an omission."""
+    spec = register["assertions"]["backup_locations"]
+    for rel in spec["must_appear_on"]:
+        text = _prose(ROOT / rel)
+        missing = [m for m in spec["must_mention"] if m not in text]
+        assert not missing, (
+            f"{rel} states the backup arrangement without naming {missing}. "
+            f"Both locations are real: {spec['detail']}")
