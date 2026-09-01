@@ -367,3 +367,14 @@ than re-open it.
 
 This is the same posture the owner takes to certification: have it built so the
 only remaining input is the one you cannot buy — there, money; here, a date.
+
+⚠ **AND 2026-09-18 IS A FLOOR, NOT A DEADLINE.** Owner, 2026-09-01: *"we can
+delay the merge, it's no rush."* Nothing may reach the real repo **before** that
+date; nothing obliges it to reach the repo **on** it.
+
+MAIN briefly manufactured a deadline out of this — snapshot retention is 14 days,
+so hitting an 18 Sep publish with zero EU copies required the fix by 3 Sep, which
+the intervening weekend would have missed. The owner removed the pressure instead
+of compressing the work. **Do not recreate that urgency.** Sequence the
+corrections by readiness; publish when they are right. The owner's checklist is
+[[Compliance — owner action checklist]].
