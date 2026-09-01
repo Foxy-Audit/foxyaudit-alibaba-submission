@@ -1,0 +1,1031 @@
+# Foxy Audit — the compliance claims register
+#
+# Phase C2 of docs/plans/compliance-program.md. READ docs/compliance/README.md
+# for what a crosswalk row id means before trusting a `backing` here.
+#
+# WHAT THIS FILE IS FOR, AND WHY IT IS NOT A LIST OF STRINGS TO GREP
+#
+# foxy-sale-page/test_site_wide_claims.py already proves the three sub-processor
+# lists AGREE with each other. On 2026-09-01 they agreed, and all three were
+# wrong: every one of them stated the hosting country as the United States while
+# production ran in GCP me-central1, Doha, Qatar. A consistency guard over false
+# content reads green, because it cannot be wrong about its own subject.
+#
+# So this file records what is TRUE, not what is consistent:
+#
+#   assertions:  single-valued facts every surface must agree WITH. The guard
+#                compares the pages to the value here, not to each other.
+#   claims:      every regime word on every customer-facing surface, one entry
+#                per (file, line, regime), each with a verdict and a crosswalk
+#                row that backs it.
+#   retired:     claims C2 removed, each pinning a pattern that must never come
+#                back. The SOC 2 sentence is here because the vault records it
+#                being softened once before — this is a recurrence, so it is
+#                pinned rather than merely edited.
+#
+# The guard is foxy-sale-page/test_compliance_claims.py. It fails the build.
+
+meta:
+  phase: C2
+  written: "2026-09-01"
+  verified_against: "e7e1919"       # origin/main the branch was cut from
+  branch: "feat/compliance-c2"
+  written_by: "executor chat, per docs/plans/compliance-program.md §4 C2"
+  legal_review: "NONE — no wording in this file or on the pages it governs has been reviewed by a lawyer"
+  surfaces: ["foxy-sale-page/", "foxy-dashboard/"]
+  not_a_surface: >-
+    foxy-adminpage/ is a staff operations console, not a customer-facing
+    surface, and is deliberately out of scope. If it ever becomes
+    customer-visible it has to be added to meta.surfaces and re-scanned.
+  freeze: >-
+    ⚠ Nothing on this branch reaches the real repo before 2026-09-18. That is
+    the owner's decision, recorded in docs/plans/compliance-program.md §9.3 and
+    in the vault. The corrections below are FINISHED and waiting, so that date
+    is a merge and not a project. Do not re-open it.
+
+# ---------------------------------------------------------------------------
+# ASSERTIONS
+#
+# Single-valued facts. The guard checks the PAGES against these values. There
+# is exactly one right answer per key and it is written here, so a page that
+# agrees with the other pages and disagrees with reality still fails.
+# ---------------------------------------------------------------------------
+assertions:
+
+  hosting_country:
+    value: "Qatar"
+    detail: "Google Cloud region me-central1, Doha, Qatar"
+    established: "owner, from the GCP console, 2026-09-01; recorded in the vault at 'Compliance — operating facts'"
+    must_appear_on:
+      - "foxy-sale-page/privacy.html"      # §8 sub-processor list, §13 transfers
+      - "foxy-sale-page/trust.html"        # §6 sub-processor table
+    #: Countries that MAY appear beside a provider on those pages, because a
+    #: real sub-processor is there. Any other country next to a hosting word is
+    #: the old defect coming back.
+    other_provider_countries:
+      ["United States", "European Union", "France", "Global (UK-headquartered)"]
+    #: ⚠ EXEMPTIONS ARE EXACT SENTENCES, NOT A WILDCARD.
+    #: A sentence that says where data is NOT hosted is not a statement of the
+    #: hosting country, and the guard cannot tell the two apart from the words
+    #: alone. So each one is pinned here in full: change a comma in it and the
+    #: exemption stops applying and the guard fires again. That is the property
+    #: an "ignore sentences containing not" rule would not have — under that
+    #: rule, "our servers are not in the United States, they are in Ireland"
+    #: would sail through.
+    sentence_exemptions:
+      - sentence: "We do not process personal data in Pakistan — our operating company is incorporated there ( Section 1 ), but no customer data is currently hosted or processed on Pakistani servers."
+        why: >-
+          §13. A NEGATIVE hosting statement — it says no customer data is
+          hosted in Pakistan, which is true and is there because the operating
+          company is incorporated there. It names a place beside a hosting word
+          without asserting that place as the hosting country.
+    #: The exact defect that was live until this branch. Never again, on any page.
+    must_not_match:
+      - 'hosting provider \(Google Cloud, Ubuntu VM\)</strong> — United States'
+      - '<td>Google Cloud \(Ubuntu VM\)</td><td>Hosting</td><td>United States</td>'
+      - 'data is processed in the <strong>United States</strong> \(our hosting provider'
+
+  soc2_status:
+    value: "no auditor engaged"
+    detail: >-
+      Foxy holds no SOC 2 report of any type and no auditor is engaged. SOC 2
+      Type I is intended with no date attached. trust.html:151 is the canonical
+      wording and the other pages defer to it.
+    established: "foxy-sale-page/trust.html §7, unchanged since before this phase; confirmed against the repo and the vault 2026-09-01"
+    canonical_page: "foxy-sale-page/trust.html"
+
+# ---------------------------------------------------------------------------
+# REGIME WORDS
+#
+# The vocabulary the guard scans for. Adding a regime word here without adding
+# its claim entries below makes the build red, which is the point: a new regime
+# cannot appear on a page without someone writing down what backs it.
+#
+# ⚠ THE SCAN MUST IGNORE data: URIs. These files embed base64 image payloads,
+# and the letter sequences `pci`, `PDPL`, `NIST` and `LGPD` occur inside them.
+# A naive grep reports claims on pages that make none — C0 measured this.
+# ---------------------------------------------------------------------------
+regime_words:
+  HIPAA:        '\bHIPAA\b|(?<=["''])hipaa(?:_basic)?(?=["''])|\bhipaa\b'
+  SOC 2:        '\bSOC ?2\b|(?<=["''])soc2(?=["''])'
+  SOC 1:        '\bSOC ?1\b'
+  GDPR:         '\bGDPR\b|(?<=["''])gdpr(?:_basic)?(?=["''])|\bgdpr\b'
+  EU AI Act:    '\bEU AI Act\b|\bAI Act\b|(?<=["''])eu_ai_act(?=["''])|\beu_ai_act\b'
+  NIST AI RMF:  '\bNIST\b|\bAI RMF\b'
+  PCI DSS:      '\bPCI[- ]?DSS\b|\bPCI\b|(?<=["''])pci(?=["''])|\bpci\b'
+  ISO 27001:    '\bISO ?27001\b'
+  CCPA/CPRA:    '\bCCPA\b|\bCPRA\b'
+  LGPD:         '\bLGPD\b'
+  PIPEDA:       '\bPIPEDA\b'
+  PDPA (SG):    '\bPDPA\b'
+  PDPL:         '\bPDPL\b'
+  Privacy Act:  '\bPrivacy Act 1988\b|\bPrivacy Act\b'
+  FedRAMP:      '\bFedRAMP\b'
+  SOX:          '(?<=["''])sox(?=["''])|\bSOX\b|\bsox\b'
+  Qatar Law 13: '\bLaw No\.? 13\b|\bLaw 13/2016\b|\bPDPPL\b'
+
+# ---------------------------------------------------------------------------
+# CLAIMS
+#
+# One entry per (file, line, regime) site the scanner finds. Every site needs
+# one; an unregistered site fails the build.
+#
+# kind:
+#   affirmative   the surface asserts something. MUST carry a backing row.
+#   negation      the surface says Foxy does NOT have something. Needs no
+#                 backing — a crosswalk row cannot support an absence, and
+#                 demanding one would push these sentences off the pages.
+#   question      an FAQ heading. Answered by the affirmative entry beside it.
+#
+# verdict:
+#   backed        a crosswalk row supports it as written
+#   qualified     true, but it overclaims or misleads as written; the entry says how
+#   delete        not true, or not supportable — and therefore NOT in this list.
+#                 A live claim may not carry this verdict. Deletions live under
+#                 `retired`, which is what proves they were applied.
+#
+# anchor: a distinctive substring of the line, used by the guard to find the
+#         claim without depending on the line number staying put.
+# ---------------------------------------------------------------------------
+claims:
+
+  # ── SOC 2 ────────────────────────────────────────────────────────────────
+  - file: foxy-sale-page/faq.html
+    line: 58
+    regime: SOC 2
+    kind: question
+    verdict: backed
+    anchor: "Is this SOC 2 certified?"
+    claim: "Is this SOC 2 certified?"
+    backing: []
+    why: "An FAQ heading. The answer beside it is the claim; see the next entry."
+
+  - file: foxy-sale-page/faq.html
+    line: 60
+    regime: SOC 2
+    kind: negation
+    verdict: backed
+    anchor: "No. We do not currently hold SOC 2, ISO 27001"
+    claim: >-
+      "No. We do not currently hold SOC 2, ISO 27001, or a comparable
+      third-party attestation. SOC 2 Type I is intended, but no auditor is
+      engaged yet, so we are not putting a date on it."
+    backing: []
+    why: >-
+      ✓ C2 WROTE THIS. It replaced "We're currently completing our SOC 2 Type I
+      audit", which contradicted trust.html:151 on the same site and was the
+      false one of the two. The replacement is trust.html's own wording, so the
+      three pages now defer to one sentence instead of holding two positions.
+      See `retired`.
+
+  - file: foxy-sale-page/faq.html
+    line: 60
+    regime: ISO 27001
+    kind: negation
+    verdict: backed
+    anchor: "No. We do not currently hold SOC 2, ISO 27001"
+    claim: "ISO 27001 named inside the same negation."
+    backing: []
+    why: "Same sentence. Named in order to say Foxy does not hold it."
+
+  - file: foxy-sale-page/pricing.html
+    line: 119
+    regime: SOC 2
+    kind: question
+    verdict: backed
+    anchor: "Is this SOC 2 certified?"
+    claim: "Is this SOC 2 certified?"
+    backing: []
+    why: "An FAQ heading; see the answer beside it."
+
+  - file: foxy-sale-page/pricing.html
+    line: 121
+    regime: SOC 2
+    kind: negation
+    verdict: backed
+    anchor: "No. We do not currently hold SOC 2, ISO 27001"
+    claim: >-
+      "No. We do not currently hold SOC 2, ISO 27001, or a comparable
+      third-party attestation. SOC 2 Type I is intended, but no auditor is
+      engaged yet, so we are not putting a date on it."
+    backing: []
+    why: "✓ C2 WROTE THIS, replacing the second copy of the false audit sentence. See `retired`."
+
+  - file: foxy-sale-page/pricing.html
+    line: 121
+    regime: ISO 27001
+    kind: negation
+    verdict: backed
+    anchor: "No. We do not currently hold SOC 2, ISO 27001"
+    claim: "ISO 27001 named inside the same negation."
+    backing: []
+    why: "Same sentence."
+
+  - file: foxy-sale-page/trust.html
+    line: 150
+    regime: SOC 2
+    kind: negation
+    verdict: backed
+    anchor: "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation"
+    claim: >-
+      "We do not currently hold SOC 2, ISO 27001, or a comparable third-party
+      attestation. We consider this normal for our stage and are building
+      toward it deliberately rather than claiming it early."
+    backing: []
+    why: >-
+      True, and the sentence the other two pages now match. Already pinned by
+      foxy-sale-page/test_trust_v17.py, which asserts this exact string —
+      keep both pins: that one guards the page, this one guards the claim.
+
+  - file: foxy-sale-page/trust.html
+    line: 150
+    regime: ISO 27001
+    kind: negation
+    verdict: backed
+    anchor: "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation"
+    claim: "ISO 27001 named inside the same negation."
+    backing: []
+    why: "Same sentence."
+
+  - file: foxy-sale-page/trust.html
+    line: 151
+    regime: SOC 2
+    kind: affirmative
+    verdict: backed
+    anchor: "SOC 2 Type I — intended, but no auditor is engaged yet"
+    claim: >-
+      "Roadmap: ISO 27001 gap analysis — Q2 2027. SOC 2 Type I — intended, but
+      no auditor is engaged yet, so we are not putting a date on it."
+    backing: ["SOC2-013"]
+    why: >-
+      The canonical status sentence for the whole site, and the one that made
+      faq.html and pricing.html indefensible. SOC2-013 (CC4.1, ongoing
+      evaluation) is the row that would have to move before this can.
+
+  - file: foxy-sale-page/trust.html
+    line: 151
+    regime: ISO 27001
+    kind: affirmative
+    verdict: backed
+    anchor: "ISO 27001 gap analysis — Q2 2027"
+    claim: '"ISO 27001 gap analysis — Q2 2027."'
+    backing: ["ISO-001"]
+    why: >-
+      A dated roadmap item, not a claim of certification. ISO-001 is `partial`
+      and the twelve ISO rows are what a gap analysis would start from.
+
+  - file: foxy-sale-page/privacy.html
+    line: 177
+    regime: SOC 2
+    kind: negation
+    verdict: backed
+    anchor: "We do not currently hold a SOC 2, ISO 27001, or comparable third-party attestation"
+    claim: >-
+      "We do not currently hold a SOC 2, ISO 27001, or comparable third-party
+      attestation. Should this change, this section will be updated to
+      reference the relevant report."
+    backing: []
+    why: "True. Already pinned by foxy-sale-page/test_privacy_v39.py against being softened."
+
+  - file: foxy-sale-page/privacy.html
+    line: 177
+    regime: ISO 27001
+    kind: negation
+    verdict: backed
+    anchor: "We do not currently hold a SOC 2, ISO 27001, or comparable third-party attestation"
+    claim: "ISO 27001 named inside the same negation."
+    backing: []
+    why: "Same sentence."
+
+  - file: foxy-sale-page/how-it-works.html
+    line: 56
+    regime: SOC 2
+    kind: negation
+    verdict: backed
+    anchor: "not a HIPAA or SOC 2 certification"
+    claim: >-
+      "Its verdict is a review signal — not a HIPAA or SOC 2 certification —
+      and unavailable judge results remain visibly unknown."
+    backing: []
+    why: >-
+      C0's judgement, and it stands: this is the sentence the other pages
+      should sound like. It also respects the limit in the plan's premise 7 —
+      the judge sees only hashes and counts.
+
+  - file: foxy-sale-page/how-it-works.html
+    line: 56
+    regime: HIPAA
+    kind: negation
+    verdict: backed
+    anchor: "not a HIPAA or SOC 2 certification"
+    claim: "HIPAA named inside the same disclaimer."
+    backing: []
+    why: "Same sentence."
+
+  # ── the `soc2` policy tag — the vocabulary error, three code samples ──────
+  - file: foxy-sale-page/how-it-works.html
+    line: 38
+    regime: SOC 2
+    kind: affirmative
+    verdict: qualified
+    anchor: '@audit</span>(<span class="c-id">policy</span>=<span class="c-str">"soc2"'
+    claim: '@audit(policy="soc2")'
+    backing: ["SOC2-014"]
+    why: >-
+      ⚠ QUALIFIED, NOT DELETED, AND C2 DID NOT CHANGE THE CODE SAMPLES.
+      sdk/src/foxy_audit/policy.py maps "soc2" -> () — baseline injection and
+      secret checks only. The code is right and the VOCABULARY is wrong: SOC 2
+      is an organisational control regime and there is nothing about a single
+      prompt that is or is not SOC 2 compliant. The sample is not false — the
+      tag exists and does what the docs say — but the name implies a check that
+      cannot exist.
+      Renaming the tag is an SDK change with a live wire contract behind it and
+      is explicitly out of scope for C2 (the plan forbids touching sdk/ in this
+      phase). Recorded as qualified so the guard has something to hold, and so
+      the next phase inherits a written decision rather than a rediscovery.
+
+  - file: foxy-sale-page/sdk.html
+    line: 38
+    regime: SOC 2
+    kind: affirmative
+    verdict: qualified
+    anchor: '@audit</span>(<span class="c-id">policy</span>=<span class="c-str">"soc2"'
+    claim: '@audit(policy="soc2")'
+    backing: ["SOC2-014"]
+    why: "Second copy of the same sample. Same verdict, same reason."
+
+  - file: foxy-sale-page/install.html
+    line: 58
+    regime: SOC 2
+    kind: affirmative
+    verdict: qualified
+    anchor: '<code>@audit(policy="soc2")</code>'
+    claim: '"...then @audit(policy=\"soc2\"). Same capture, same guarantees."'
+    backing: ["SOC2-014"]
+    why: "Third copy. Same verdict, same reason."
+
+  # ── HIPAA — the policy tag, which is a real detection family ──────────────
+  - file: foxy-sale-page/install.html
+    line: 54
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: '@foxy.audit</span>(policy=<span class="c-str">"hipaa"'
+    claim: '@foxy.audit(policy="hipaa")'
+    backing: ["HIPAA-013", "HIPAA-010"]
+    why: >-
+      `hipaa` -> ("phi",) is a real detection family, and mode="block"
+      genuinely stops the model call before it is made — which is what
+      HIPAA-013 (transmission security) is about. What it does NOT establish is
+      that Foxy may lawfully RECEIVE PHI: that needs a BAA, and HIPAA-008 and
+      HIPAA-014 are both `gap`. Backed as a product claim; the company claim is
+      not made on this page and must not be.
+
+  - file: foxy-sale-page/install.html
+    line: 61
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: "add the PHI/PII sweeps"
+    claim: '"...the baseline runs under every tag, and hipaa/gdpr add the PHI/PII sweeps."'
+    backing: ["HIPAA-013"]
+    why: "An accurate description of what the tag does. It claims detection, not compliance."
+
+  - file: foxy-sale-page/install.html
+    line: 61
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "add the PHI/PII sweeps"
+    claim: "gdpr named in the same sentence about detection families."
+    backing: ["GDPR-001"]
+    why: "Same sentence. GDPR-001 (data minimisation) is the row the PII sweep speaks to."
+
+  - file: foxy-sale-page/install.html
+    line: 71
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: "--policy hipaa"
+    claim: 'foxy check "ignore all previous instructions" --policy hipaa'
+    backing: ["HIPAA-013"]
+    why: "A CLI example using the same real tag."
+
+  - file: foxy-sale-page/install.html
+    line: 72
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "--policy gdpr --json"
+    claim: "foxy check --prompt-file prompt.txt --policy gdpr --json"
+    backing: ["GDPR-001"]
+    why: "A CLI example using the same real tag."
+
+  - file: foxy-sale-page/welcome.html
+    line: 88
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: '"hipaa_basic"'
+    claim: '@foxy.audit(policy="hipaa_basic", agent="gpt-4o")'
+    backing: ["HIPAA-013"]
+    why: "`hipaa_basic` is a real alias of `hipaa` in KNOWN_POLICY_TAGS."
+
+  - file: foxy-sale-page/passport.html
+    line: 36
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: "Grouped by your policy tags"
+    claim: >-
+      "Grouped by your policy tags: every figure is reported under the tag it
+      was audited with — hipaa, gdpr, or one of your own."
+    backing: ["HIPAA-010"]
+    why: >-
+      ✓ C2 WROTE THIS, replacing "Mapped to standards: aligned to NIST AI RMF
+      and the EU AI Act". The Passport really is grouped by policy_tag, and
+      naming the two real tags is the true version of the claim it replaced.
+      See `retired`.
+
+  - file: foxy-sale-page/passport.html
+    line: 36
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "Grouped by your policy tags"
+    claim: "gdpr named in the same replacement bullet."
+    backing: ["GDPR-005"]
+    why: "Same sentence."
+
+  # ── GDPR / CCPA — the cookie consent gate, which is implemented ───────────
+  - file: foxy-sale-page/cookie-policy.html
+    line: 116
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "analytics is off until you opt in"
+    claim: '"EU / EEA / UK (GDPR): analytics is off until you opt in, and rejecting is as easy as accepting."'
+    backing: ["GDPR-002"]
+    why: >-
+      A geo-aware consent gate that is genuinely implemented in index.html
+      (see the four index.html entries below). The claim is about cookies, not
+      about certification. GDPR-002 is Art. 25, privacy by default.
+
+  - file: foxy-sale-page/cookie-policy.html
+    line: 117
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "we don't sell or share personal information"
+    claim: '"California (CCPA/CPRA): we don''t sell or share personal information."'
+    backing: ["GDPR-001"]
+    why: >-
+      ⚠ THE BACKING IS A GDPR ROW BECAUSE THERE ARE NO CCPA ROWS. C0 recorded
+      this and C0b did not close it: CCPA/CPRA appears on four surfaces and has
+      no regime in crosswalk.yaml. The claim itself is about not selling data
+      and is implemented, so it is backed in substance — GDPR-001 (data
+      minimisation) is the nearest row and the honest stand-in.
+      This is the completeness hole C0b did NOT fill, and it is named here so
+      it is visible rather than silent. Giving CCPA rows is the C3 or C4 job.
+
+  - file: foxy-sale-page/dpa.html
+    line: 99
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: 'or "business," under CCPA/CPRA'
+    claim: >-
+      "Customer is the data controller (or 'business,' under CCPA/CPRA) and
+      Foxy Audit is the data processor (or 'service provider')."
+    backing: ["GDPR-003"]
+    why: >-
+      A definition of the parties' roles in both vocabularies, which is what a
+      DPA is supposed to do. Same missing-CCPA-rows caveat as above.
+
+  - file: foxy-sale-page/index.html
+    line: 799
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "cookie consent (geo-aware GDPR / CCPA"
+    claim: "HTML comment marking the consent widget: 'geo-aware GDPR / CCPA, first-party cookieless analytics'."
+    backing: ["GDPR-002"]
+    why: "A source comment, not reader-facing copy, but it names a regime on a customer-facing file and so it is registered."
+
+  - file: foxy-sale-page/index.html
+    line: 799
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "cookie consent (geo-aware GDPR / CCPA"
+    claim: "CCPA named in the same comment."
+    backing: ["GDPR-001"]
+    why: "Same comment."
+
+  - file: foxy-sale-page/index.html
+    line: 1389
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "cookie consent (geo-aware GDPR/CCPA"
+    claim: "CSS section comment for the consent widget."
+    backing: ["GDPR-002"]
+    why: "Same widget, second comment."
+
+  - file: foxy-sale-page/index.html
+    line: 1389
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "cookie consent (geo-aware GDPR/CCPA"
+    claim: "CCPA named in the same comment."
+    backing: ["GDPR-001"]
+    why: "Same comment."
+
+  - file: foxy-sale-page/index.html
+    line: 1395
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "return { region:'eu', regime:'gdpr' }"
+    claim: "The geo test that puts a Europe/* timezone into the GDPR regime."
+    backing: ["GDPR-002"]
+    why: >-
+      This is the implementation the cookie-policy claim rests on. It is
+      registered because it names the regime, and because a guard that reads
+      only prose would miss the line that makes the prose true.
+
+  - file: foxy-sale-page/index.html
+    line: 1397
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "return { region:'other', regime:'gdpr' }"
+    claim: "The default branch: everyone not matched elsewhere gets the GDPR posture."
+    backing: ["GDPR-002"]
+    why: >-
+      Defaulting the rest of the world to opt-in rather than opt-out is the
+      stricter choice, and it is what makes privacy.html §14's 'we do not limit
+      these rights to any one region' true for cookies.
+
+  - file: foxy-sale-page/index.html
+    line: 1413
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "pre-choice: CCPA opt-out on, GDPR off"
+    claim: "'pre-choice: CCPA opt-out on, GDPR off' — the pre-consent default."
+    backing: ["GDPR-002"]
+    why: "Same widget; the line that sets analytics off before a choice is made."
+
+  - file: foxy-sale-page/index.html
+    line: 1413
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "pre-choice: CCPA opt-out on, GDPR off"
+    claim: "CCPA named in the same line."
+    backing: ["GDPR-001"]
+    why: "Same line."
+
+  - file: foxy-sale-page/index.html
+    line: 1460
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "analytics is consent-gated (GDPR opt-in / CCPA opt-out)"
+    claim: "'analytics is consent-gated (GDPR opt-in / CCPA opt-out); server-side ops logs are separate'."
+    backing: ["GDPR-002"]
+    why: "Same widget. The distinction it draws — consent-gated analytics vs. ops logs — is accurate."
+
+  - file: foxy-sale-page/index.html
+    line: 1460
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "analytics is consent-gated (GDPR opt-in / CCPA opt-out)"
+    claim: "CCPA named in the same line."
+    backing: ["GDPR-001"]
+    why: "Same line."
+
+  # ── GDPR elsewhere on privacy.html ───────────────────────────────────────
+  - file: foxy-sale-page/privacy.html
+    line: 114
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "A note on applicable law"
+    claim: "§1's note on applicable law, which names GDPR among the frameworks the policy is written to."
+    backing: ["GDPR-003"]
+    why: "A statement about which law the document is written to, not a claim of compliance with it."
+
+  - file: foxy-sale-page/privacy.html
+    line: 211
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "Qatar is <strong>not</strong> the subject of a European Commission adequacy decision"
+    claim: >-
+      "Transfers to Qatar. Qatar is not the subject of a European Commission
+      adequacy decision... it requires a safeguard under Article 46 GDPR. That
+      safeguard is not yet in place."
+    backing: ["GDPR-009", "GDPR-007"]
+    why: >-
+      ✓ C2 WROTE THIS, and it is the most consequential sentence on the branch.
+      It replaced a paragraph that named the EU Standard Contractual Clauses
+      for an EEA -> UNITED STATES transfer of hosted data that does not happen,
+      leaving the transfer that DOES happen — EEA -> Qatar, to a country with no
+      adequacy decision — disclosed nowhere.
+      ⚠ THE MECHANISM IS DELIBERATELY NOT NAMED. GDPR-009 (Art. 46) is `gap`:
+      no Art. 46 instrument has been executed for the Qatar leg. Writing "we
+      rely on the SCCs" here would have invented one, which is what the old
+      paragraph effectively did for the wrong country. The page therefore
+      states the transfer, states that the safeguard is absent, and offers a
+      contact — see `open_questions.qatar_transfer_mechanism`.
+    mechanism: TBD-LEGAL
+
+  - file: foxy-sale-page/privacy.html
+    line: 223
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "European Economic Area, UK, Switzerland (GDPR / UK GDPR)"
+    claim: >-
+      "European Economic Area, UK, Switzerland (GDPR / UK GDPR): rights of
+      access, rectification, erasure, restriction, portability, objection, and
+      the right to lodge a complaint with your local supervisory authority."
+    backing: ["GDPR-003"]
+    why: "The rights exist, the export and deletion paths implement them, and §14's general commitment extends them."
+
+  - file: foxy-sale-page/privacy.html
+    line: 224
+    regime: CCPA/CPRA
+    kind: affirmative
+    verdict: backed
+    anchor: "California (CCPA/CPRA)"
+    claim: "The California rights bullet: rights to know, delete, correct, and opt out of sale or sharing."
+    backing: ["GDPR-001"]
+    why: "Same missing-CCPA-rows caveat as cookie-policy.html:117. The substance — we do not sell or share — is implemented."
+
+  - file: foxy-sale-page/privacy.html
+    line: 225
+    regime: LGPD
+    kind: affirmative
+    verdict: backed
+    anchor: "Brazil (LGPD"
+    claim: >-
+      "Brazil (LGPD — Lei Geral de Proteção de Dados): rights of confirmation,
+      access, correction, anonymization, portability, deletion, and information
+      about with whom your data is shared."
+    backing: ["LGPD-005"]
+    why: >-
+      ✓ BACKED BY C0b. C0 recorded this as `qualify` for exactly one reason —
+      LGPD was named on a live legal page with no crosswalk rows — and offered
+      "give them rows or stop naming them". The owner chose rows. LGPD-005 is
+      Art. 18 and enumerates the same rights this bullet promises.
+
+  - file: foxy-sale-page/privacy.html
+    line: 226
+    regime: PIPEDA
+    kind: affirmative
+    verdict: backed
+    anchor: "Canada (PIPEDA and applicable provincial law)"
+    claim: >-
+      "Canada (PIPEDA and applicable provincial law): rights of access to, and
+      correction of, your personal information, and the right to withdraw
+      consent where consent is the basis for processing."
+    backing: ["PIPEDA-001"]
+    why: "✓ BACKED BY C0b. Four PIPEDA rows now exist, all from the official Justice Laws text."
+
+  - file: foxy-sale-page/privacy.html
+    line: 227
+    regime: PDPA (SG)
+    kind: affirmative
+    verdict: backed
+    anchor: "Singapore (PDPA), Australia (Privacy Act 1988)"
+    claim: >-
+      "Singapore (PDPA), Australia (Privacy Act 1988), and other jurisdictions
+      with comprehensive privacy frameworks: we extend equivalent rights of
+      access, correction, and deletion on request."
+    backing: ["SGP-001"]
+    why: "✓ BACKED BY C0b. Five PDPA rows now exist, from the official Singapore Statutes Online PDF."
+
+  - file: foxy-sale-page/privacy.html
+    line: 227
+    regime: Privacy Act
+    kind: affirmative
+    verdict: backed
+    anchor: "Australia (Privacy Act 1988)"
+    claim: "Australia named in the same bullet."
+    backing: ["AUS-001"]
+    why: >-
+      ✓ BACKED BY C0b. Five Australian rows now exist. ⚠ Read their `source`
+      fields before quoting them: the APP and section NUMBERS are verified
+      against the OAIC, but the exact statutory WORDING was not obtainable and
+      those rows say so in their first words.
+
+  - file: foxy-sale-page/privacy.html
+    line: 231
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "the standard period under GDPR Article 12"
+    claim: >-
+      "We will respond to a verified request within 30 days (the standard
+      period under GDPR Article 12; where a shorter period applies under other
+      law we will meet that shorter period)."
+    backing: ["GDPR-003"]
+    why: >-
+      A response commitment, correctly attributed. ⚠ It is a promise nobody has
+      yet had to keep: no §14 request has been run end to end and no record of
+      one exists, which is why LGPD-005 and KSA-005 are not `met`.
+
+  # ── the dashboard's Regulated-data policy row ────────────────────────────
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2360
+    regime: PCI DSS
+    kind: affirmative
+    verdict: qualified
+    anchor: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act"
+    claim: >-
+      "Regulated data mode — HIPAA / financial. Any interaction tagged pci,
+      sox, hipaa, gdpr or eu_ai_act is risk-scored 60 or higher unless it is
+      clearly compliant."
+    backing: ["PCI-003"]
+    why: >-
+      C0's verdict, carried forward unchanged. Three of the five tags named —
+      `pci`, `sox`, `eu_ai_act` — are NOT in the SDK's KNOWN_POLICY_TAGS. A
+      customer may pass them as free strings and the SDK warns once per unknown
+      tag, so the sentence is not false; but a dashboard listing them beside
+      `hipaa` and `gdpr` reads as five regime modes where two exist.
+      ⚠ THIS IS THE ONLY SURFACE WHERE THE WORD "pci" APPEARS AT ALL, and
+      PCI-001 and PCI-002 are `not-applicable` — Foxy stores no account data.
+      The plan's §8 question 3 asks the owner whether to keep PCI at all;
+      deleting the three phantom tags from this string is the cheap answer and
+      it is a dashboard change, out of C2's page scope.
+
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2360
+    regime: SOX
+    kind: affirmative
+    verdict: qualified
+    anchor: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act"
+    claim: "`sox` named in the same string."
+    backing: ["SOC1-001"]
+    why: >-
+      Same string, same verdict. SOX is nowhere else on any surface and has no
+      regime of its own; SOC1-001 is the nearest row and it is
+      `not-applicable` — no money moves on a customer's behalf and the wire
+      payload carries no financial field.
+
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2360
+    regime: EU AI Act
+    kind: affirmative
+    verdict: qualified
+    anchor: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act"
+    claim: "`eu_ai_act` named in the same string."
+    backing: ["EUAI-002"]
+    why: "Same string, same verdict. EUAI-002 (Art. 26(6), deployer log-keeping) is the row the product genuinely speaks to."
+
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2360
+    regime: HIPAA
+    kind: affirmative
+    verdict: backed
+    anchor: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act"
+    claim: "`hipaa` named in the same string."
+    backing: ["HIPAA-013"]
+    why: "A real tag, unlike three of its neighbours."
+
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2360
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act"
+    claim: "`gdpr` named in the same string."
+    backing: ["GDPR-001"]
+    why: "A real tag."
+
+  - file: foxy-dashboard/foxy-audit-premium.html
+    line: 2526
+    regime: GDPR
+    kind: affirmative
+    verdict: backed
+    anchor: "anything under GDPR"
+    claim: >-
+      "Choose Regulated when this system handles data a regime governs — health
+      records, payment data, anything under GDPR."
+    backing: ["GDPR-001"]
+    why: "Help text describing when to pick a mode. It claims nothing about Foxy's own status."
+
+# ---------------------------------------------------------------------------
+# RETIRED
+#
+# Claims C2 removed. Each one pins a pattern that must never come back. This
+# section is what proves the deletions were applied rather than merely decided:
+# if the text is on a page again, the guard is red.
+#
+# ⚠ `must_not_match` is a REGEX over the page's rendered text OR its source,
+# whichever the entry names. It is not a phrase to eyeball.
+# ---------------------------------------------------------------------------
+retired:
+
+  - id: soc2-audit-underway
+    claim: "We're currently completing our SOC 2 Type I audit."
+    was_at: ["foxy-sale-page/faq.html:60", "foxy-sale-page/pricing.html:121"]
+    verdict: delete
+    regime: SOC 2
+    replaced_with: "trust.html:151's wording — 'SOC 2 Type I is intended, but no auditor is engaged yet, so we are not putting a date on it.'"
+    scope: text
+    must_not_match:
+      - "currently completing (?:our |the )?SOC ?2"
+      - "SOC ?2[^.]{0,40}audit (?:is )?(?:underway|in progress|ongoing)"
+      - "(?:undergoing|in the middle of|partway through)[^.]{0,30}SOC ?2"
+      # ⚠ THE SPAN MAY NOT CONTAIN A NEGATION, and that is not a detail.
+      # The first draft of this pattern matched trust.html's TRUE sentence,
+      # "SOC 2 Type I — intended, but no auditor is engaged yet", and turned
+      # the honest disclosure into a build failure. A pin that fires on the
+      # correct text is worse than none: it teaches people to delete the pin.
+      - 'SOC ?2(?:(?!\bno\b|\bnot\b)[^.]){0,60}\b(?:auditor|audit)\s+(?:has been\s+|is\s+)?engaged\b'
+    why: >-
+      ⚠ PINNED BECAUSE THIS IS A RECURRENCE, NOT A FIRST OFFENCE. The vault's
+      'Owner-authorised divergences from the policy documents' already records
+      that "the honest SOC 2 disclosure was softened or removed" once before.
+      An edit fixes a page; a pin fixes the claim. The fourth pattern also
+      catches the softer regression — quietly asserting an engaged auditor —
+      which is the shape the next drift is most likely to take.
+      trust.html:151 is deliberately NOT matched by any of these: it says an
+      auditor is NOT engaged, and the negation is what makes it true.
+
+  - id: hosting-country-united-states
+    claim: "Infrastructure / hosting provider (Google Cloud, Ubuntu VM) — United States."
+    was_at:
+      - "foxy-sale-page/privacy.html:175 (§8 sub-processor list)"
+      - "foxy-sale-page/privacy.html:208-209 (§13 international transfers)"
+      - "foxy-sale-page/trust.html:144 (§6 sub-processor table)"
+    verdict: delete
+    regime: GDPR
+    replaced_with: "Qatar (Google Cloud region me-central1, Doha), on all three sites."
+    scope: source
+    must_not_match:
+      - "hosting provider \\(Google Cloud, Ubuntu VM\\)</strong> — United States"
+      - "<td>Google Cloud \\(Ubuntu VM\\)</td><td>Hosting</td><td>United States</td>"
+      - "data is processed in the <strong>United States</strong> \\(our hosting provider"
+    why: >-
+      A factually wrong residency statement, live on two legal pages, and
+      load-bearing for GDPR Arts. 44-46: §13 then named the EU Standard
+      Contractual Clauses for a United States destination the hosted data never
+      reaches, so the transfer actually being made — EEA to Qatar, a country
+      with no adequacy decision — was disclosed nowhere.
+      ⚠ It is pinned as three exact strings AND enforced positively by
+      assertions.hosting_country, because a pattern list can only catch the
+      wording that already shipped. The positive assertion catches the next one.
+
+  - id: passport-mapped-to-standards
+    claim: "Mapped to standards: aligned to NIST AI RMF and the EU AI Act so reviewers recognize it on sight."
+    was_at:
+      - "foxy-sale-page/passport.html:7 (meta description)"
+      - "foxy-sale-page/passport.html:32 (lead: 'mapped to the frameworks reviewers already use')"
+      - "foxy-sale-page/passport.html:36 (feature bullet)"
+      - "foxy-sale-page/docs.html:68 (passport card)"
+    verdict: delete
+    regime: NIST AI RMF
+    replaced_with: "'Grouped by your policy tags' — which is what the Passport actually does."
+    scope: text
+    must_not_match:
+      - "mapped to (?:the )?NIST"
+      - "aligned to[^.]{0,30}NIST"
+      - "NIST AI RMF"
+      - "mapped to[^.]{0,40}(?:EU )?AI Act clauses?"
+      - "mapped to the frameworks"
+    why: >-
+      backend/app/templates/compliance_passport.html contains ZERO occurrences
+      of "NIST", "AI RMF", "AI Act" or any clause number — measured with grep -c
+      on 2026-09-01 and again on this branch. The Passport is grouped by
+      policy_tag. Nothing in it was mapped to a standard, so four surfaces
+      claimed a feature the artefact did not have.
+      ⚠ SCOPE NOTE, FOR THE REVIEWER. C0 staged this `delete` and the C2 brief
+      did not enumerate it among the pages to correct. It was applied anyway,
+      for one reason: the guard's rule is that a regime word with no backed or
+      qualified entry fails the build, so leaving NIST on two pages with a
+      `delete` verdict would have made the branch permanently red and the guard
+      unshippable. Applying it was the only way to hand over a green branch.
+      Reverting is a four-string change if the owner disagrees.
+      C3 is the phase that could make the original claim true — the plan says
+      the Passport should group by crosswalk row id rather than by policy_tag.
+      When it does, this entry moves out of `retired`.
+
+# ---------------------------------------------------------------------------
+# SUB-PROCESSOR RECONCILIATION
+#
+# The plan's C1 item 4 asked whether the published sub-processor list matches
+# what the code actually calls. This is the answer, recorded here because the
+# conclusion is "do not change the list" and a conclusion nobody wrote down is
+# a question that gets asked again.
+# ---------------------------------------------------------------------------
+subprocessor_reconciliation:
+  checked_on: "2026-09-01, against e7e1919"
+  published: ["Google LLC", "OpenAI, L.L.C.", "Paddle.com Market Ltd", "Payoneer, Inc.", "Google Identity", "Brevo SAS", "Google Cloud"]
+  findings:
+
+    - entity: "EVM RPC provider (Alchemy, Infura or another)"
+      reached_by: "backend/app/anchor.py — Web3.HTTPProvider(settings.anchor_evm_rpc_url)"
+      verdict: "no list change"
+      why: >-
+        Three reasons, in order of weight. (1) What is sent is one root hash —
+        the head of a hash chain — inside a signed transaction. privacy.html
+        §10 already discloses this and says the fingerprint is "never personal
+        data or content", which is true. A recipient of no personal data is not
+        a sub-processor. (2) The vendor is NOT DETERMINABLE from this repo:
+        ANCHOR_EVM_RPC_URL is config, it is blank in deploy/.env.example, and
+        "Alchemy" appears only as an example inside a code comment about
+        redacting API keys from error strings. Naming a vendor we cannot
+        confirm is in use would be fabrication. (3) Anchoring is optional and
+        per-customer.
+        ⚠ What WOULD change this: if the anchoring wallet or the RPC endpoint
+        ever carried anything org-identifying. It does not today.
+
+    - entity: "Etherscan"
+      reached_by: "backend/app/routers/badge.py — builds https://sepolia.etherscan.io/tx/<hash> links"
+      verdict: "no list change"
+      why: >-
+        Foxy sends Etherscan nothing. The badge renders an anchor tag; the
+        VIEWER's browser follows it if they click. An outbound link is not a
+        sub-processor relationship, and adding one to the roster would make the
+        list less accurate, not more.
+
+    - entity: "Stripe"
+      reached_by: "backend/app/routers/billing.py, gated on settings.stripe_secret_key"
+      verdict: "no list change — but one thing could not be verified here"
+      why: >-
+        The plan asked whether the stripe_price_* keys in deploy/ are live or
+        pre-Paddle remnants. What this repo can establish: the Stripe code path
+        is intact and live-capable, and it is gated on STRIPE_SECRET_KEY being
+        set — with no key, /v1/billing/checkout returns 503 before Stripe is
+        touched. deploy/.env.example ships every Stripe var BLANK and its own
+        comment calls Stripe dormant: "── Paddle (the live processor — Stripe
+        above is dormant) ──".
+        ⚠ WHAT THIS REPO CANNOT ESTABLISH: whether the PRODUCTION .env sets
+        STRIPE_SECRET_KEY. That is one `grep STRIPE deploy/.env` on the VM and
+        it is not answerable from source. If it is set, Stripe is processing
+        payment data and is a sub-processor missing from all three published
+        lists — which would be a real finding. Recorded as an open question,
+        not as a conclusion in either direction.
+
+# ---------------------------------------------------------------------------
+open_questions:
+
+  - id: qatar_transfer_mechanism
+    question: "What Article 46 GDPR safeguard covers the EEA/UK/Swiss -> Qatar transfer?"
+    status: TBD-LEGAL
+    blocks: "privacy.html §13's 'Transfers to Qatar' paragraph naming a mechanism"
+    why: >-
+      GDPR-009 is `gap`: no Art. 46 instrument exists for this leg. The page
+      says so plainly rather than naming one, because naming an unexecuted
+      mechanism is what the old paragraph did. The plan's C1 item 3 owns the
+      drafting (SCCs plus a transfer impact assessment); the sentence gets
+      rewritten when there is something true to put in it.
+
+  - id: us_leg_scc_execution
+    question: "Have the EU Standard Contractual Clauses actually been executed for the EEA -> US leg?"
+    status: UNVERIFIED
+    blocks: "nothing on this branch — the sentence was already published and C2 left it exactly as it was"
+    why: >-
+      ⚠ RECORDED SO IT IS NOT MISTAKEN FOR SOMETHING C2 CHECKED. privacy.html
+      §13 has always said "we rely on the EU Standard Contractual Clauses" for
+      transfers to the United States. That leg is real — Google, OpenAI,
+      Paddle, Payoneer and Google Identity are all US — so unlike the Qatar
+      sentence it is not addressed to a destination that does not exist.
+      But whether Foxy executed Google Cloud's and OpenAI's DPAs (both of which
+      incorporate the SCCs as standard) cannot be verified from this repo.
+      C2 neither strengthened nor weakened the sentence. C1 should confirm it,
+      and if it turns out to be unexecuted this becomes a second false
+      statement of the same kind as the one this branch fixes.
+
+  - id: ccpa_has_no_rows
+    question: "CCPA/CPRA is named on four surfaces and has no regime in crosswalk.yaml."
+    status: OPEN
+    blocks: "nothing today — the claims are about not selling data and are implemented"
+    why: >-
+      C0 recorded this and C0b did not close it: C0b's scope was the four
+      regimes privacy.html §14 named without rows, plus PDPL. CCPA is the same
+      shape of hole one regime over. Six entries here are backed by GDPR rows
+      standing in, which is honest but is not the same as having rows.
+
+  - id: gulf_absent_from_section_14
+    question: "privacy.html §14 lists rights by region and names no Gulf jurisdiction, while there are live Saudi and UAE customers."
+    status: OPEN
+    blocks: "KSA-005 and UAE-006 moving off `gap`"
+    why: >-
+      ⚠ A DELIBERATE C2 SCOPE EXCLUSION, NOT AN OVERSIGHT. The brief scoped C2
+      to the residency correction, the SOC 2 sentence and the guards. Adding a
+      Gulf bullet to §14 is new legal copy about jurisdictions whose primary
+      texts C0b could not fully reach (SDAIA blocks automated fetches), and it
+      belongs with C1's DPA work where a lawyer sees it.
+      What makes the omission a near miss rather than a false claim: §14 opens
+      with "We do not limit these rights to any one region" and closes with a
+      general commitment that applies "regardless of where you are located".
+      The rights are extended. What is missing is the reader in Riyadh or Dubai
+      seeing their own jurisdiction named — which UAE Art. 13 arguably requires.

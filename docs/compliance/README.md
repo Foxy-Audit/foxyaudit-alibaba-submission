@@ -1,13 +1,19 @@
 # docs/compliance — the regime crosswalk
 
-Phase **C0** of [`docs/plans/compliance-program.md`](../plans/compliance-program.md).
-Written 2026-09-01 against `origin/main` at **`01e87ad`**.
+Phases **C0**, **C0b** and **C2** of [`docs/plans/compliance-program.md`](../plans/compliance-program.md).
+Written 2026-09-01 against `origin/main` at **`01e87ad`** (C0) and **`e7e1919`**
+(C0b and C2).
 
 | File | What it is |
 |---|---|
-| [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **78 rows.** |
+| [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **103 rows across 15 regimes.** |
+| [`claims.yaml`](claims.yaml) | **C2.** Every compliance claim on every customer-facing surface, each with a verdict and a crosswalk row that backs it — plus the claims C2 deleted, each pinning a pattern that must never come back. |
 | [`not-applicable.md`](not-applicable.md) | Regimes and clauses that cannot bind Foxy, each with the reasoning. A register of *"we checked, and here is why not"*. |
 | this file | How to read the crosswalk, and how to add a regime. |
+
+The guard that enforces `claims.yaml` is
+[`foxy-sale-page/test_compliance_claims.py`](../../foxy-sale-page/test_compliance_claims.py).
+It runs in `pytest foxy-sale-page -q` and it fails the build.
 
 > ⚠ **This is engineering research, not legal advice.** No row has been reviewed
 > by a lawyer. Foxy is incorporated in Pakistan, the team is two people, and
@@ -84,7 +90,7 @@ a file path to make a row look better.
 
 ### Why nothing is `met`
 
-**There are zero `met` rows.** 37 `partial`, 36 `gap`, 5 `not-applicable`.
+**There are zero `met` rows.** 44 `partial`, 54 `gap`, 5 `not-applicable`.
 
 That is not modesty and it is not a placeholder. `met` requires named evidence a
 third party could inspect, and the artefacts that would carry it — a BAA, a
@@ -115,8 +121,22 @@ the control lives. Sources are graded in the text itself:
 
 ### `clause: TBD`
 
-Four rows carry it: `NIST-001`, `KSA-004`, `UAE-003`, `QAT-004`. In each case the
+**Three** rows carry it: `NIST-001`, `KSA-004`, `QAT-004`. In each case the
 *obligation* is attested but the *article number* is not, or sources disagree.
+
+C0 had four. C0b resolved **`UAE-003`** to **Article (9)** — and found while doing
+it that the row's *requirement* had also been wrong, because the secondary source
+C0 was limited to gave a deadline ("immediately after having become aware") that
+the official text does not contain: Art. 9(1) defers the period to the Executive
+Regulations. A source good enough for the substance was not good enough for the
+detail, which is the argument for primary texts in one line.
+
+C0b did **not** resolve the other three, and `KSA-004`'s note records why the
+thing that looked like corroboration was not: `saudiprivacylaw.com`'s article
+index labels Art. 18 *"Data Breach Notifications"*, which would settle it — except
+that the same index labels Art. 4 *"Prohibition of Certain Rights"* while the
+statutory text on its own Art. 4 page **grants** rights. Its slugs are editorial
+and were measured wrong at least once, so they do not count as a second source.
 
 **TBD is a correct answer. An invented article number is a defect** — a crosswalk
 with a hallucinated clause is worse than no crosswalk, because it will be read as
@@ -170,6 +190,18 @@ grep -rnE "\bPCI\b" --include=*.html foxy-sale-page/ | awk 'length($0)<400'
 ```
 
 ---
+
+## The `soc2` vocabulary error, and what C2 did with it
+
+C2 did **not** rename the `soc2` policy tag. Three code samples on the sale page
+(`how-it-works.html:38`, `sdk.html:38`, `install.html:58`) are recorded in
+`claims.yaml` as `qualified` instead, with the reasoning written down: the tag is
+real and does what the docs say, so the samples are not false, but the NAME
+implies a per-call check that cannot exist. Renaming it is an SDK change with a
+live wire contract behind it, and the plan puts `sdk/` out of scope for C2.
+
+The point of writing it down rather than fixing it is that the next phase
+inherits a decision instead of rediscovering a problem.
 
 ## The three things no row may imply
 
@@ -240,15 +272,39 @@ grep -rnE "\bPCI\b" --include=*.html foxy-sale-page/ | awk 'length($0)<400'
 
 ---
 
-## What is deliberately not here
+## What C0b added, and what it deliberately did not
 
-- **LGPD, PIPEDA, Singapore PDPA, Australian Privacy Principles.** All four are
-  named on `foxy-sale-page/privacy.html` §14 and none has rows. They are recorded
-  in `surface_claims` with verdict `qualify` so that this omission is visible
-  rather than silent. **This file is not complete until they have rows or the
-  page stops naming them.**
+**Added (2026-09-01, 25 rows, 4 regimes).** LGPD (Brazil) 6 rows · PIPEDA
+(Canada) 4 · Singapore PDPA 5 · Australia Privacy Act 5 · plus `KSA-005`
+(Art. 4, data subject rights) and `UAE-004` to `UAE-007` — the PDPL rows
+`privacy.html` §14 omits while there are live Gulf customers.
+
+The owner was offered *"give them rows or stop naming them"* and chose rows.
+
+Three corrections came with it, all against primary texts C0 could not reach:
+
+| | |
+|---|---|
+| `UAE-003` | `clause: TBD` → **Art. 9**, and its requirement text corrected. |
+| `UAE-001`, `UAE-002` | secondary → **primary**, from the official UAE text. |
+| `UAE-002` | **narrowed.** It cited Art. 22 — transfer where protection *is* adequate — for a transfer where it is not. Art. 23 is the article Foxy is actually under, and it is now `UAE-007`. |
+
+⚠ **`UAE-002` is the one worth remembering.** The row was not wrong about the
+regime, the obligation or the gap. It cited the article next door, and the two
+articles have different routes out. A crosswalk is read by people who will look
+the article up.
+
+**Still deliberately not here:**
+
 - **CCPA/CPRA** appears in `surface_claims` as `backed` — the claim made is about
-  cookies and selling, and it is implemented — but it has no `rows`. Same caveat.
+  cookies and selling, and it is implemented — but it has no `rows`. Six entries
+  in `claims.yaml` are backed by GDPR rows standing in, which is honest and is
+  not the same as having rows. Same shape of hole as the one C0b just closed,
+  one regime over.
+- **A Gulf bullet in `privacy.html` §14.** `KSA-005` and `UAE-006` are `gap`
+  partly because of it. Adding one is new legal copy about jurisdictions whose
+  primary texts are not fully reachable, and it belongs with C1's DPA work where
+  a lawyer sees it. Recorded in `claims.yaml` under `open_questions`.
 - **The Compliance Passport's clause grouping.** That is C3. This file is the
   input to it: the Passport should group by crosswalk row id, not by `policy_tag`.
 - **Any code change.** C0 wrote documents only. Nothing under `sdk/`, `backend/`

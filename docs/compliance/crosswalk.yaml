@@ -10,10 +10,21 @@
 # article number is a defect, and this file will be read as authoritative.
 
 meta:
-  phase: C0
+  phase: "C0 + C0b"
   written: "2026-09-01"
-  verified_against: "01e87ad"        # origin/main at the time of writing
-  written_by: "executor chat, per docs/plans/compliance-program.md §4 C0"
+  verified_against: "e7e1919"        # origin/main at the time of the C0b pass
+  written_by: "executor chats, per docs/plans/compliance-program.md §4 C0 and C0b"
+  c0b: >-
+    C0b (2026-09-01, same day) closed the completeness hole C0 recorded in
+    surface_claims: LGPD, PIPEDA, Singapore PDPA and the Australian Privacy Act
+    were named on privacy.html §14 with no rows, and PDPL had no data-subject
+    rights rows while Gulf customers were live. The owner chose rows over
+    removing the names. C0b added 4 regimes and 25 rows, RESOLVED one of C0's
+    four `clause: TBD` values (UAE-003 -> Art. 9) against the official UAE text,
+    upgraded UAE-001 and UAE-002 from secondary sources to primary, and
+    NARROWED UAE-002, which cited the adequate-protection transfer article for a
+    transfer where protection is not adequate. It resolved no other TBD: see
+    KSA-004's note for a source that looked like corroboration and was not.
   legal_review: "NONE — this file is engineering research, not legal advice"
   scope: >-
     Maps regulatory clauses onto Foxy controls and onto evidence a third party
@@ -115,6 +126,44 @@ regimes:
     posture: CLAIMED
     role: "Named only in the negative and as a roadmap item. Not certified."
     named_on: ["foxy-sale-page/trust.html", "foxy-sale-page/privacy.html"]
+
+  - id: LGPD
+    name: "Brazil — Lei Geral de Proteção de Dados Pessoais, Lei nº 13.709/2018"
+    posture: CLAIMED
+    role: >-
+      Foxy is an "operador" (processor) for customer workspace data and a
+      "controlador" for account data — the same split as GDPR. Named on
+      privacy.html §14 since long before this crosswalk existed.
+    named_on: ["foxy-sale-page/privacy.html"]
+
+  - id: PIPEDA
+    name: "Canada — Personal Information Protection and Electronic Documents Act (S.C. 2000, c. 5)"
+    posture: CLAIMED
+    role: >-
+      PIPEDA does not use the controller/processor split. It makes an
+      organisation accountable for personal information "in its possession or
+      custody, including information that has been transferred to a third party
+      for processing" (Sch. 1, cl. 4.1.3) — which is exactly the platform-key
+      leg that content-blindness does not cover.
+    named_on: ["foxy-sale-page/privacy.html"]
+
+  - id: PDPA_SG
+    name: "Singapore — Personal Data Protection Act 2012 (2020 Rev. Ed.)"
+    posture: CLAIMED
+    role: >-
+      Foxy is a "data intermediary" — it processes personal data on behalf of
+      and for the purposes of another organisation. That status carries a duty
+      of its own under s. 26C(3)(a), and it is the sharpest PDPA row here.
+    named_on: ["foxy-sale-page/privacy.html"]
+
+  - id: AU_PRIVACY
+    name: "Australia — Privacy Act 1988 (Cth), Schedule 1 (Australian Privacy Principles) and Part IIIC (Notifiable Data Breaches)"
+    posture: CLAIMED
+    role: >-
+      Whether Foxy is an "APP entity" at all turns on the small-business
+      exemption and the Australian-link test. That is a legal question and is
+      TBD; the rows below map the obligations that bind if it is one.
+    named_on: ["foxy-sale-page/privacy.html"]
 
   - id: SOC1
     name: "SSAE 18 SOC 1 (ICFR)"
@@ -243,15 +292,21 @@ surface_claims:
       claim is about cookies, not about certification.
     regime: GDPR
 
-  - claim: "Rights lists for Brazil (LGPD), Canada (PIPEDA), Singapore, Australia"
-    where: "foxy-sale-page/privacy.html:221-224"
-    verdict: qualify
+  - claim: "Rights lists for Brazil (LGPD), Canada (PIPEDA), Singapore (PDPA), Australia (Privacy Act 1988)"
+    where: "foxy-sale-page/privacy.html:223, :224, :225"
+    verdict: backed
     why: >-
-      ⚠ OUT OF C0 SCOPE AND RECORDED SO NOBODY MISTAKES THIS FILE FOR COMPLETE.
-      LGPD, PIPEDA, Singapore PDPA and Australian Privacy Principles are named
-      on a live legal page and have NO rows in this crosswalk. Either they get
-      regimes here or the privacy policy stops naming them. The same page omits
-      PDPL, which live Gulf customers are behind.
+      ✓ RESOLVED BY C0b, 2026-09-01. C0 recorded this as `qualify` for one
+      reason only — the four regimes were named on a live legal page and had no
+      rows here — and offered the owner "give them rows or stop naming them".
+      The owner chose rows. LGPD-005, PIPEDA-001, SGP-001 and AUS-001 and their
+      neighbours now exist, so the contingency that made this a `qualify` is
+      gone and the verdict is `backed`: §14 promises access, correction,
+      deletion and export, and those mechanisms are real and exercisable.
+      ⚠ What C0b did NOT close: the same section still names no Gulf
+      jurisdiction while there are live Saudi and UAE customers. See KSA-005 and
+      UAE-006, both `gap`, and the deliberate scope exclusion recorded in
+      docs/compliance/claims.yaml.
     regime: null
 
   - claim: "FedRAMP"
@@ -863,6 +918,39 @@ rows:
       The 72-hour duty is well attested; the article number is not. Do not
       guess it. Resolve from the official text, or from counsel, before this
       row is used anywhere.
+      ⚠ C0b RE-CHECKED THIS AND STILL WILL NOT RESOLVE IT. saudiprivacylaw.com's
+      article index labels Art. 18 "Data Breach Notifications" and Art. 20
+      "Impact Assessment", which looks like corroboration for 18. It is not:
+      that same index labels Art. 4 "Prohibition of Certain Rights" while the
+      statutory text reproduced on its own Art. 4 page grants rights rather than
+      prohibiting them. Its slugs are editorial and were measured wrong at least
+      once, so they do not count as a second source. Still TBD.
+
+  - id: KSA-005
+    regime: PDPL_KSA
+    clause: "Art. 4"
+    requirement: >-
+      "Data Subject shall have the following rights pursuant to this Law and as
+      set out in the Regulations": the right to be informed of the legal basis
+      and purpose of collection; the right of access to their personal data held
+      by the controller; the right to request their personal data in a readable
+      and clear format; the right to request correction, completion or updating;
+      and the right to request destruction.
+    control: "Export (Compliance Passport and the ledger export), workspace deletion, and account/organisation editing from the dashboard."
+    evidence: "foxy-sale-page/privacy.html §14 states a general commitment that is not limited to the regions it names, plus a 30-day response period; the export and deletion paths are exercisable by any customer."
+    status: gap
+    source: "SECONDARY — the statutory text is reproduced on saudiprivacylaw.com's Article 4 page and the enumeration is corroborated by BigID, Akin Gump and Hala Privacy summaries (all fetched 2026-09-01). ⚠ The official SDAIA English PDF still returns 404/Request Rejected to automated fetches, and laws.boe.gov.sa did not resolve; see KSA-001. ⚠ Ignore that page's slug, which reads \"prohibition-of-certain-rights\" — the text it reproduces grants rights. The slug is wrong, the text is not."
+    notes: >-
+      ⚠ THE PDPL ROW privacy.html §14 IS MISSING, and the reason it is a gap
+      rather than a partial. The mechanisms behind the rights exist and work.
+      But §14 lists rights "by region" for the EEA, California, Brazil, Canada,
+      Singapore, Australia and Pakistan, and names no Gulf jurisdiction, while
+      there are live Saudi and UAE customers. The catch-all sentence — "we do
+      not limit these rights to any one region" — is real and is why this is a
+      near miss rather than a false claim, but Art. 4(1)'s right to be INFORMED
+      of the legal basis is not discharged by a policy whose §7 legal bases are
+      EEA/UK-scoped. Adding a Gulf bullet to §14 is a deliberate C2 scope
+      exclusion; see docs/compliance/claims.yaml.
 
   # ----------------------------------------------------------- PDPL (UAE) ---
   - id: UAE-001
@@ -872,8 +960,14 @@ rows:
     control: "As GDPR-005."
     evidence: null
     status: partial
-    source: "Secondary — Securiti overview of Federal Decree-Law No. 45 of 2021 and Bird & Bird / Lexology commentary, cross-checked 2026-09-01 — https://securiti.ai/uae-personal-data-protection-law/. ⚠ Not verified against the official UAE gazette text."
-    notes: null
+    source: "PRIMARY — the official UAE government text of Federal Decree-Law No. (45) of 2021, Article (20) \"Personal Data Security\", from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01. ✓ C0b UPGRADED THIS FROM SECONDARY: C0 could only reach Securiti and Bird & Bird commentary; the official English PDF turned out to be reachable and confirms Art. 20."
+    notes: >-
+      The official text is more specific than the secondary sources suggested:
+      Art. 20(1)(a) names encryption and pseudonymisation explicitly, and
+      Art. 20(1)(c) requires measures ensuring timely retrieval of and access to
+      personal data after an actual or technical failure — which is the same
+      recovery obligation as SOC 2 A1.2, and the same finding: deploy/backup.sh
+      writes to the production VM itself.
 
   - id: UAE-002
     regime: PDPL_UAE
@@ -882,18 +976,149 @@ rows:
     control: null
     evidence: null
     status: gap
-    source: "Secondary — Securiti overview of Federal Decree-Law No. 45 of 2021, corroborated by Lexology and Bird & Bird commentary, 2026-09-01. ⚠ Not verified against the official UAE gazette text."
-    notes: "Same substance as KSA-002: UAE data reaching a Qatar-hosted service is a cross-border transfer, and nothing addresses it."
+    source: "PRIMARY — the official UAE government text of Federal Decree-Law No. (45) of 2021, Article (22) \"Cross-Border Transfer and Sharing of Personal Data for Processing Purposes if a Proper Protection Level is Available\", from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01. ✓ C0b UPGRADED THIS FROM SECONDARY."
+    notes: >-
+      Same substance as KSA-002, LGPD-003, SGP-003 and AUS-003: UAE data
+      reaching a Qatar-hosted service is a cross-border transfer, and nothing
+      addresses it.
+      ⚠ C0b NARROWED THIS ROW. Art. 22 is the ADEQUATE-protection case only.
+      The case Foxy is actually in — transfer where a proper protection level is
+      NOT available — is Article 23, which is a separate article with a
+      different route out (a contract binding the recipient to this Law's
+      measures, or the data subject's explicit consent). That is UAE-007.
 
   - id: UAE-003
     regime: PDPL_UAE
-    clause: TBD
-    requirement: "Breach notification to the UAE Data Office and, where relevant, to the data subject, 'immediately after having become aware'. The ARTICLE NUMBER could not be verified."
+    clause: "Art. 9"
+    requirement: >-
+      "Reporting Personal Data Breach". Art. 9(1): on becoming aware of a breach
+      that would prejudice the privacy, confidentiality and security of a data
+      subject's personal data, the Controller shall notify the Bureau, with a
+      description of the breach, the DPO's details, the likely effects, the
+      corrective measures taken or proposed, and the supporting documents.
+      Art. 9(2): the Controller shall notify the Data Subject where the breach
+      would prejudice the privacy, confidentiality or security of their data.
+      Art. 9(3): "If the Processor becomes aware of any breach of Personal Data,
+      it shall notify the Controller of such breach as soon as it becomes aware
+      of the same."
     control: null
     evidence: null
     status: gap
-    source: "NOT VERIFIED — the duty is attested by Securiti's overview but that page states the obligation without giving an article number, and no second source gave one. Left as TBD rather than guessed."
-    notes: null
+    source: "PRIMARY — the official UAE government text of Federal Decree-Law No. (45) of 2021, Article (9), downloaded from uaelegislation.gov.ae (legislation 1972) and text-extracted 2026-09-01 — https://uaelegislation.gov.ae/en/legislations/1972/download"
+    notes: >-
+      ⚠ C0b RESOLVED THIS TBD, AND CORRECTED THE REQUIREMENT WITH IT. C0 could
+      reach only Securiti's overview, which asserts the duty without an article
+      number and phrases the deadline as "immediately after having become
+      aware". The official text gives neither an inline deadline nor that
+      phrase: Art. 9(1) defers the period to the Executive Regulations. So the
+      old requirement text was wrong on the deadline as well as missing the
+      number. The lesson is worth keeping — the OFFICIAL UAE portal serves the
+      full English PDF to a plain curl with a browser user-agent; only SDAIA
+      (Saudi) actually blocks.
+      Art. 9(3) is the leg that binds Foxy directly, and it joins GDPR-006,
+      QAT-002 and SGP-004 in the same unmet duty: the processor must tell the
+      controller, and there is no process behind it.
+
+  - id: UAE-004
+    regime: PDPL_UAE
+    clause: "Art. 8(1)–(6), 8(8)–(10)"
+    requirement: >-
+      "The Processor's General Obligations". Carry out processing per the
+      Controller's instructions and the contract between them (8(1)); apply
+      appropriate technical and organisational measures at the design stage
+      (8(2)); process only for the purpose and period specified, notifying the
+      Controller if the period is exceeded (8(3)); erase data after the
+      processing period or hand it to the Controller (8(4)); disclose nothing
+      about the data or the results of processing except where the law allows
+      (8(5)); protect and secure the processing, the media and the devices
+      (8(6)); provide all means to prove compliance when the Controller or the
+      Bureau asks (8(8)); and where several processors participate, define
+      obligations in a written contract or be jointly responsible (8(10)).
+    control: "Content-blindness discharges 8(5) structurally — there are no results of processing over content to disclose, and no raw text to leak. 8(2) is the same control set as GDPR-005. 8(1)'s instruction surface is the SDK's policy/mode/agent arguments plus the published DPA."
+    evidence: "foxy-sale-page/dpa.html; the published foxy-audit package's wire contract."
+    status: partial
+    source: "PRIMARY — official UAE text of Federal Decree-Law No. (45) of 2021, Article (8), from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01"
+    notes: >-
+      8(4) is unanswered and is the same problem as SGP-002 and AUS-002: an
+      append-only hash chain does not erase. 8(8) — "provide all means to prove
+      its commitment" — is unusually close to what this product does for its
+      own customers, and Foxy cannot currently do it for itself.
+
+  - id: UAE-005
+    regime: PDPL_UAE
+    clause: "Art. 8(7)"
+    requirement: >-
+      "Maintain a special record of Personal Data which is processed on behalf
+      of the Controller", including the data of the Controller, the Processor
+      and the Data Protection Officer, a description of the categories of
+      personal data held, the persons authorised to access it, processing times,
+      restrictions and scope, the mechanism for erasing, modifying or processing
+      it, the purpose of processing, any data related to cross-border movement,
+      and the technical and organisational information-security measures — and
+      submit that record to the Bureau whenever it is requested.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — official UAE text of Federal Decree-Law No. (45) of 2021, Article (8) clause 7, from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01"
+    notes: >-
+      This is GDPR Art. 30(2) — the PROCESSOR's record — in a fifth
+      jurisdiction, alongside GDPR-004, KSA-003 and LGPD-002, and it is the most
+      prescriptive of the four about contents. One record of processing written
+      to satisfy Art. 8(7) satisfies the other three by construction, which is
+      the argument for writing it to this standard rather than to GDPR's.
+
+  - id: UAE-006
+    regime: PDPL_UAE
+    clause: "Art. 13"
+    requirement: >-
+      "Right to Receive Information". On request to the Controller and without
+      consideration, the data subject may obtain: the types of personal data
+      being processed; the purposes of processing; decisions made on the basis
+      of automated processing including profiling; the sectors or establishments
+      with whom the data will be shared inside and outside the State; the
+      controls and standards for the storage and preservation period; the
+      procedures for correction, erasure, restriction and objection; and the
+      protection measures for cross-border processing under Articles 22 and 23.
+    control: "The dashboard's export, deletion and organisation settings, and the published privacy policy and sub-processor list."
+    evidence: "foxy-sale-page/privacy.html §8 (sub-processors) and §14 (rights); the export path."
+    status: gap
+    source: "PRIMARY — official UAE text of Federal Decree-Law No. (45) of 2021, Article (13), from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01"
+    notes: >-
+      ⚠ GAP, NOT PARTIAL, AND THE REASON IS THE POINT OF C0b. Art. 13 requires
+      the data subject to be told the protection measures for cross-border
+      processing and the sectors and establishments with whom data is shared
+      inside and OUTSIDE the State. privacy.html §14 names Brazil, Canada,
+      Singapore, Australia, the EEA, California and Pakistan and does not name
+      the Gulf at all, while §13 stated the wrong destination country
+      altogether. A rights section that omits the reader's jurisdiction and
+      misstates the destination cannot discharge Art. 13. The §13 half is fixed
+      on the C2 branch; the §14 half is not, and is a deliberate scope
+      exclusion recorded in docs/compliance/claims.yaml.
+
+  - id: UAE-007
+    regime: PDPL_UAE
+    clause: "Art. 23"
+    requirement: >-
+      "Cross-Border Transfer and Sharing of Personal Data for Processing
+      Purposes if a Proper Protection Level is not Available". Notwithstanding
+      Art. 22, personal data may be transferred outside the State where
+      companies operating in countries with no data-protection laws are bound by
+      a contract or agreement obliging them to adopt the measures, controls and
+      requirements of this Decree-Law — including provisions forcing the
+      Controller or Processor to adopt appropriate measures imposed by a
+      judicial or regulatory authority in those countries — or where the data
+      subject has given explicit consent to the transfer.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — official UAE text of Federal Decree-Law No. (45) of 2021, Article (23), from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01"
+    notes: >-
+      ⚠ THIS, NOT ART. 22, IS THE ARTICLE FOXY IS ACTUALLY UNDER for the UAE
+      leg, and C0 did not have it. Neither route out has been taken: no contract
+      binds the Qatar leg to the Decree-Law's measures, and no explicit consent
+      to a cross-border transfer is collected. Whether Qatar counts as a country
+      "where there are no laws for Data Protection" is itself arguable — Law
+      13/2016 exists — which is a question for counsel, not for this file.
 
   # ---------------------------------------------------- QATAR LAW 13/2016 ---
   - id: QAT-001
@@ -1130,6 +1355,383 @@ rows:
     status: partial
     source: "ISO/IEC 27001:2022 Annex A control titles, hightable.io (fetched 2026-09-01). ⚠ Secondary; see ISO-001."
     notes: null
+
+  # ------------------------------------------------------- LGPD (BRAZIL) ---
+  #
+  # C0b. Named on privacy.html §14 with no rows; the owner chose rows over
+  # removing the name. Every clause below was read from Planalto's own text.
+
+  - id: LGPD-001
+    regime: LGPD
+    clause: "Art. 46"
+    requirement: >-
+      "Os agentes de tratamento devem adotar medidas de segurança, técnicas e
+      administrativas aptas a proteger os dados pessoais de acessos não
+      autorizados e de situações acidentais ou ilícitas de destruição, perda,
+      alteração, comunicação ou qualquer forma de tratamento inadequado ou
+      ilícito." — processing agents shall adopt technical and administrative
+      security measures able to protect personal data against unauthorised
+      access and against accidental or unlawful destruction, loss, alteration,
+      communication or any inadequate or unlawful processing.
+    control: "As GDPR-005 — content-blindness (there is no raw-text column to breach), per-org SHA-256 hash chain, Postgres RLS, KEK-encrypted provider keys, TLS."
+    evidence: null
+    status: partial
+    source: "PRIMARY — Planalto, the Brazilian government's own consolidated text of Lei nº 13.709/2018, Art. 46 — https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm (fetched 2026-09-01)"
+    notes: "The measures are real and unusually strong. No one outside Foxy can inspect them, so the row cannot exceed partial. Same ceiling as GDPR-005."
+
+  - id: LGPD-002
+    regime: LGPD
+    clause: "Art. 37"
+    requirement: >-
+      "O controlador e o operador devem manter registro das operações de
+      tratamento de dados pessoais que realizarem, especialmente quando baseado
+      no legítimo interesse." — the controller AND the processor shall each
+      maintain a record of the processing operations they carry out.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 37 (fetched 2026-09-01)"
+    notes: >-
+      Same gap as GDPR-004 and KSA-003: no record of processing exists in any
+      form. Note that Art. 37 binds the operador too, so Foxy owes this record
+      in its own right and not only through a customer. One document written to
+      the GDPR Art. 30(2) standard would answer all three.
+
+  - id: LGPD-003
+    regime: LGPD
+    clause: "Art. 33"
+    requirement: >-
+      "A transferência internacional de dados pessoais somente é permitida nos
+      seguintes casos" — international transfer is permitted only in the listed
+      cases, of which the two that could apply here are (I) transfer to a
+      country the national authority has assessed as offering an adequate level
+      of protection, and (II) the controller offering and demonstrating
+      guarantees in the form of specific contractual clauses, standard
+      contractual clauses, binding corporate rules, or regularly issued seals,
+      certificates and codes of conduct.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 33 (with Art. 34, which gives the adequacy assessment to the national authority) (fetched 2026-09-01)"
+    notes: >-
+      The same substance as GDPR-007, KSA-002 and UAE-002 in a fourth
+      jurisdiction: Brazilian personal data reaching a Qatar-hosted service is
+      an international transfer. Qatar has not been assessed as adequate by the
+      ANPD and no Art. 33(II) instrument has been executed. Nothing addresses it.
+
+  - id: LGPD-004
+    regime: LGPD
+    clause: "Art. 48"
+    requirement: >-
+      "O controlador deverá comunicar à autoridade nacional e ao titular a
+      ocorrência de incidente de segurança que possa acarretar risco ou dano
+      relevante aos titulares." — the controller shall communicate to the
+      national authority and to the data subject any security incident that may
+      bring relevant risk or damage. §1 requires the communication within a
+      reasonable period as defined by the authority and lists the six items it
+      must carry.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 48 and §1 (fetched 2026-09-01)"
+    notes: >-
+      Same gap as GDPR-006, QAT-003 and KSA-004: there is no breach-response
+      plan and no notification path. Art. 48 names the controller, so for
+      workspace data Foxy's exposure runs through the Art. 39 instruction duty
+      (LGPD-006) — but Foxy is the controller for account data, and there this
+      binds it head-on.
+
+  - id: LGPD-005
+    regime: LGPD
+    clause: "Art. 18"
+    requirement: >-
+      The data subject may obtain from the controller, at any time and on
+      request: confirmation that processing exists; access to the data;
+      correction of incomplete, inaccurate or out-of-date data; anonymisation,
+      blocking or deletion of unnecessary or excessive data or data processed
+      contrary to the Law; portability to another provider; deletion of data
+      processed with consent; information about the public and private entities
+      with which the controller has shared the data; information about the
+      option not to consent and the consequences of refusing; and revocation of
+      consent.
+    control: "Export (Compliance Passport and the ledger export), workspace deletion from the dashboard, and account/organisation editing from the dashboard."
+    evidence: "foxy-sale-page/privacy.html §14 states the rights and a 30-day response commitment; the export and deletion paths are exercisable by any customer."
+    status: partial
+    source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 18 (fetched 2026-09-01; inciso V is read in the Redação dada pela Lei nº 13.853/2019 wording, which is the one in force)"
+    notes: >-
+      This is the row privacy.html §14's Brazil bullet actually rests on, and
+      the mechanisms behind it are real. Partial rather than met, because Art.
+      18 names the controlador and for workspace data that is the customer, not
+      Foxy — Foxy answers through the customer. Nobody has yet run a §14 request
+      end to end and kept the result, so there is no evidence a third party
+      could inspect that the 30-day commitment is honoured.
+
+  - id: LGPD-006
+    regime: LGPD
+    clause: "Art. 39"
+    requirement: >-
+      "O operador deverá realizar o tratamento segundo as instruções fornecidas
+      pelo controlador, que verificará a observância das próprias instruções e
+      das normas sobre a matéria." — the processor shall carry out processing
+      according to the instructions given by the controller, who shall verify
+      that its own instructions and the applicable rules are observed.
+    control: "The instruction surface is narrow by construction: the customer chooses policy, mode and agent per call, and no other processing of content is possible because no content is received."
+    evidence: "foxy-sale-page/dpa.html is published and states the processing terms; the SDK's wire contract is inspectable in the published foxy-audit package."
+    status: partial
+    source: "PRIMARY — Planalto, Lei nº 13.709/2018, Art. 39 (fetched 2026-09-01)"
+    notes: >-
+      ⚠ The platform-key leg is the exception and it is a real one. Under
+      platform_keys_allowed() Foxy sends event metadata to OpenAI and Google
+      under its OWN account — processing the customer did not instruct and the
+      DPA does not name. Same defect as HIPAA-015 and PIPEDA-002.
+
+  # ------------------------------------------------------ PIPEDA (CANADA) ---
+
+  - id: PIPEDA-001
+    regime: PIPEDA
+    clause: "Sch. 1, cl. 4.7 (Principle 7 — Safeguards)"
+    requirement: >-
+      "Personal information shall be protected by security safeguards
+      appropriate to the sensitivity of the information." Clause 4.7.1: "The
+      security safeguards shall protect personal information against loss or
+      theft, as well as unauthorized access, disclosure, copying, use, or
+      modification."
+    control: "As GDPR-005. Sensitivity is the operative word here, and content-blindness answers it structurally: the most sensitive material — the prompt and the response — is never received at all."
+    evidence: null
+    status: partial
+    source: "PRIMARY — Justice Laws Canada (the official consolidated statute), PIPEDA Schedule 1, cll. 4.7, 4.7.1, 4.7.2, 4.7.3 — https://laws-lois.justice.gc.ca/eng/acts/p-8.6/page-7.html (fetched 2026-09-01)"
+    notes: null
+
+  - id: PIPEDA-002
+    regime: PIPEDA
+    clause: "Sch. 1, cl. 4.1.3 (Principle 1 — Accountability)"
+    requirement: >-
+      "An organization is responsible for personal information in its possession
+      or custody, including information that has been transferred to a third
+      party for processing."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Justice Laws Canada, PIPEDA Schedule 1, cl. 4.1.3 (fetched 2026-09-01)"
+    notes: >-
+      ⚠ This clause lands squarely on platform_keys_allowed(). When a privileged
+      org grades on Foxy's own provider keys, Foxy transfers that customer's
+      event metadata to OpenAI and Google for processing under its own account,
+      and cl. 4.1.3 makes Foxy responsible for it — with no contract behind the
+      relationship. Same underlying defect as HIPAA-015 and LGPD-006. Whether
+      the metadata is personal information at all is the unanswered legal
+      question the plan records at premise 3.
+
+  - id: PIPEDA-003
+    regime: PIPEDA
+    clause: "s. 10.1(1) and s. 10.1(3)"
+    requirement: >-
+      s. 10.1(1): "An organization shall report to the Commissioner any breach
+      of security safeguards involving personal information under its control if
+      it is reasonable in the circumstances to believe that the breach creates a
+      real risk of significant harm to an individual." s. 10.1(3): the same
+      trigger obliges the organization to notify the affected individual, unless
+      otherwise prohibited by law.
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Justice Laws Canada, PIPEDA ss. 10.1(1) and 10.1(3) — https://laws-lois.justice.gc.ca/eng/acts/P-8.6/FullText.html (fetched 2026-09-01)"
+    notes: >-
+      Same gap as GDPR-006, LGPD-004, QAT-003, KSA-004, SGP-005 and AUS-005. One
+      breach-response plan closes the notification half of all of them, but the
+      deadlines and the recipients differ per regime, so the plan has to carry a
+      table rather than a single sentence.
+
+  - id: PIPEDA-004
+    regime: PIPEDA
+    clause: "s. 10.3"
+    requirement: >-
+      "An organization shall, in accordance with any prescribed requirements,
+      keep and maintain a record of every breach of security safeguards
+      involving personal information under its control."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Justice Laws Canada, PIPEDA s. 10.3 (fetched 2026-09-01)"
+    notes: >-
+      Distinct from PIPEDA-003 and easy to miss: the record duty covers EVERY
+      breach, including the ones below the real-risk-of-significant-harm
+      threshold that are never reported. A breach register is a C4 artefact,
+      not a product feature.
+
+  # --------------------------------------------------- PDPA (SINGAPORE) ---
+
+  - id: SGP-001
+    regime: PDPA_SG
+    clause: "s. 24"
+    requirement: >-
+      "An organisation must protect personal data in its possession or under its
+      control by making reasonable security arrangements to prevent — (a)
+      unauthorised access, collection, use, disclosure, copying, modification or
+      disposal, or similar risks; and (b) the loss of any storage medium or
+      device on which personal data is stored."
+    control: "As GDPR-005."
+    evidence: null
+    status: partial
+    source: "PRIMARY — Singapore Statutes Online, Personal Data Protection Act 2012 (2020 Rev. Ed.), s. 24, from the official PDF (informal consolidation, version in force from 5/12/2025), downloaded and text-extracted 2026-09-01 — https://sso.agc.gov.sg/Act/PDPA2012?ViewType=Pdf"
+    notes: "⚠ The SSO HTML view returns 403 to automated fetches; the PDF view does not. Use the PDF."
+
+  - id: SGP-002
+    regime: PDPA_SG
+    clause: "s. 25"
+    requirement: >-
+      "An organisation must cease to retain its documents containing personal
+      data, or remove the means by which the personal data can be associated
+      with particular individuals, as soon as it is reasonable to assume that —
+      (a) the purpose for which that personal data was collected is no longer
+      being served by retention of the personal data; and (b) retention is no
+      longer necessary for legal or business purposes."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 25, official PDF (extracted 2026-09-01)"
+    notes: >-
+      ⚠ There is no published retention policy for the ledger, and the plan's C3
+      already names retention as one of the two visible holes an auditor asks
+      about. An append-only hash chain makes this harder than it looks: deleting
+      an event breaks the chain the product's whole claim rests on, so retention
+      here needs a design answer, not a cron job.
+
+  - id: SGP-003
+    regime: PDPA_SG
+    clause: "s. 26(1)"
+    requirement: >-
+      "An organisation must not transfer any personal data to a country or
+      territory outside Singapore except in accordance with requirements
+      prescribed under this Act to ensure that organisations provide a standard
+      of protection to personal data so transferred that is comparable to the
+      protection under this Act."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 26(1), official PDF (extracted 2026-09-01)"
+    notes: "Fifth jurisdiction, same unaddressed transfer: Singapore data reaching GCP me-central1 in Doha. See GDPR-007, KSA-002, UAE-002, LGPD-003."
+
+  - id: SGP-004
+    regime: PDPA_SG
+    clause: "s. 26C(3)(a)"
+    requirement: >-
+      "Where a data intermediary ... has reason to believe that a data breach
+      has occurred in relation to personal data that the data intermediary is
+      processing on behalf of and for the purposes of another organisation —
+      (a) the data intermediary must, without undue delay, notify that other
+      organisation of the occurrence of the data breach."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 26C(3)(a), official PDF (extracted 2026-09-01)"
+    notes: >-
+      ⚠ THE PDPA ROW THAT BINDS FOXY DIRECTLY. Foxy is the data intermediary, so
+      this duty is its own and does not run through the customer. Identical in
+      substance to GDPR-006, the second half of QAT-002, and UAE-003 clause 3 —
+      four regimes now oblige the processor to tell the controller, and there is
+      no process behind any of them.
+
+  - id: SGP-005
+    regime: PDPA_SG
+    clause: "s. 26D(1)"
+    requirement: >-
+      "Where an organisation assesses, in accordance with section 26C, that a
+      data breach is a notifiable data breach, the organisation must notify the
+      Commission as soon as is practicable, but in any case no later than 3
+      calendar days after the day the organisation makes that assessment."
+    control: null
+    evidence: null
+    status: gap
+    source: "PRIMARY — Singapore Statutes Online, PDPA 2012 (2020 Rev. Ed.), s. 26D(1), official PDF (extracted 2026-09-01)"
+    notes: >-
+      Three calendar days is the tightest deadline in this file. The clock
+      starts at the assessment rather than at awareness, and s. 26C(2) requires
+      the assessment itself to be made in a reasonable and expeditious manner,
+      so the two together are tighter than they look. For Foxy's own account
+      data Foxy is the organisation and this is its duty directly.
+
+  # ----------------------------------------- PRIVACY ACT 1988 (AUSTRALIA) ---
+  #
+  # ⚠ READ THE SOURCE FIELDS ON THESE FIVE. The APP and section NUMBERS are
+  # verified against the OAIC — the regulator itself. The exact statutory
+  # WORDING is not: legislation.gov.au's text endpoints returned a DIFFERENT
+  # paraphrase on each of three fetches (one of them dropped "interference"
+  # from APP 11.1, another rewrote APP 8.1 entirely), and AustLII 403s. So
+  # `requirement` on these rows is a SUMMARY and says so in its first words,
+  # rather than a paraphrase dressed up as a quotation. Do not promote them to
+  # quotations without the primary text.
+
+  - id: AUS-001
+    regime: AU_PRIVACY
+    clause: "APP 11.1 (Schedule 1)"
+    requirement: >-
+      SUMMARY, NOT A QUOTATION. An APP entity must take such steps as are
+      reasonable in the circumstances to protect the personal information it
+      holds from misuse, interference and loss, and from unauthorised access,
+      modification or disclosure.
+    control: "As GDPR-005."
+    evidence: null
+    status: partial
+    source: "APP NUMBER verified against the regulator: OAIC, 'Australian Privacy Principles quick reference', which states APP 11 as 'Security of personal information' in the wording summarised here — https://www.oaic.gov.au/privacy/australian-privacy-principles/australian-privacy-principles-quick-reference (fetched 2026-09-01). ⚠ Exact statutory text NOT obtained; see the block comment above."
+    notes: "The OAIC's own wording includes 'interference', which two separate fetches of legislation.gov.au dropped. That is why the regulator's page is cited here and the legislation endpoint is not."
+
+  - id: AUS-002
+    regime: AU_PRIVACY
+    clause: "APP 11.2 (Schedule 1)"
+    requirement: >-
+      SUMMARY, NOT A QUOTATION. Where an APP entity holds personal information
+      it no longer needs for any purpose permitted under the APPs, and the
+      information is not a Commonwealth record and is not required to be
+      retained by law or by a court or tribunal order, the entity must take such
+      steps as are reasonable in the circumstances to destroy the information or
+      to ensure that it is de-identified.
+    control: null
+    evidence: null
+    status: gap
+    source: "APP NUMBER verified against the regulator: OAIC quick reference — 'An entity has obligations to destroy or de-identify personal information in certain circumstances' (fetched 2026-09-01). ⚠ Exact statutory text NOT obtained."
+    notes: "Same substance and the same design problem as SGP-002: no retention policy, and an append-only chain that resists deletion by construction."
+
+  - id: AUS-003
+    regime: AU_PRIVACY
+    clause: "APP 8 (Schedule 1)"
+    requirement: >-
+      SUMMARY, NOT A QUOTATION. Before disclosing personal information to an
+      overseas recipient, an APP entity must take such steps as are reasonable
+      in the circumstances to ensure that the recipient does not breach the
+      Australian Privacy Principles.
+    control: null
+    evidence: null
+    status: gap
+    source: "APP NUMBER verified against the regulator: OAIC quick reference, APP 8 'Cross-border disclosure of personal information — outlines the steps an APP entity must take to protect personal information before it is disclosed overseas' (fetched 2026-09-01). ⚠ Exact statutory text NOT obtained; three fetches of legislation.gov.au returned three different wordings of APP 8.1, which is why none of them is quoted."
+    notes: "Sixth jurisdiction, same unaddressed transfer to Qatar, plus the onward leg to OpenAI and Google under platform keys."
+
+  - id: AUS-004
+    regime: AU_PRIVACY
+    clause: "s. 26WH(2)"
+    requirement: >-
+      An entity that suspects an eligible data breach must take all reasonable
+      steps to complete its assessment within 30 calendar days after the day it
+      became aware of the grounds that caused it to suspect the breach.
+    control: null
+    evidence: null
+    status: gap
+    source: "SECTION NUMBER AND THE 30-DAY PERIOD verified against the regulator quoting its own text: OAIC, 'Data breach preparation and response — Part 4: Notifiable Data Breach (NDB) scheme' — '...within 30 calendar days after the day the entity became aware of the grounds (or information) that caused it to suspect an eligible data breach (s 26WH(2))' (fetched 2026-09-01)"
+    notes: null
+
+  - id: AUS-005
+    regime: AU_PRIVACY
+    clause: "s. 26WK(2) and s. 26WL(3)"
+    requirement: >-
+      s. 26WK(2): an entity must prepare a statement about an eligible data
+      breach and give a copy to the Commissioner as soon as practicable after
+      becoming aware of the breach. s. 26WL(3): the entity must notify
+      individuals as soon as practicable after completing that statement.
+    control: null
+    evidence: null
+    status: gap
+    source: "SECTION NUMBERS verified against the regulator quoting its own text: OAIC, 'Data breach preparation and response — Part 4: NDB scheme' — '(s 26WK(2))' and '(s 26WL(3))' (fetched 2026-09-01)"
+    notes: "Same gap as PIPEDA-003, LGPD-004, GDPR-006, QAT-003, SGP-005 and KSA-004."
 
   # ---------------------------------------------------------------- SOC 1 ---
   - id: SOC1-001
