@@ -20,6 +20,12 @@ meta:
   phase: "C3a"
   written: "2026-09-02"                 # the facts it rests on were established 2026-09-01
   verified_against: "4466996"        # origin/main this branch was cut from
+  c2_harden: >-
+    ⚠ C2-HARDEN (2026-09-02) touched ONE line of this file: AQ-018's `gap` text
+    stated SOC2-008's status, and SOC2-008 moved gap -> partial. No question, no
+    verdict and no coverage count changed — see AQ-018 for why the movement does
+    not change the answer. The 37/5/21/11 tally below is untouched and was not
+    recounted, because nothing that feeds it moved.
   written_by: "executor chat, per docs/plans/compliance-program.md §4 C3"
   scope: >-
     WHAT an auditor asks, and WHICH of those the product can answer today. It
@@ -636,9 +642,16 @@ questions:
     evidence: The published roster and the published DPA.
     gap: >-
       The list answers "who", not "what did you assess" — no vendor risk
-      assessment exists for any provider, which is why SOC2-008 is `gap` despite
-      having a control. ⚠ And the guard proves the pages AGREE, not that they
-      are RIGHT: it read green while every page named the wrong hosting country.
+      assessment exists for any provider, which is the whole of what SOC2-008 is
+      still short of. ⚠ SOC2-008 MOVED gap -> partial on 2026-09-02 (C2-HARDEN,
+      [[#306]]) and THE ANSWER TO THIS QUESTION DID NOT CHANGE: the row moved
+      because its stated reason for `gap` — that the roster named the wrong
+      hosting country — had been fixed by C2, not because anything was assessed.
+      `answerable: partial` was already the honest verdict and stays.
+      ⚠ And the guard proves the pages AGREE, not that they are RIGHT: it read
+      green while every page named the wrong hosting country. It is
+      test_compliance_claims.py, not test_site_wide_claims.py, that now holds
+      the country to an asserted value.
       Alchemy/Infura (Sepolia RPC) and Etherscan are reached by the code and
       appear on no roster as processors — Etherscan is named at
       privacy.html:195 only as a place to view a transaction.

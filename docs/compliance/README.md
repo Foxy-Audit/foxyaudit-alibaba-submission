@@ -5,9 +5,16 @@ Written 2026-09-01 against `origin/main` at **`01e87ad`** (C0) and **`e7e1919`**
 (C0b and C2). The three YAML files carry `meta.verified_against: 4466996`, re-stamped
 2026-09-02 by the C1-SYNC pass that carried C1, C3a and C3b into them.
 
+**C2-HARDEN (2026-09-02) deliberately did not move that stamp**, and for once the
+reason is a measurement rather than a caution: `git diff --stat 4466996 81510ac --
+foxy-sale-page/ foxy-dashboard/` is **empty**. The surfaces are byte-identical at
+both SHAs, so every line number and every pin in these files is as true at one as
+at the other, and moving the stamp would assert a re-read of 100 rows nobody did.
+
 | File | What it is |
 |---|---|
-| [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **105 rows across 15 regimes.** |
+| [`crosswalk.yaml`](crosswalk.yaml) | Every regulatory clause we intend to speak to, the Foxy control that answers it, the evidence a third party could inspect, and an honest status. **105 rows across 15 regimes.** Its `surface_claims` also **pin
+the text** of every claim at its recorded line, not only the coordinates. |
 | [`claims.yaml`](claims.yaml) | **C2.** Every compliance claim on every customer-facing surface, each with a verdict and a crosswalk row that backs it — plus the claims C2 deleted, each pinning a pattern that must never come back. |
 | [`auditor-questions.yaml`](auditor-questions.yaml) | **C3a.** The questions a third party actually asks, each derived from crosswalk rows, with an honest verdict on whether a customer could answer it TODAY — **37 questions: 5 `full`, 21 `partial`, 11 `no`.** Also the inverse check: which crosswalk rows no question reaches. |
 | [`incident-response.md`](incident-response.md) | **C1 deliverable 6.** The breach-response plan. A duty table over **18 crosswalk rows across 12 regimes** — the highest-leverage single artefact in the programme (AQ-023) — plus what a Foxy breach actually exposes, roles for a two-person team, and a tabletop scenario. ⚠ Never exercised; until it is, it is a document, not a control. |
@@ -15,9 +22,18 @@ Written 2026-09-01 against `origin/main` at **`01e87ad`** (C0) and **`e7e1919`**
 | [`not-applicable.md`](not-applicable.md) | Regimes and clauses that cannot bind Foxy, each with the reasoning. A register of *"we checked, and here is why not"*. |
 | this file | How to read the crosswalk, and how to add a regime. |
 
-The guard that enforces `claims.yaml` is
+The guard that enforces `claims.yaml` **and the machine-readable half of
+`crosswalk.yaml`** is
 [`foxy-sale-page/test_compliance_claims.py`](../../foxy-sale-page/test_compliance_claims.py).
-It runs in `pytest foxy-sale-page -q` and it fails the build.
+It runs in `pytest foxy-sale-page -q` and it fails the build. Its module docstring
+carries the seven rules and the reason each one exists; three of the seven were
+added because a previous version of it passed a mutation it should have failed.
+
+> ⚠ **A green run means "no false claim *of a registered class*", never "no false
+> claims".** That is [[#295]]'s finding and it is a property of the design, not a
+> defect in it: the guard's coverage equals this register's contents. Adding a
+> class is therefore the only way to widen it, and both classes added on
+> 2026-09-02 existed before the claim they guard was ever written.
 
 > ⚠ **This is engineering research, not legal advice.** No row has been reviewed
 > by a lawyer. Foxy is incorporated in Pakistan, the team is two people, and
@@ -113,19 +129,54 @@ written down — `HIPAA-017` discharges less of 45 CFR 164.410 (which wants a
 lives in both rows' `notes`, where it can be read rather than inferred from a
 status word.
 
-⚠ **The pattern is wider than the pair #305 named, and C1-SYNC did not chase
-it.** Measured over the parsed file: **six** rows carry `status: gap` with a
-non-null `evidence` — `HIPAA-017` (fixed), and `SOC2-008`, `GDPR-009`,
-`KSA-005`, `UAE-006`, `PCI-006`. Each of the five needs its own clause read
-before it is re-graded — `GDPR-009` in particular may be a genuine `gap`, since
-Art. 46 wants an *executed* safeguard and a promise to use the SCCs is arguably
-not a partial version of one. **Do not sweep them.** Read the clause, then
-decide, one row at a time.
+#### The six rows — resolved 2026-09-02, one clause at a time ([[#306]])
+
+`HIPAA-017` (fixed by C1-SYNC), `SOC2-008`, `GDPR-009`, `KSA-005`, `UAE-006`,
+`PCI-006`. They were not swept, and they did not all go the same way.
+
+| row | clause | outcome |
+|---|---|---|
+| `SOC2-008` | SOC 2 CC9.2 | → `partial`. Its stated reason for `gap` was *"the hosting row says United States"*, which C2 corrected and rule 1 of the guard now holds corrected. A published, correct roster identifies vendors, which is CC9.2's first point of focus. **No vendor risk assessment exists for any provider** — that shortfall is the row's `notes`, not its status. |
+| `PCI-006` | PCI DSS 12.8.1 | → `partial`, and the least ambiguous of the six. 12.8.1 asks for a maintained list of service providers with a description of each. That list exists, is published, and is now right. Not `met`: its completeness is asserted by us and inspectable by nobody, and 12.8.2–12.8.5 do not exist. |
+| `KSA-005` | Saudi PDPL Art. 4 | → `partial`. It named a published §14 commitment plus export and deletion paths any customer can exercise, and then graded itself `gap`. That is the [[#305]] shape exactly. The missing Gulf bullet is the shortfall and stays in `notes`. |
+| `UAE-006` | UAE PDPL Art. 13 | → `partial`. It said *"GAP, NOT PARTIAL"* in capitals and gave two reasons; **one of them shipped** (§13 now names Qatar). Half a reason is not the same reason. §8 and §13 discharge most of Art. 13's enumeration; §14's silence on the Gulf is what remains. |
+| `GDPR-009` | GDPR Art. 46 | **stays `gap`. Its `evidence` went to `null` instead** — the status was right and the evidence field was wrong. |
+
+**`GDPR-009` is the one that matters, because it marks the boundary of the rule
+above, and the boundary is not obvious.**
+
+> The [[#305]] rule holds **when the commitment is the thing the clause asks
+> for.** Art. 33(2) asks a processor to notify without undue delay; a published
+> promise to notify without undue delay *is* a partial discharge of it and is
+> enforceable against Foxy. **Art. 46 does not ask anyone to promise a
+> safeguard.** It permits a transfer only where the exporter *"has provided
+> appropriate safeguards"* — an executed instrument, in place before the
+> transfer. A promise to execute the SCCs is not a weak version of executed
+> SCCs; it is a different kind of object, and the clause names the object. So
+> the control **fails** the clause, which is `gap`.
+>
+> It follows that the published DPA is not evidence *for that row*. It is real
+> evidence that Foxy made a commitment, and it is cited as such on the rows
+> whose clauses ask for a commitment. **The test is the object the clause names,
+> not whether a document is published.**
+
+**The invariant is now guarded rather than described.**
+`test_a_crosswalk_row_grades_consistently_with_its_evidence` fails the build on
+*any* row that grades `gap` while naming evidence, or `met` while naming none —
+and on any status word outside the four, because a typo would make both
+predicates vacuous instead of red. [[#306]]'s own lesson was that a defect
+described **by example** gets fixed by example; this is the predicate.
 
 ### Why nothing is `met`
 
-**There are zero `met` rows.** 60 `partial`, 40 `gap`, 5 `not-applicable`
+**There are zero `met` rows.** 64 `partial`, 36 `gap`, 5 `not-applicable`
 — counted by parsing the file, never by hand.
+
+The 60/40/5 that stood here on 2026-09-02 became 64/36/5 the same day, when
+C2-HARDEN resolved the six rows below. **Nothing was re-graded on new evidence.**
+Three of the four that moved had given a *reason* for `gap` that C2 had already
+retired — the published roster or §13 stated the wrong hosting country — and a row
+may not keep a status whose stated justification no longer holds.
 
 ⚠ **The 2026-09-02 movement was 14 rows `gap` → `partial`, and not one reached
 `met`.** C1 wrote [`incident-response.md`](incident-response.md), and its §12
@@ -222,6 +273,45 @@ and says which commit removed it. The full reasoning is in
 attributed to a website. **Re-derive them by script, never by hand** — C2b's own
 guard caught a hand-edited line number twice.
 
+#### `pins` — because a line number is not an identifier ([[#307]])
+
+⚠ **Re-deriving the numbers after C2 and C3b found two genuine drifts and could
+not find the third thing that had happened.** `privacy.html:175` and
+`trust.html:144` **did not move, and their text changed under them**, from
+"United States" to "Qatar". A line-number refresh sees nothing in either
+direction: the number is still correct and the claim is a different claim. The
+blind spot sat exactly where this programme does its work — rewriting a sentence
+in place on a page whose length does not change.
+
+So every entry now also carries `pins`:
+
+```yaml
+pins:
+  - at: "foxy-sale-page/trust.html:144"
+    text: "Hosting Qatar (me-central1, Doha)"
+retired_as: [hosting-country-united-states]
+```
+
+- **The fragment is the claim, not the sentence.** `trust.html:151`'s pin stops
+  before "Q2 2027", because the date is a plan and may legitimately move while
+  the claim does not.
+- **Matched with tags stripped and whitespace squashed.** Wrapping a phrase in
+  `<strong>`, re-indenting a cell or reflowing a paragraph does not fire it;
+  changing what the sentence asserts does. A pin that breaks when somebody fixes
+  a comma is a pin somebody deletes.
+- **`pins: null` is allowed in exactly two cases and the guard checks which.**
+  Either the claim is on no surface at all (`where: null`), or the text was
+  deleted — and then `retired_as` must name the `retired` entry in `claims.yaml`
+  whose `must_not_match` pattern fails if it comes back. **A `delete` verdict may
+  not simply omit its pins.** Three of the four name text this repo no longer
+  has; where a claim cannot be pinned by line it is pinned by pattern instead.
+- **A `delete` entry may still carry pins**, and the hosting one does: its pins
+  are the *replacement* text, which is what makes a rewrite back to a wrong
+  country fail. A pin is not an endorsement of the claim above it.
+
+21 pins over 9 entries, all verified against `4466996`/`81510ac` (identical
+surfaces) by `test_every_pinned_claim_text_is_still_at_its_line`.
+
 **A verdict is about the claim, not about the line.** A `delete` whose text this
 repo no longer contains is still `delete`, because the live site still serves it.
 Four `delete` verdicts stand today. Three of them are one defect:
@@ -313,7 +403,10 @@ inherits a decision instead of rediscovering a problem.
 
 6. **Check the surfaces.** If the new regime appears on a customer-facing page,
    add a `surface_claims` entry with a verdict — otherwise C2's guard has nothing
-   to check it against.
+   to check it against. **Give it `pins` as well**, or `pins: null` with the
+   reason the schema accepts; the guard fails an entry that declares neither.
+   And ask whether the claim belongs to a **class** nobody has registered — a
+   green guard says nothing about a class that does not exist ([[#295]]).
 
 7. **Validate:**
 
@@ -321,14 +414,22 @@ inherits a decision instead of rediscovering a problem.
    python -c "import yaml; yaml.safe_load(open('docs/compliance/crosswalk.yaml'))"
    ```
 
-   and confirm every row still has a `source`:
+   and confirm every row still has a `source`, and that no row contradicts its
+   own evidence field:
 
    ```bash
    python -c "
-   import yaml
+   import yaml, collections
    rows = yaml.safe_load(open('docs/compliance/crosswalk.yaml'))['rows']
-   print(len(rows), 'rows;', [r['id'] for r in rows if not r.get('source')], 'missing source')"
+   print(len(rows), 'rows', dict(collections.Counter(r['status'] for r in rows)))
+   print('missing source:', [r['id'] for r in rows if not r.get('source')])
+   print('gap with evidence:', [r['id'] for r in rows
+                                if r['status'] == 'gap' and r['evidence'] is not None])"
    ```
+
+   All three are asserted by `pytest foxy-sale-page -q` as well; the one-liner is
+   for while you are editing. **Every count in this file is derived that way and
+   none is counted by hand.**
 
 8. **Re-stamp `meta.verified_against`** with the SHA you read the repo at. A row
    without a SHA behind it is not a finding, it is a memory.

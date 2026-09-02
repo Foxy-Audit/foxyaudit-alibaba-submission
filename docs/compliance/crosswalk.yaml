@@ -10,7 +10,7 @@
 # article number is a defect, and this file will be read as authoritative.
 
 meta:
-  phase: "C0 + C0b + C3b corrections + C1-SYNC"
+  phase: "C0 + C0b + C3b corrections + C1-SYNC + C2-HARDEN"
   written: "2026-09-01"
   updated: "2026-09-02"                # C3b, then the C1-SYNC pass below
   verified_against: "4466996"        # origin/main this branch was cut from
@@ -67,6 +67,77 @@ meta:
     line number by script; see `line_number_semantics`. Status tally 46/54/5 ->
     60 partial / 40 gap / 5 not-applicable, 0 met, 105 rows, all counted by
     parsing this file.
+  c2_harden: >-
+    C2-HARDEN (2026-09-02) added no regime, researched no clause and changed no
+    product fact. It closed three findings about the GUARDS over this file.
+
+    (1) [[#307]] — `surface_claims[].where` proved WHERE a claim was and never
+    that it was UNCHANGED. Every entry now carries `pins`: a short distinctive
+    fragment of the claim, asserted still present at its recorded line by
+    foxy-sale-page/test_compliance_claims.py. 21 pins over 9 entries. The four
+    entries with `pins: null` are handled explicitly rather than skipped — see
+    `pin_semantics`.
+
+    (2) [[#306]] — the six rows grading `gap` while naming evidence were read one
+    clause at a time, NOT swept. FOUR MOVED (SOC2-008, KSA-005, UAE-006, PCI-006,
+    all gap -> partial, each for its own reason recorded in its own notes; three
+    of the four had given a REASON FOR `gap` THAT C2 HAD ALREADY RETIRED, namely
+    that the published roster or §13 stated the wrong hosting country). ONE DID
+    NOT: GDPR-009 stays `gap` and its `evidence` went to null instead, because
+    Art. 46 wants an EXECUTED safeguard and a published promise to execute one is
+    not a partial version of it. That row now carries the BOUNDARY of the [[#305]]
+    rule, which is the part [[#306]] could not have known it needed. HIPAA-017 was
+    already fixed by C1-SYNC. The invariant is now guarded as a PREDICATE over the
+    file rather than as a list of six ids, which is [[#306]]'s own stated lesson.
+
+    (3) [[#295]] — two claim classes that did not exist were added to
+    docs/compliance/claims.yaml: `baa_contractual` (there is no BAA with anyone,
+    [[#288]], and task C3 will produce one WITH GOOGLE, which is not a BAA with
+    customers) and `security_specifics` (algorithms, key-rotation cadences,
+    assurance activities). Both carry `must_match_examples`, so a class cannot be
+    loosened back past the sentence it exists for.
+
+    ⚠ `verified_against` DELIBERATELY NOT RE-STAMPED, and this time the reason is
+    a measurement rather than a caution: `git diff --stat 4466996 81510ac --
+    foxy-sale-page/ foxy-dashboard/` is EMPTY. The surfaces are byte-identical at
+    both SHAs, so every line number and every pin below is as true at 81510ac as
+    at the stamp, and moving the stamp would assert a re-read of the other 100
+    rows that this phase did not do. Status tally 60/40/5 -> 64 partial / 36 gap
+    / 5 not-applicable, 0 met, 105 rows, counted by parsing this file.
+  pin_semantics: >-
+    ⚠ ADDED BY C2-HARDEN 2026-09-02 FOR [[#307]]. `where` IS PROSE AND `pins` IS
+    THE MACHINE-READABLE HALF. A pin is `{at: "<repo path>:<line>", text: "<a
+    fragment of the claim>"}` and the guard asserts the fragment is still at that
+    line.
+
+    THE MATCH IS FORGIVING OF MARKUP AND STRICT ABOUT WORDS: tags stripped,
+    entities resolved, whitespace squashed to nothing. Wrapping a phrase in
+    <strong>, re-indenting a table cell or reflowing a paragraph does not fire the
+    guard; changing what the sentence asserts does. That asymmetry is deliberate —
+    a pin that breaks when somebody fixes a comma is a pin somebody deletes, and
+    [[#307]] is a finding about a guard that was too weak, not one that was noisy.
+    It also means a pin may be written against text that reads oddly in the source,
+    because it is written against the line as a reader sees it: trust.html:144's
+    pin spans two table cells.
+
+    ⚠ PIN THE PART THAT CARRIES THE CLAIM, NOT THE SENTENCE. trust.html:151's pin
+    is "SOC 2 Type I — intended, but no auditor is engaged yet" and stops short of
+    "Q2 2027", because the date is a plan and may legitimately move while the
+    claim does not.
+
+    ⚠ `pins: null` IS ALLOWED IN EXACTLY TWO CASES, AND THE GUARD CHECKS WHICH.
+    Either the claim is on no surface at all (`where: null` — FedRAMP), or the
+    text was DELETED from this repo, in which case `retired_as` must name the
+    `retired` entry in claims.yaml whose `must_not_match` pattern is what fails if
+    it comes back. A `delete` verdict may not simply omit its pins: three of the
+    four name text this repo no longer has, and skipping them would have left
+    three entries unguarded in silence. Where the text cannot be pinned by line it
+    is pinned by pattern instead, and the guard asserts the pattern's entry EXISTS.
+
+    ⚠ A `delete` VERDICT IS STILL ABOUT THE CLAIM, NOT THE PIN. The hosting entry
+    is `delete` and carries pins: its pins are the REPLACEMENT text, which is what
+    makes an in-place rewrite back to a wrong country fail. Do not read a pin as
+    an endorsement of the claim above it.
   line_number_semantics: >-
     ⚠ DECIDED BY C1-SYNC 2026-09-02, BECAUSE THE NUMBERS ARE DOWNSTREAM OF THE
     DECISION AND C3A'S CF-3 LEFT IT OPEN.
@@ -333,6 +404,8 @@ surface_claims:
       removed sentence is pinned in claims.yaml `retired` so it cannot come back.
       ⚠ STILL LIVE on foxyaudit.tech, which serves the frozen repo, so the
       verdict below is about a claim a reader can still find today.
+    pins: null
+    retired_as: [soc2-audit-underway]
     verdict: delete
     why: >-
       foxy-sale-page/trust.html:151 says the opposite on the same site: "SOC 2
@@ -350,6 +423,16 @@ surface_claims:
       (me-central1, Doha)". This is the entry that shows why a line number is not
       an identifier — claims.yaml locates its claims by `anchor` for exactly this
       reason. ⚠ STILL LIVE on foxyaudit.tech; the verdict stands.
+    pins:
+      # ⚠ THIS IS THE ENTRY [[#307]] WAS FILED ABOUT. The two lines below did not
+      # move and their text changed under them, so a line-number refresh saw
+      # nothing. The pins are the REPLACEMENT text: rewriting either back to a
+      # country that is not Qatar now fails the guard instead of passing it.
+      - at: "foxy-sale-page/privacy.html:175"
+        text: "hosting provider (Google Cloud, Ubuntu VM) — Qatar"
+      - at: "foxy-sale-page/trust.html:144"
+        text: "Hosting Qatar (me-central1, Doha)"
+    retired_as: [hosting-country-united-states]
     verdict: delete
     why: >-
       ⚠ FOUND BY THIS PHASE, NOT ANTICIPATED BY THE PLAN. Production runs in GCP
@@ -370,6 +453,8 @@ surface_claims:
       per sub-processor, and that no Art. 46 safeguard is in place for the Qatar
       leg. ⚠ STILL LIVE on foxyaudit.tech; the verdict stands, and GDPR-007 and
       GDPR-009 are still the rows behind it.
+    pins: null
+    retired_as: [unqualified-us-scc-reliance, hosting-country-united-states]
     verdict: delete
     why: >-
       Same defect, one section further on, and worse: it names a transfer
@@ -387,6 +472,8 @@ surface_claims:
       occurs zero times in either file. ⚠ STILL LIVE on foxyaudit.tech; the
       verdict stands, and NIST-001 is still `clause: TBD` because nothing was ever
       mapped.
+    pins: null
+    retired_as: [passport-mapped-to-standards]
     verdict: delete
     why: >-
       backend/app/templates/compliance_passport.html contains zero occurrences
@@ -402,6 +489,11 @@ surface_claims:
       financial). ⚠ MOVED from :2360 by C3b (ac7b2f0), which added the
       verification-bundle export option above it. The sentence itself is
       unchanged, and so is the `qualify` verdict.
+    pins:
+      # The claim is the THRESHOLD and the tag vocabulary it applies to. The
+      # surrounding row markup is not part of it.
+      - at: "foxy-dashboard/foxy-audit-premium.html:2391"
+        text: "eu_ai_act is risk-scored 60 or higher"
     verdict: qualify
     why: >-
       Three of the five tags named — `pci`, `sox`, `eu_ai_act` — are not in the
@@ -414,6 +506,13 @@ surface_claims:
 
   - claim: "@foxy.audit(policy=\"soc2\")"
     where: "foxy-sale-page/how-it-works.html:38, foxy-sale-page/sdk.html:38, foxy-sale-page/install.html:58 — all three unmoved since e7e1919"
+    pins:
+      - at: "foxy-sale-page/how-it-works.html:38"
+        text: '@audit(policy="soc2")'
+      - at: "foxy-sale-page/sdk.html:38"
+        text: '@audit(policy="soc2")'
+      - at: "foxy-sale-page/install.html:58"
+        text: '@audit(policy="soc2")'
     verdict: qualify
     why: >-
       _POLICY_EXTRA maps "soc2": () — baseline injection and secret checks only,
@@ -425,6 +524,11 @@ surface_claims:
 
   - claim: "@foxy.audit(policy=\"hipaa\")"
     where: "foxy-sale-page/install.html:54, foxy-sale-page/welcome.html:88 (as hipaa_basic) — both unmoved since e7e1919"
+    pins:
+      - at: "foxy-sale-page/install.html:54"
+        text: '@foxy.audit(policy="hipaa")'
+      - at: "foxy-sale-page/welcome.html:88"
+        text: 'policy="hipaa_basic"'
     verdict: backed
     why: >-
       `hipaa` -> ("phi",) is a real detection family and mode=\"block\" genuinely
@@ -435,6 +539,9 @@ surface_claims:
 
   - claim: "Its verdict is a review signal — not a HIPAA or SOC 2 certification — and unavailable judge results remain visibly unknown."
     where: "foxy-sale-page/how-it-works.html:56 — unmoved since e7e1919"
+    pins:
+      - at: "foxy-sale-page/how-it-works.html:56"
+        text: "not a HIPAA or SOC 2 certification"
     verdict: backed
     why: "A disclaimer, and an accurate one. This is the sentence other pages should sound like."
     regime: SOC2
@@ -450,12 +557,24 @@ surface_claims:
       Both are true and neither is a defect — recorded so the next reader who
       greps for one string and finds one page does not conclude a page is
       missing it.
+    pins:
+      # ⚠ TWO PINS, TWO WORDINGS, DELIBERATELY. The `where` note above records
+      # that the two pages do not phrase this identically. Pinning trust.html's
+      # wording at privacy.html:177 would fail a page that is correct.
+      - at: "foxy-sale-page/trust.html:150"
+        text: "We do not currently hold SOC 2, ISO 27001, or a comparable third-party attestation"
+      - at: "foxy-sale-page/privacy.html:177"
+        text: "We do not currently hold a SOC 2, ISO 27001, or comparable third-party attestation"
     verdict: backed
     why: "True, and stated plainly. Nothing to change."
     regime: ISO_27001
 
   - claim: "Roadmap: ISO 27001 gap analysis — Q2 2027. SOC 2 Type I — intended, but no auditor is engaged yet, so we are not putting a date on it."
     where: "foxy-sale-page/trust.html:151 — unmoved since e7e1919"
+    pins:
+      # The date-free half is the claim. "Q2 2027" is a plan and may move.
+      - at: "foxy-sale-page/trust.html:151"
+        text: "SOC 2 Type I — intended, but no auditor is engaged yet"
     verdict: backed
     why: "True. It is also the sentence that makes faq.html:60 and pricing.html:121 indefensible."
     regime: SOC2
@@ -466,6 +585,21 @@ surface_claims:
       (the geo-aware `consent()` function), and foxy-sale-page/dpa.html:99 (which
       defines the controller/processor split in CCPA/CPRA terms as well as GDPR
       terms) — all unmoved since e7e1919.
+    pins:
+      - at: "foxy-sale-page/cookie-policy.html:116"
+        text: "EU / EEA / UK (GDPR): analytics is off until you opt in"
+      - at: "foxy-sale-page/cookie-policy.html:117"
+        text: "California (CCPA/CPRA): we don't sell or share personal information"
+      # ⚠ THE `where` ABOVE NAMES A RANGE (1389-1460) AND A PIN NEEDS A LINE.
+      # These two are the range's load-bearing lines: the one that says what the
+      # gate is, and the one that performs the EU branch. Deleting the branch
+      # while leaving the comment now fails.
+      - at: "foxy-sale-page/index.html:1389"
+        text: "cookie consent (geo-aware GDPR/CCPA"
+      - at: "foxy-sale-page/index.html:1395"
+        text: "return { region:'eu', regime:'gdpr' }"
+      - at: "foxy-sale-page/dpa.html:99"
+        text: '(or "business," under CCPA/CPRA)'
     verdict: backed
     why: >-
       A geo-aware consent gate that is actually implemented in index.html. The
@@ -477,6 +611,17 @@ surface_claims:
       foxy-sale-page/privacy.html:230, :231, :232. ⚠ MOVED from :223, :224, :225
       by C2 (2d03a2e), which lengthened §13 above them. The three rights lists
       are unchanged and so is the `backed` verdict.
+    pins:
+      # Region + the rights it is promised, on each of the three lines. Naming
+      # the region alone would survive the rights being quietly narrowed.
+      - at: "foxy-sale-page/privacy.html:230"
+        text: "Lei Geral de Proteção de Dados): rights of confirmation"
+      - at: "foxy-sale-page/privacy.html:231"
+        text: "Canada (PIPEDA and applicable provincial law): rights of access"
+      - at: "foxy-sale-page/privacy.html:232"
+        text: "Singapore (PDPA), Australia (Privacy Act 1988)"
+      - at: "foxy-sale-page/privacy.html:232"
+        text: "we extend equivalent rights of access, correction, and deletion"
     verdict: backed
     why: >-
       ✓ RESOLVED BY C0b, 2026-09-01. C0 recorded this as `qualify` for one
@@ -494,6 +639,7 @@ surface_claims:
 
   - claim: "FedRAMP"
     where: null
+    pins: null
     verdict: backed
     why: "Zero occurrences on any customer-facing surface. Nothing to resolve."
     regime: null
@@ -862,12 +1008,31 @@ rows:
     requirement: "The entity assesses and manages risks associated with vendors and business partners."
     control: "A subprocessor roster published on foxy-sale-page/privacy.html §8 and foxy-sale-page/trust.html, guarded by test_site_wide_claims.py so the pages cannot disagree with each other."
     evidence: "The published subprocessor list."
-    status: gap
+    status: partial
     source: "AICPA, 2017 Trust Services Criteria (with revised points of focus 2022), red-lined PDF, criterion text extracted 2026-09-01"
     notes: >-
-      The guard proves the pages AGREE. It does not prove they are RIGHT, and
-      they are not: the hosting row says United States. No vendor risk assessment
-      exists for any provider. C1 deliverable 4.
+      ⚠ MOVED gap -> partial 2026-09-02 by C2-HARDEN, [[#306]]. THE REASON THIS
+      ROW GAVE FOR `gap` HAS BEEN RETIRED. It said the pages "are not RIGHT: the
+      hosting row says United States". C2 corrected both rosters to Qatar
+      (privacy.html §8 and trust.html's sub-processor table), and
+      test_compliance_claims.py::test_every_hosting_statement_names_qatar now
+      fails the build if either drifts back. A row cannot keep a status whose
+      stated justification no longer holds.
+
+      What remains is a shortfall, not a failure, which is exactly the
+      partial/gap line README.md draws. CC9.2's first point of focus is
+      identifying vendors and business partners, and a published, guarded,
+      correct roster does that and is inspectable by anyone. NO VENDOR RISK
+      ASSESSMENT EXISTS FOR ANY PROVIDER — no criticality rating, no
+      re-assessment cadence, no owner — so the criterion's "assesses and manages
+      risks" half is untouched. C1 deliverable 4.
+
+      ⚠ Two known defects in the roster's CONTENT, neither of which is a hosting
+      statement: [[#293]] records that the DPAs and SCCs behind three of the four
+      named sub-processors were never executed, and that Paddle is named while it
+      is still sandbox-only. A list can be complete and correct as a list and
+      still describe relationships with nothing behind them. Reaching `met` needs
+      the assessment, not a longer list.
 
   - id: SOC2-009
     regime: SOC2
@@ -1078,13 +1243,42 @@ rows:
     clause: "Art. 46"
     requirement: "Transfers subject to appropriate safeguards — in the absence of an adequacy decision, a controller or processor may transfer personal data to a third country only if it has provided appropriate safeguards, and on condition that enforceable data subject rights and effective legal remedies are available."
     control: "foxy-sale-page/dpa.html §on transfers commits to the EU SCCs where a destination is not adequate."
-    evidence: "The published DPA."
+    evidence: null
     status: gap
     source: "GDPR Art. 46, gdpr-info.eu — https://gdpr-info.eu/art-46-gdpr/ (article titles verified 2026-09-01 via https://gdpr-info.eu/)"
     notes: >-
-      The DPA names the mechanism generically; the privacy policy names SCCs only
-      for a US destination that is not where the data is. No executed SCCs and no
-      transfer impact assessment exist for the EEA -> Qatar leg. C1 deliverable 3.
+      ⚠ STATUS UNCHANGED AT `gap` 2026-09-02 by C2-HARDEN. `evidence` CHANGED
+      "The published DPA." -> null. THIS IS THE ONE ROW OF [[#306]]'s SIX WHERE
+      THE STATUS WAS RIGHT AND THE EVIDENCE FIELD WAS WRONG, AND IT MARKS THE
+      BOUNDARY OF THE [[#305]] RULE.
+
+      THE BOUNDARY, STATED SO THE NEXT READER DOES NOT HAVE TO REDERIVE IT: the
+      [[#305]] rule — a published commitment is a control with inspectable
+      evidence, so a row citing one is `partial` — holds WHEN THE COMMITMENT IS
+      THE THING THE CLAUSE ASKS FOR. Art. 33(2) asks a processor to notify
+      without undue delay; a published promise to notify without undue delay IS a
+      partial discharge of it, and is enforceable against Foxy. Art. 46 does not
+      ask anyone to promise a safeguard. It says a transfer may be made only
+      where the exporter "has PROVIDED appropriate safeguards" — an executed
+      instrument, in place before the transfer. A promise to execute SCCs is not
+      a weak version of executed SCCs; it is a different kind of object, and the
+      clause names the object. So the control FAILS the clause, which is
+      README.md's second definition of `gap`.
+
+      It follows that the published DPA is not evidence FOR THIS ROW. It is
+      genuine evidence that Foxy made a commitment — and it is cited as such on
+      the rows whose clauses ask for a commitment — but this row's clause is
+      discharged by an executed safeguard and by nothing else, and no third party
+      can inspect one, because none exists. Hence null. ⚠ THE TEST OF THE RULE IS
+      THE OBJECT THE CLAUSE NAMES, NOT WHETHER A DOCUMENT IS PUBLISHED.
+
+      The underlying facts, unchanged: the DPA names the mechanism generically;
+      the privacy policy names SCCs only for a US destination that is not where
+      the data is. No executed SCCs and no transfer impact assessment exist for
+      the EEA -> Qatar leg. C1 deliverable 3. ⚠ [[#293]] makes it sharper than
+      "not yet executed" — the SCC sentence is affirmatively false for OpenAI,
+      with which nothing was ever executed. ⚠ [[#296]]: dpa.html, the page this
+      row's control cites, still asserts SCC reliance and C2b could not touch it.
 
   - id: GDPR-010
     regime: GDPR
@@ -1322,19 +1516,33 @@ rows:
       and the right to request destruction.
     control: "Export (Compliance Passport and the ledger export), workspace deletion, and account/organisation editing from the dashboard."
     evidence: "foxy-sale-page/privacy.html §14 states a general commitment that is not limited to the regions it names, plus a 30-day response period; the export and deletion paths are exercisable by any customer."
-    status: gap
+    status: partial
     source: "SECONDARY — the statutory text is reproduced on saudiprivacylaw.com's Article 4 page and the enumeration is corroborated by BigID, Akin Gump and Hala Privacy summaries (all fetched 2026-09-01). ⚠ The official SDAIA English PDF still returns 404/Request Rejected to automated fetches, and laws.boe.gov.sa did not resolve; see KSA-001. ⚠ Ignore that page's slug, which reads \"prohibition-of-certain-rights\" — the text it reproduces grants rights. The slug is wrong, the text is not."
     notes: >-
-      ⚠ THE PDPL ROW privacy.html §14 IS MISSING, and the reason it is a gap
-      rather than a partial. The mechanisms behind the rights exist and work.
-      But §14 lists rights "by region" for the EEA, California, Brazil, Canada,
-      Singapore, Australia and Pakistan, and names no Gulf jurisdiction, while
-      there are live Saudi and UAE customers. The catch-all sentence — "we do
-      not limit these rights to any one region" — is real and is why this is a
-      near miss rather than a false claim, but Art. 4(1)'s right to be INFORMED
-      of the legal basis is not discharged by a policy whose §7 legal bases are
-      EEA/UK-scoped. Adding a Gulf bullet to §14 is a deliberate C2 scope
-      exclusion; see docs/compliance/claims.yaml.
+      ⚠ MOVED gap -> partial 2026-09-02 by C2-HARDEN, [[#306]]. THE FACTS BELOW
+      ARE UNCHANGED; THE STATUS WORD WAS WRONG FOR THEM. This row named
+      inspectable evidence — a published §14 commitment plus export and deletion
+      paths any customer can exercise — and then graded itself `gap`. That is the
+      [[#305]] shape: a published commitment is a control with inspectable
+      evidence, so a row citing one is `partial`, and HOW MUCH of the clause it
+      discharges is a notes question. The old first line of these notes ("the
+      reason it is a gap rather than a partial") was arguing the shortfall, which
+      is the argument for what goes in this paragraph, not for the status word.
+
+      THE PDPL ROW privacy.html §14 IS MISSING, and that is the shortfall. The
+      mechanisms behind the rights exist and work. But §14 lists rights "by
+      region" for the EEA, California, Brazil, Canada, Singapore, Australia and
+      Pakistan, and names no Gulf jurisdiction, while there are live Saudi and
+      UAE customers. The catch-all sentence — "we do not limit these rights to
+      any one region" — is real and is why this is a near miss rather than a
+      false claim, but Art. 4(1)'s right to be INFORMED of the legal basis is not
+      discharged by a policy whose §7 legal bases are EEA/UK-scoped. Adding a
+      Gulf bullet to §14 is a deliberate C2 scope exclusion; see
+      docs/compliance/claims.yaml.
+
+      ⚠ Art. 4's rights are "as set out in the Regulations", and the Implementing
+      Regulations have not been read for this file. `partial` is the ceiling
+      until they are, whatever §14 gains.
 
   # ----------------------------------------------------------- PDPL (UAE) ---
   - id: UAE-001
@@ -1480,19 +1688,35 @@ rows:
       protection measures for cross-border processing under Articles 22 and 23.
     control: "The dashboard's export, deletion and organisation settings, and the published privacy policy and sub-processor list."
     evidence: "foxy-sale-page/privacy.html §8 (sub-processors) and §14 (rights); the export path."
-    status: gap
+    status: partial
     source: "PRIMARY — official UAE text of Federal Decree-Law No. (45) of 2021, Article (13), from uaelegislation.gov.ae (legislation 1972), extracted 2026-09-01"
     notes: >-
-      ⚠ GAP, NOT PARTIAL, AND THE REASON IS THE POINT OF C0b. Art. 13 requires
-      the data subject to be told the protection measures for cross-border
-      processing and the sectors and establishments with whom data is shared
-      inside and OUTSIDE the State. privacy.html §14 names Brazil, Canada,
-      Singapore, Australia, the EEA, California and Pakistan and does not name
-      the Gulf at all, while §13 stated the wrong destination country
-      altogether. A rights section that omits the reader's jurisdiction and
-      misstates the destination cannot discharge Art. 13. The §13 half is fixed
-      on the C2 branch; the §14 half is not, and is a deliberate scope
-      exclusion recorded in docs/compliance/claims.yaml.
+      ⚠ MOVED gap -> partial 2026-09-02 by C2-HARDEN, [[#306]]. THIS ROW SAID
+      "GAP, NOT PARTIAL" IN CAPITALS AND GAVE TWO REASONS. ONE OF THEM HAS
+      SHIPPED. C0b's argument was (a) §14 names no Gulf jurisdiction and (b)
+      "§13 stated the wrong destination country altogether". (b) is fixed: §13
+      now names Qatar, and test_compliance_claims.py fails the build if it stops
+      doing so. Half a reason is not the same reason, and a row that keeps a
+      status after the fact under it moves is how a 105-row crosswalk stops being
+      trustworthy at the edges.
+
+      (a) stands and is the shortfall. Art. 13 requires the data subject to be
+      told the protection measures for cross-border processing and the sectors
+      and establishments with whom data is shared inside and OUTSIDE the State.
+      privacy.html §14 names Brazil, Canada, Singapore, Australia, the EEA,
+      California and Pakistan and does not name the Gulf at all. Adding a Gulf
+      bullet is a deliberate C2 scope exclusion recorded in
+      docs/compliance/claims.yaml.
+
+      ⚠ What §8 and §13 now DO discharge is most of Art. 13's enumeration — the
+      types of data, the purposes, the sectors and establishments shared with,
+      and the cross-border destination — which is what makes this `partial`
+      rather than `gap` under README.md's definitions, and is more than the row
+      previously credited itself with. The remedy half of Art. 13 (procedures for
+      correction, erasure, restriction and objection) is published in §14 but is
+      not addressed to a UAE reader. ⚠ Art. 13's cross-border limb points at
+      Articles 22 and 23; UAE-007 is the row for the transfer itself and it is
+      still a `gap`. Do not read this movement as touching it.
 
   - id: UAE-007
     regime: PDPL_UAE
@@ -1645,9 +1869,27 @@ rows:
     requirement: "A list of all third-party service providers with which account data is shared, or that could affect the security of account data, is maintained, including a description of the services provided."
     control: "The published subprocessor roster, guarded for internal consistency by foxy-sale-page/test_site_wide_claims.py."
     evidence: "The published roster."
-    status: gap
+    status: partial
     source: "PCI DSS v4.0.1, official standard PDF, requirement text extracted 2026-09-01"
-    notes: "The roster misstates the hosting region. A list that is consistent across pages and wrong on every one of them fails this requirement in spirit and in fact."
+    notes: >-
+      ⚠ MOVED gap -> partial 2026-09-02 by C2-HARDEN, [[#306]]. THE WHOLE OF THIS
+      ROW'S REASONING WAS ONE SENTENCE — "the roster misstates the hosting region"
+      — AND IT IS NO LONGER TRUE. C2 corrected it and test_compliance_claims.py
+      holds it corrected. Of the six rows [[#306]] named this is the least
+      ambiguous: 12.8.1 asks for a maintained list of third-party service
+      providers with a description of the services provided, and that list
+      exists, is published, describes each service, and is now right about where
+      the hosting one runs.
+
+      Not `met`, for two reasons that are about the list's standing rather than
+      its contents. (1) Nobody outside Foxy has checked the roster against the
+      actual data flows, so its COMPLETENESS is asserted by us and inspectable by
+      nobody — README.md's bar for `met` is inspectable evidence, not a correct
+      artefact. (2) 12.8.1 is the first of a series (12.8.2 written agreements,
+      12.8.3 due diligence, 12.8.4 monitoring, 12.8.5 tracked responsibilities)
+      and none of the rest exists; [[#293]] records that the written agreements
+      of 12.8.2 in particular were never executed for three of the four named
+      sub-processors.
 
   - id: PCI-007
     regime: PCI_DSS

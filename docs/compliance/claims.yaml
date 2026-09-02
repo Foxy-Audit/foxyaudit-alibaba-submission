@@ -26,7 +26,16 @@
 # The guard is foxy-sale-page/test_compliance_claims.py. It fails the build.
 
 meta:
-  phase: C2
+  phase: "C2 + C2-HARDEN"
+  c2_harden: >-
+    C2-HARDEN (2026-09-02) added the two claim classes [[#295]] measured MISSING
+    — `baa_contractual` and `security_specifics` — and gave every class the
+    option of `must_match_examples`, sentences the pattern MUST still select. The
+    two sentences #295 got through are fixtures there now rather than memories,
+    so neither class can be loosened back to the state that missed them.
+    ⚠ `verified_against` NOT re-stamped: foxy-sale-page/ and foxy-dashboard/ are
+    byte-identical between 4466996 and 81510ac (measured, `git diff --stat`), so
+    every line number in this file is as true at one as at the other.
   written: "2026-09-01"
   verified_against: "4466996"       # re-stamped by C1-SYNC, 2026-09-02
   branch: "feat/compliance-c2"
@@ -230,6 +239,119 @@ assertions:
       - "Qatar is not the subject of a European Commission adequacy decision."
       - "A transfer of personal data from the EEA, UK, or Switzerland to our hosting region in Qatar is therefore a transfer to a third country without adequacy, and it requires a safeguard under Article 46 GDPR."
       - "If you are an EEA, UK, or Swiss customer and need a named Article 46 safeguard for either destination before sending personal data, write to privacy@foxyaudit.tech and we will tell you exactly where we are."
+
+  # ── the two classes #295 measured MISSING, added 2026-09-02 by C2-HARDEN ──
+  #
+  # ⚠ WHY THESE TWO AND WHY NOW. #295 attacked the class rule with four
+  # sentences it had never seen. Two were caught, including the two hardest.
+  # The two that got through were not caught because the guard was weak — they
+  # got through because THE CLASSES DID NOT EXIST, and a guard cannot assert
+  # about a class nobody registered. So "the guard is green" means "no false
+  # claims OF A REGISTERED CLASS", and the only fix for that is to register the
+  # class before the sentence is written. Both sentences below are preserved as
+  # `must_match_examples`, which is what stops either class rotting into a
+  # pattern that matches nothing.
+
+  baa_contractual:
+    value: "no surface may claim a BAA exists, with anyone, until one does"
+    detail: >-
+      ⚠ THERE IS NO BUSINESS ASSOCIATE AGREEMENT ANYWHERE — vault #288, searched
+      across the repo, the sale page and the vault 2026-09-01. No BAA, no BAA
+      offering, no process. Healthcare customers are live and sending PHI, so
+      the sentence "we sign BAAs" is the single most valuable false claim
+      somebody could add to this site, and it is one form away from feeling
+      true.
+
+      ⚠ AND THE TRAP THAT MAKES THIS CLASS URGENT RATHER THAN TIDY: task C3 of
+      the owner action checklist will produce a BAA WITH GOOGLE, because Google
+      Cloud signs one for free. A BAA with Google is not a BAA with customers.
+      It covers Foxy's use of Google's HIPAA-eligible services; it gives a
+      customer nothing and makes Foxy nobody's business associate. The moment it
+      is executed, "we have a BAA" becomes tempting AND half-true, which is the
+      worst kind. THIS CLASS EXISTS BEFORE THE TEMPTATION, so the sentence has
+      to be written down and its counterparty named before it can ship.
+
+      There are zero matching sentences on any surface today, and
+      `approved_sentences` is EMPTY ON PURPOSE. That is not a class guarding
+      nothing: it is a class saying no sentence on this subject is approved, and
+      any sentence on this subject fails.
+    established: "vault #288 (2026-09-01, measured) and #295 (2026-09-01, MISSED by the class rule)"
+    #: ⚠ DELIBERATELY NOT SCOPED. dpa.html, msa.html and terms.html are contract
+    #: instruments and the other classes exempt them for good reasons — but the
+    #: contract pages are exactly where a BAA clause would be added, and a BAA
+    #: clause in a contract is not a forward obligation, it is an assertion that
+    #: an instrument exists. Every surface, no exceptions.
+    sentence_pattern: '\bBAAs?\b|\bbusiness[\s-]associates?\b|\bcovered entit(?:y|ies)\b'
+    approved_sentences: []
+    must_match_examples:
+      #: ⚠ THE FIRST IS #295's, VERBATIM. It is false today and stays here as
+      #: the fixture that proves this class still fires.
+      - "We execute Business Associate Agreements with every healthcare customer before any protected health information is processed."
+      - "A signed Business Associate Agreement is in place with Google Cloud covering all HIPAA workloads."
+      - "Foxy Audit will act as your business associate under HIPAA and sign a BAA on request."
+      - "Because Foxy Audit is not a covered entity, no agreement is required before you send PHI."
+
+  security_specifics:
+    value: "no algorithm, key-rotation interval or assurance activity may be stated that is not evidenced"
+    detail: >-
+      #295 injected "All ledger data is encrypted at rest using AES-256 with
+      keys rotated every ninety days" and every test stayed green. It is
+      unverified in both halves: the ledger is not encrypted at rest with
+      AES-256 (the only AES on any surface is Fernet's AES-128-CBC, and it
+      protects BYOK provider keys, not ledger data), and no key-rotation
+      interval is enforced anywhere.
+
+      ⚠ THE CONSTRUCTION THIS CLASS GUARDS is a security control named together
+      with A SPECIFIC A READER COULD HOLD US TO — a named primitive, a rotation
+      cadence, or an assurance activity. That is precisely the shape a security
+      questionnaire invites and the easiest thing on this site to write from
+      memory rather than from evidence. The sentences currently approved are all
+      true and several are unflattering, which is the register working: "Not yet
+      encrypted at rest: the OIDC client secret and the webhook signing secret
+      are currently stored in plaintext" is in this list, and a rewrite that
+      quietly drops it fails `test_every_approved_sentence_is_still_on_a_page`.
+    established: "vault #295 (2026-09-01, MISSED by the class rule)"
+    scope_to: ['foxy-sale-page/privacy.html', 'foxy-sale-page/trust.html']
+    #: ⚠ SCOPED TO THE TWO SECURITY-DISCLOSURE PAGES, AND HERE IS WHAT THAT
+    #: LEAVES UNCOVERED, MEASURED RATHER THAN GUESSED (2026-09-02, 29 matching
+    #: sentences across all surfaces, 13 of them here):
+    #:
+    #:  · foxy-dashboard/foxy-audit-premium.html — 10 matches, and TEN OUT OF
+    #:    TEN ARE JAVASCRIPT. `_prose()` strips tags but not <script> bodies, so
+    #:    the flattened page carries its own source: `_rotate_org_key`, a
+    #:    confirm-dialog string, a comment about #249. Putting those in a prose
+    #:    approval list would make the list unreadable, and an unreadable list
+    #:    is one somebody deletes. ⚠ THE COST IS REAL: a false AES claim added
+    #:    to the dashboard is not caught by this class. It is written here
+    #:    rather than forgotten, which is the only honest thing to do with it.
+    #:  · dpa.html, terms.html, acceptable-use.html — contract instruments,
+    #:    exempted for the same reason `transfer_safeguards` exempts them.
+    #:  · how-it-works.html, sdk.html, hash-chain.html — these describe the
+    #:    product's own mechanism (HMAC-SHA-256 commitments, the chain hash) to
+    #:    buyers rather than stating a security posture to an assessor.
+    sentence_pattern: '\b(?:AES|RSA|ChaCha20|Blowfish|3DES|Triple[- ]?DES|Fernet|PBKDF2|bcrypt|scrypt|Argon2|Ed25519|ECDSA|X25519|SHA-?(?:1|224|256|384|512)|HMAC)\b|\bencrypt\w*[^.]{0,60}\b(?:at rest|in transit)\b|\b(?:at rest|in transit)\b[^.]{0,60}\bencrypt\w*|\b(?:keys?|secrets?|credentials?|certificates?|passwords?)\b[^.]{0,60}\brotat(?:e|es|ed|ing|ion)\b|\brotat(?:e|es|ed|ing|ion)\b[^.]{0,60}\b(?:keys?|secrets?|credentials?|certificates?|passwords?)\b|\bpenetration test\w*|\bpen[- ]test\w*|\bred[- ]team\w*|\bvulnerability scan\w*|\bbug bount\w+'
+    approved_sentences:
+      - "\"Commitment\" means the SHA-256 or HMAC-SHA-256 cryptographic digest computed from an interaction, on your infrastructure, as described in Section 3 ."
+      - "When it observes an interaction, it computes a SHA-256 digest and a customer-keyed HMAC-SHA-256 Commitment of the prompt and response locally, in your own process , before anything is transmitted to us."
+      - "API keys — your SDK bearer key is stored only as a salted/peppered HMAC-SHA-256 hash; the plaintext value is displayed once at creation and is not retained by us."
+      - "Bring-your-own AI provider keys (\"BYOK\") — where you supply your own Gemini or OpenAI key so our AI judge can grade interactions, the key is encrypted at rest using Fernet symmetric encryption (AES-128 in CBC mode, authenticated with HMAC-SHA-256, random IV per record, bound to the owning organization and provider)."
+      - "All traffic to and from the Service is encrypted in transit using TLS."
+      - "API keys and one-time passcodes are stored only as salted/peppered SHA-256 or HMAC-SHA-256 hashes."
+      - "BYOK provider keys are encrypted at rest using Fernet (AES-128-CBC with HMAC-SHA-256 authentication), bound to the owning organization and provider, with support for key rotation without downtime."
+      - "Available on an opt-in basis per account, using an emailed one-time passcode (six digits, single use, five-minute validity, stored only as a SHA-256 hash)."
+      - "Encryption In transit: TLS on all traffic to and from the Service."
+      - "At rest secrets: API keys and one-time passcodes are stored only as salted/peppered SHA-256 or HMAC-SHA-256 hashes, never in reversible form."
+      - "At rest BYOK provider keys: encrypted using Fernet (AES-128-CBC, HMAC-SHA-256 authentication, random IV per record), bound to the owning organization and provider, so a stored credential cannot be replayed into another tenant's row or the wrong provider slot."
+      - "Key rotation is supported with zero downtime."
+      - "Not yet encrypted at rest: the OIDC client secret and the webhook signing secret are currently stored in plaintext."
+    must_match_examples:
+      #: ⚠ THE FIRST IS #295's, VERBATIM. The other three each probe a DIFFERENT
+      #: limb of the pattern, so loosening any one limb fails here rather than
+      #: passing in silence: assurance activity, rotation cadence, algorithm.
+      - "All ledger data is encrypted at rest using AES-256 with keys rotated every ninety days."
+      - "Independent penetration testing is performed annually by a third-party firm."
+      - "Encryption keys are rotated automatically every quarter."
+      - "Customer records are protected with RSA-4096 envelope encryption."
 
 # ---------------------------------------------------------------------------
 # REGIME WORDS
@@ -1264,7 +1386,18 @@ open_questions:
   - id: gulf_absent_from_section_14
     question: "privacy.html §14 lists rights by region and names no Gulf jurisdiction, while there are live Saudi and UAE customers."
     status: OPEN
-    blocks: "KSA-005 and UAE-006 moving off `gap`"
+    blocks: >-
+      the remaining shortfall in KSA-005 (Art. 4(1), the right to be INFORMED of
+      the legal basis) and UAE-006 (Art. 13, being told the jurisdictions data is
+      shared with). ⚠ REWORDED 2026-09-02 by C2-HARDEN: this said it blocked
+      "KSA-005 and UAE-006 moving off `gap`", and both rows moved to `partial`
+      that day WITHOUT this being closed. They moved because a published
+      commitment with exercisable mechanisms was never a `gap` under README.md's
+      definitions ([[#305]], [[#306]]) — and in UAE-006's case because the second
+      half of its reason, a §13 that named the wrong country, had shipped. This
+      question is as open as it was; what changed is that it is a SHORTFALL
+      recorded in `notes` rather than a status word, which is where README.md
+      says the size of a shortfall belongs.
     why: >-
       ⚠ A DELIBERATE C2 SCOPE EXCLUSION, NOT AN OVERSIGHT. The brief scoped C2
       to the residency correction, the SOC 2 sentence and the guards. Adding a

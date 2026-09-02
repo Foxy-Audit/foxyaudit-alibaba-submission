@@ -16,14 +16,48 @@ other. ``docs/compliance/claims.yaml`` holds the truth; the pages are compared t
 it. If every page agrees and the value is wrong, the value is wrong in one place
 and the fix is one edit — which is the property agreement-checking never has.
 
-Four rules:
+Seven rules:
 
   1. the hosting country on every surface is the one asserted value;
   2. a regime word with no ``backed``/``qualified`` entry in the register fails;
   3. a retired claim that comes back fails;
   4. **every sentence in a guarded claim class is one the register approved** —
      which is rule 3 turned the right way round, and the one that survives being
-     attacked with words nobody has seen before.
+     attacked with words nobody has seen before;
+  5. **every surface claim the crosswalk records is still WORDED as recorded** —
+     the text is pinned, not only the coordinates (#307);
+  6. a crosswalk row may not grade ``gap`` while naming inspectable evidence,
+     and may not grade ``met`` without naming any (#306);
+  7. every class pattern still selects the sentences it was built to catch, so
+     a class cannot rot into a regex that matches nothing (#292 one level down).
+
+WHY RULE 5 EXISTS: #307
+-----------------------
+
+``crosswalk.yaml`` ``surface_claims[].where`` records ``file:line`` and C1-SYNC
+re-derived every number by script. It found two genuine drifts. It could not
+find the third thing that had happened: ``privacy.html:175`` and
+``trust.html:144`` DID NOT MOVE AND THEIR TEXT CHANGED UNDER THEM, from "United
+States" to "Qatar". A line-number refresh sees nothing in either direction —
+the number is still correct and the claim is a different claim.
+
+So the register proved WHERE a claim was and never that it was UNCHANGED, and
+the blind spot sat exactly where this programme does its work: rewriting a
+sentence in place on a page whose length does not change. Rule 5 pins a short
+distinctive fragment of each claim at its recorded line. An in-place rewrite now
+fails.
+
+⚠ THE FRAGMENT IS THE CLAIM, NOT THE SENTENCE. A pin that breaks when somebody
+fixes a comma is a guard people delete, so pins are matched with tags stripped
+and whitespace squashed — markup churn and re-indentation do not fire them, and
+changing what the sentence ASSERTS does.
+
+⚠ AND THE `delete` VERDICTS ARE HANDLED EXPLICITLY RATHER THAN SKIPPED. Three of
+them name text this repo no longer contains, so there is nothing at a location
+to pin. Those carry ``pins: null`` plus ``retired_as``, naming the ``retired``
+entry in claims.yaml whose ``must_not_match`` pattern is what fails if the text
+comes back — and rule 5 checks that entry EXISTS. A `delete` may not simply
+omit its pins: the schema check fails an entry that declares neither.
 
 WHY RULE 4 EXISTS: #292
 -----------------------
@@ -85,6 +119,59 @@ SET B — novel text, 11 cases
 The last two are the ones worth keeping in mind: a guard is also attackable
 through its own configuration, and both of those mutations leave every page
 untouched.
+
+SET C — 2026-09-02, rules 5-7. **11 mutations, 11 caught**, every one of them
+text no earlier build had seen, each applied to the real file, watched to fail,
+and restored BY BYTES with a SHA round-trip on a suite green before and after.
+Reported per rule rather than as a total, because a total is what hid the #292
+and #295 holes twice — both times the count was truthful and the coverage was
+not. The verdict is read from ``subprocess.run(...).returncode``, never from a
+pipe tail, and every kill below names a test.
+
+============================  =============================================
+rule 5, pins                  4 in-place rewrites, all caught
+  M1 the dashboard              foxy-audit-premium.html:2391 "risk-scored 60
+     threshold 60 -> 20           or higher" -> "20 or higher".
+                                ✦ CAUGHT BY THE PIN AND NOTHING ELSE: the
+                                  573-test foxy-dashboard suite stayed GREEN
+                                  and exactly one sale-page test failed.
+  M2 the LGPD rights list       privacy.html:230 "rights of confirmation,
+     narrowed in place            access, correction, anonymization,
+                                  portability, deletion" -> "rights of
+                                  erasure alone". Same line, same number.
+  M3 the consent gate's EU      index.html:1395 region:'eu' -> region:'us'
+     branch flipped
+  M4 the hosting cell           trust.html:144 Qatar -> Ireland. Caught by
+     rewritten back               rule 1 AND rule 5; recorded because it is
+                                  #307's own case, where rule 1 happens to
+                                  overlap and would not have on M1-M3.
+rule 5, schema                2, both caught
+  M5 a `pins:` key deleted      an entry left declaring neither pins nor
+                                  retired_as
+  M6 a retired_as pointing      `soc2-audit-underway` -> a name claims.yaml
+     at nothing                   does not carry
+rule 6, the invariant         2, both caught
+  M7 a row re-graded `gap`      PCI-006 partial -> gap with its evidence
+     keeping its evidence         left in place — the exact #306 shape
+  M8 a status typo              GDPR-009 `gap` -> `Gap`, which would make
+                                  the invariant VACUOUS rather than red
+rule 7, the class fixtures    3, all caught
+  M9 the BAA class narrowed     sentence_pattern -> `\bBAAs?\b` alone, which
+     to the acronym               stops matching "business associate"
+ M10 the security class's       the two rotation limbs deleted from the
+     rotation limbs deleted       pattern
+ M11 an example approved        #295's AES sentence added to
+     away                         approved_sentences instead of removed
+============================  =============================================
+
+⚠ M1 IS THE ONE THAT MEASURES WHAT RULE 5 ADDED. M4 is #307's own case and is
+also caught by rule 1, so it proves the guard fires and not that it covers
+anything new. M1 changes a number on a page no other guard in either suite
+reads, and it is caught — which is the property #307 said was missing.
+
+⚠ AND THE TWO SENTENCES #295 GOT THROUGH ARE NOW FIXTURES, not memories. They
+live in ``must_match_examples`` in claims.yaml and rule 7 runs them on every
+build, so neither class can be loosened back to the state that missed them.
 
 Run:  pytest foxy-sale-page -q
 """
@@ -543,3 +630,205 @@ def test_the_backup_locations_are_both_stated(register):
         assert not missing, (
             f"{rel} states the backup arrangement without naming {missing}. "
             f"Both locations are real: {spec['detail']}")
+
+
+# ── 5 · PINS — the claim's TEXT, not only its coordinates ───────────────────
+#
+# ⚠ #307. See the module docstring for why a line number is not an identifier.
+#
+# The match is deliberately forgiving of MARKUP and strict about WORDS: tags are
+# stripped, entities resolved, whitespace squashed to nothing. So wrapping a
+# phrase in <strong>, re-indenting a table cell or reflowing a paragraph does not
+# fire the guard, and changing what the sentence asserts does. That asymmetry is
+# the whole design: a pin that breaks on copy-editing is a pin somebody deletes,
+# and #307 is a finding about a guard that was too weak, not one that was noisy.
+
+_PIN_AT = re.compile(r"^(?P<file>[^:]+\.[A-Za-z0-9]+):(?P<line>\d+)$")
+
+#: A pin has to carry the CLAIM, and "Qatar" does not. Measured over the 21 pins
+#: that exist: the shortest is 20 normalised characters. The floor is set below
+#: that so it fails a lazy pin rather than an existing one.
+_PIN_MIN_CHARS = 16
+
+
+def _pin_norm(text: str) -> str:
+    """Tags out, entities resolved, whitespace gone. See the block comment."""
+    return re.sub(r"\s+", "", html.unescape(_TAG.sub(" ", text)))
+
+
+def test_every_surface_claim_declares_how_it_is_pinned(crosswalk, register):
+    """⚠ THE SCHEMA HALF, AND THE HALF THAT KEEPS THE GUARD RUNNABLE.
+
+    An entry may not simply omit `pins` \u2014 that is how a check becomes optional
+    and then becomes nothing. Every entry declares one of exactly two things:
+
+    · `pins`: a non-empty list of {at, text}, or
+    · `pins: null`, which is allowed only when there is genuinely nothing in this
+      repo to pin \u2014 either the claim is on no surface at all (`where: null`), or
+      the text was deleted, in which case `retired_as` must name the claims.yaml
+      `retired` entry whose must_not_match pattern is what fails if it returns.
+
+    ⚠ THE `delete` VERDICTS ARE THE REASON THIS TEST EXISTS. Three of them name
+    text this repo no longer has. Skipping them would have been the easy reading
+    and would have left three entries permanently unguarded in silence; routing
+    them to `retired` instead means the deletion is pinned by pattern where the
+    text cannot be pinned by line."""
+    retired_ids = {e["id"] for e in register["retired"]}
+    problems = []
+    for c in crosswalk["surface_claims"]:
+        head = repr(c["claim"][:70])
+        if "pins" not in c:
+            problems.append(f"{head}: no `pins` key at all. Declare a list, or "
+                            f"`pins: null` with `retired_as`.")
+            continue
+        for rid in c.get("retired_as") or []:
+            if rid not in retired_ids:
+                problems.append(f"{head}: retired_as names {rid!r}, which is not "
+                                f"an id in claims.yaml `retired`.")
+        pins = c["pins"]
+        if pins is None:
+            if c["where"] is None:
+                continue                      # on no surface; nothing to pin
+            if not (c.get("retired_as") or []):
+                problems.append(
+                    f"{head}: `pins: null` on a claim that names a location. "
+                    f"Either pin the text that is there now, or \u2014 if the text was "
+                    f"deleted \u2014 name the `retired` entry in `retired_as`.")
+            continue
+        if not pins:
+            problems.append(f"{head}: `pins` is an empty list. Use null plus a "
+                            f"reason; an empty list guards nothing quietly.")
+        for pin in pins:
+            if not _PIN_AT.match(pin.get("at", "")):
+                problems.append(f"{head}: pin `at` is {pin.get('at')!r}, not file:line")
+            if len(_pin_norm(pin.get("text", ""))) < _PIN_MIN_CHARS:
+                problems.append(
+                    f"{head}: pin text {pin.get('text')!r} is under "
+                    f"{_PIN_MIN_CHARS} characters once normalised. A pin that "
+                    f"short locates a word, not a claim.")
+    assert not problems, "\n  ".join([""] + problems)
+
+
+def test_every_pinned_claim_text_is_still_at_its_line(crosswalk):
+    """⚠ THE RULE #307 ASKED FOR. A claim rewritten IN PLACE fails here.
+
+    This is the check no line-number refresh can perform, in either direction:
+    the refresh proves the coordinate is current, and this proves the sentence at
+    the coordinate still says what the register says it says."""
+    drifted = []
+    for c in crosswalk["surface_claims"]:
+        for pin in c.get("pins") or []:
+            m = _PIN_AT.match(pin["at"])
+            path = ROOT / m.group("file")
+            want = _pin_norm(pin["text"])
+            if not path.exists():
+                drifted.append(f"{pin['at']}: the file does not exist")
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+            n = int(m.group("line"))
+            if n > len(lines):
+                drifted.append(f"{pin['at']}: the file has only {len(lines)} lines")
+                continue
+            if want in _pin_norm(lines[n - 1]):
+                continue
+            elsewhere = [i for i, line in enumerate(lines, 1)
+                         if want in _pin_norm(line)]
+            where = (f"it is now at line {elsewhere[0]} \u2014 the claim MOVED, so "
+                     f"update `at`" if elsewhere else
+                     "it is nowhere in the file \u2014 the claim was REWRITTEN or "
+                     "REMOVED")
+            drifted.append(f"{pin['at']}: {pin['text'][:90]!r} \u2014 {where}")
+    assert not drifted, (
+        "a pinned surface claim is not where crosswalk.yaml says it is, or no "
+        "longer says what it says:\n  " + "\n  ".join(drifted)
+        + "\n\nA MOVED claim is a line-number fix. A REWRITTEN one is not \u2014 decide "
+          "whether the new wording is true, then update the pin AND the entry's "
+          "`claim`, `verdict` and `why`. That decision is what this guard exists "
+          "to force; see #307.")
+
+
+# ── 6 · THE CROSSWALK'S OWN FIELD SEMANTICS ────────────────────────────────
+def test_a_crosswalk_row_grades_consistently_with_its_evidence(crosswalk):
+    """⚠ #306, ENCODED AS A PREDICATE RATHER THAN AS A LIST OF SIX ROWS.
+
+    #305 named two rows that graded `gap` while naming inspectable evidence. The
+    file had six. The lesson filed with #306 is that a defect described BY
+    EXAMPLE gets fixed by example, so this test states the property instead:
+
+    · `gap` means no control, or a control that FAILS the clause. A row that can
+      name evidence an outsider could inspect is not one \u2014 it is `partial`, and
+      how much of the clause it discharges is a `notes` question.
+    · `met` means the requirement is discharged AND a third party can inspect the
+      evidence. A `met` row with no evidence is the same contradiction the other
+      way round.
+
+    ⚠ THE VOCABULARY CHECK IS NOT DECORATION. Both predicates key on the literal
+    string `gap` / `met`. A typo \u2014 `Gap`, `GAP`, `partial ` \u2014 would make them
+    silently vacuous rather than red, which is exactly the failure mode this file
+    was written to stop.
+
+    ⚠ AND THE `met` HALF CURRENTLY HAS ZERO SUBJECTS, deliberately: there are no
+    `met` rows and README.md explains at length why. It is armed for the day
+    somebody promotes one, which is the moment the field semantics matter most."""
+    known = {"met", "partial", "gap", "not-applicable"}
+    unknown = sorted({r["status"] for r in crosswalk["rows"]} - known)
+    assert not unknown, (
+        f"crosswalk.yaml uses status values that are not in README.md's "
+        f"vocabulary: {unknown}. The checks below key on the exact strings, so "
+        f"an unrecognised one would pass them without being read.")
+
+    contradictions = [
+        f"{r['id']} ({r['regime']} {r['clause']}) is `gap` and names evidence: "
+        f"{str(r['evidence'])[:110]!r}"
+        for r in crosswalk["rows"]
+        if r["status"] == "gap" and r["evidence"] is not None]
+    contradictions += [
+        f"{r['id']} ({r['regime']} {r['clause']}) is `met` and names no evidence"
+        for r in crosswalk["rows"]
+        if r["status"] == "met" and r["evidence"] is None]
+    assert not contradictions, (
+        "\n  ".join([""] + contradictions)
+        + "\n\nRead docs/compliance/README.md `control` vs `evidence` before "
+          "changing either field. If the row really is a gap, the evidence line "
+          "is the wrong one \u2014 GDPR-009 is the worked example, where Art. 46 wants "
+          "an EXECUTED safeguard and a published promise to execute one is not a "
+          "partial version of it. If the evidence really is inspectable, the "
+          "status is the wrong one.")
+
+
+# ── 7 · THE CLASS PATTERNS STILL CATCH WHAT THEY WERE BUILT FOR ────────────
+def test_every_class_pattern_still_matches_its_examples(register):
+    """⚠ #292 ONE LEVEL DOWN, AND #295's TWO SENTENCES MADE PERMANENT.
+
+    A claim class is a regex, and a regex can be loosened until it selects
+    nothing \u2014 at which point `approved_sentences` empties, every class test
+    passes, and the guard reports success while covering nothing. That is the
+    same shape as a `scope_to` pointing at a renamed page, which this file
+    already guards.
+
+    So each class may carry `must_match_examples`: sentences it MUST select. The
+    two new classes carry the two #295 got through, verbatim, plus invented text
+    probing each separate limb of the pattern. They are counter-examples, so an
+    example that appears in `approved_sentences` is a contradiction \u2014 approving
+    one would neutralise it while leaving this test green."""
+    problems = []
+    for name, spec in _classes(register).items():
+        examples = spec.get("must_match_examples") or []
+        pattern = _class_pattern(spec)
+        approved = set(spec["approved_sentences"])
+        for example in examples:
+            if not pattern.search(example):
+                problems.append(
+                    f"[{name}] no longer selects {example[:120]!r}")
+            if example in approved:
+                problems.append(
+                    f"[{name}] {example[:90]!r} is BOTH a must_match_example and "
+                    f"an approved sentence. An example is a counter-example: "
+                    f"approving it makes this test green and the class blind.")
+    assert not problems, (
+        "\n  ".join([""] + problems)
+        + "\n\nThese are the sentences the class was built to catch \u2014 for the two "
+          "newest classes, the ones #295 measured getting through. If the pattern "
+          "no longer selects one, the class has been loosened back past the "
+          "defect it exists for.")
+
