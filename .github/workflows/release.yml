@@ -30,6 +30,11 @@ name: Release
 on:
   # ⛔ TAG TRIGGER REMOVED 2026-08-23 — hackathon freeze.
   #
+  # ⛔ FROZEN AGAIN 2026-09-04 — Alibaba submission, owner decision.
+  # Nothing releases or ships from this repo until the owner has set up and
+  # approved the Alibaba Cloud target — commits only until then.
+  # `workflow_dispatch` stays in this file but must NOT be run.
+  #
   # This publishes the SDK to PyPI and copies desktop installers to the VM.
   # A tag pushed in the devtool repo would publish a real package under the
   # real name. Releases happen from the original repo only.

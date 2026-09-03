@@ -15,6 +15,13 @@ name: Continuous Deployment
 on:
   # ⛔ PUSH TRIGGER REMOVED 2026-08-23 — hackathon freeze.
   #
+  # ⛔ FROZEN AGAIN 2026-09-04 — Alibaba submission, owner decision.
+  # The deployment target moves to Alibaba Cloud. NOTHING deploys from this
+  # repo until the owner has set that up and approves it — commits only until
+  # then. `workflow_dispatch` stays in this file but must NOT be run: it SSHes
+  # to the OLD production VM (34.18.4.58) and deploys `origin/main` of the
+  # frozen repo onto it. One manual run overwrites what judges see.
+  #
   # This workflow deploys to the PRODUCTION VM (34.18.4.58), which is serving
   # the frozen hackathon submission. In this repo it must NEVER fire on a push.
   # The devtool stack deploys to app2/admin2/checkout2 by hand; see the vault
