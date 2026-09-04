@@ -37,9 +37,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth import require_user, resolve_org
+from ..auth import require_user
 from ..db import get_db
-from ..models import AuditEvent, AuditLog, HumanReview, Organization, User
+from ..models import AuditEvent, AuditLog, HumanReview, User
 from ..schemas import ReviewListResponse, ReviewResolveRequest
 from .logs import limiter          # the app's single Limiter instance
 
@@ -73,7 +73,7 @@ def _item(review: HumanReview, log: AuditLog) -> dict:
 @limiter.limit("60/minute")
 def list_reviews(
     request: Request,
-    org: Organization = Depends(resolve_org),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
     status: str | None = Query(default=None, pattern="^(pending|resolved)$",
                                description="omit for every review, resolved included"),
@@ -94,6 +94,16 @@ def list_reviews(
     ⚠ NO `status` FILTER BY DEFAULT. A queue endpoint that silently hides resolved
     rows answers a different question from the one asked and gives a client no way
     to notice; `?status=pending` asks for the worklist explicitly.
+
+    ⚠ `require_user`, NOT `resolve_org`, AND THE REASON IS `note`. Every other
+    customer read here takes either the SDK Bearer key or a dashboard session,
+    which is right for content-blind ledger data. This response is not that: it
+    carries `note`, the one free-text field a human writes, which this phase
+    documents as able to carry raw prompt content. `resolve_org` would have handed
+    that to any holder of the workspace's API key — a credential that lives in
+    application config on the customer's servers, precisely so it never needs to
+    see content. A read looser than the write it feeds is the wrong way round, so
+    both verbs take a human session and the queue is a dashboard surface.
     """
     query = (select(HumanReview, AuditLog)
              .join(AuditLog, AuditLog.id == HumanReview.audit_log_id)
@@ -101,7 +111,8 @@ def list_reviews(
              # same rule `account_export` is held to. RLS confines the role
              # already, which is exactly why a dropped clause here would be
              # invisible to a behavioural cross-tenant test.
-             .where(HumanReview.org_id == org.id, AuditLog.org_id == org.id))
+             .where(HumanReview.org_id == user.org_id,
+                    AuditLog.org_id == user.org_id))
     if status is not None:
         query = query.where(HumanReview.status == status)
     if after_seq:
@@ -149,11 +160,30 @@ def resolve_review(
     determination would read as two contradictory human decisions in a
     tamper-evident record. The FIRST decision is the one that was made.
 
+    ⚠ AND THE `SELECT` TAKES A ROW LOCK, WHICH IS WHAT MAKES THAT TRUE UNDER
+    CONCURRENCY. Without `with_for_update` the check and the write are two
+    statements with a gap between them: two reviewers clicking Resolve at the same
+    moment — or one impatient double-click — both read `status == 'pending'`, both
+    fall through the guard, both write, and both append an evidence event. The
+    UPDATE would serialise on the row lock at COMMIT time and hide it, because
+    neither transaction re-reads the status it already decided on. So the lock has
+    to be taken by the READ: the second request blocks in the `SELECT`, and when it
+    proceeds it sees `resolved` and returns the standing decision. A
+    read-modify-write on a row whose whole point is that it is written once cannot
+    be left to chance in the one product where an append-only record is the
+    deliverable. Pinned by
+    `test_a_resolve_that_loses_the_race_appends_no_evidence_event`, which is
+    written to FAIL without the lock — it holds the row in a competing
+    transaction, resolves it there while the request is in flight, and checks
+    that the losing request neither overwrites the decision nor appends to the
+    record.
+
     ⚠ AND NOTHING HERE TOUCHES `audit_logs`. See this module's docstring.
     """
     review = db.execute(
         select(HumanReview).where(HumanReview.id == review_id,
                                   HumanReview.org_id == user.org_id)
+        .with_for_update()
     ).scalar_one_or_none()
     if review is None:
         # 404 rather than 403 on another workspace's id: the two answers are the
@@ -162,8 +192,12 @@ def resolve_review(
         raise HTTPException(status_code=404, detail="No such review")
 
     if review.status == "resolved":
-        log = db.get(AuditLog, review.audit_log_id)
-        return _item(review, log)
+        item = _item(review, db.get(AuditLog, review.audit_log_id))
+        # Release the row lock now rather than at session close. This request
+        # writes nothing, and a lock held for the length of the response would
+        # queue every other caller behind a read.
+        db.rollback()
+        return item
 
     now = datetime.now(timezone.utc)
     review.status = "resolved"

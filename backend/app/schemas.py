@@ -670,10 +670,13 @@ class ReviewPage(BaseModel):
     learned `after_seq` + `page.next_after_seq` + `page.complete` for the export
     reads this queue with the code it already has.
 
-    `prev_chain_hash` is the one field of the export's block deliberately ABSENT:
-    there it seeds a recompute of the chain, and this endpoint returns queue
-    entries rather than chain rows. Carrying it here would be a verifiability
-    claim about an artefact that makes none.
+    TWO of the export's fields are deliberately ABSENT, both for the same reason:
+    they describe a chain, and this endpoint returns queue entries rather than
+    chain rows. `prev_chain_hash` is what seeds a recompute of the first row in a
+    page; `note` is prose telling an auditor which rows a partial export does not
+    prove anything about, and it names the verifier. Carrying either here would be
+    a verifiability claim about an artefact that makes none — a queue page is a
+    worklist, and nothing recomputes it.
     """
 
     from_seq: int | None

@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
 
 import pytest
 from sqlalchemy import text
 
-from app import qwen_judge
+from app import org_notifications, qwen_judge
 from app import worker as workermod
 from app.db import SessionLocal, engine
 
@@ -308,3 +310,198 @@ def test_the_queue_pages_on_the_same_seq_cursor_the_export_uses(
     assert [item["seq"] for item in rest["items"]] == [3]
     assert rest["page"]["complete"] is True
     assert rest["page"]["next"] is None
+
+
+# ══ 7 · two reviewers, one determination ════════════════════════════════════
+
+def _blocked_backends() -> int:
+    """How many sessions on this database are waiting on a lock."""
+    with engine.begin() as conn:
+        return conn.execute(text(
+            "SELECT COUNT(*) FROM pg_stat_activity "
+            " WHERE datname = current_database() AND wait_event_type = 'Lock'")
+        ).scalar_one()
+
+
+def _wait_until_blocked(timeout=20.0) -> bool:
+    """Block until the in-flight request has actually reached the locked row.
+
+    Polling the server beats sleeping a guessed interval: it is what makes this
+    test deterministic rather than timing-dependent, and it works whether the
+    request stops at the SELECT (with the lock) or at the UPDATE (without it) —
+    all it establishes is that the request got there.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _blocked_backends():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_resolve_that_loses_the_race_appends_no_evidence_event(escalated, login):
+    """THE SEQUENTIAL IDEMPOTENCE TEST ABOVE DOES NOT COVER THIS, and the gap is
+    where the guarantee actually breaks.
+
+    Test 5 resolves twice in a row, so the second request reads a row the first
+    already committed and takes the early return. This one overlaps them: a
+    competing transaction holds the review row and resolves it WHILE the endpoint's
+    request is in flight — two reviewers on the same queue, or one impatient
+    double-click.
+
+    Without `with_for_update` on the endpoint's SELECT, the check and the write
+    are two statements with a gap between them. The plain SELECT does not wait, so
+    it reads `pending`, falls through the guard, and only its UPDATE blocks — and
+    when the winner commits, the loser proceeds on a decision it made against a
+    row that no longer says that. It overwrites the recorded resolution AND
+    appends a second `human_review_resolved` event. That event cannot be taken
+    back: the record is append-only, so it would permanently hold two
+    contradictory human decisions about one determination, in the product whose
+    entire deliverable is that the record can be trusted.
+
+    With the lock the loser waits in the SELECT, and Postgres hands it the row
+    version the winner committed — so it sees `resolved`, returns the standing
+    decision, and writes nothing.
+
+    ⚠ THE WINNER HERE IS RAW SQL, DELIBERATELY. It resolves the row without
+    appending an event, so the count this asserts is ZERO and belongs entirely to
+    the endpoint. A second HTTP request as the winner would leave one event on the
+    table and turn a clean 0-or-1 into a 1-or-2 that a reader has to reason about.
+    """
+    review, = _reviews(escalated["org_id"])
+    reviewer = login(escalated["admin_email"], escalated["admin_password"])
+
+    winner = engine.connect()
+    held = winner.begin()
+    winner.execute(text("SELECT id FROM human_reviews WHERE id = :i FOR UPDATE"),
+                   {"i": review["id"]})
+
+    outcome: dict = {}
+
+    def _resolve():
+        outcome["response"] = reviewer.post(
+            f"/v1/reviews/{review['id']}/resolve", json={"resolution": "cleared"})
+
+    loser = threading.Thread(target=_resolve)
+    loser.start()
+    try:
+        assert _wait_until_blocked(), (
+            "the resolve request never reached the locked row — this test proves "
+            "nothing about concurrency unless the two genuinely overlap")
+        # The other reviewer decides first, and commits.
+        winner.execute(text(
+            "UPDATE human_reviews SET status = 'resolved', "
+            "       resolution = 'confirmed_breach', resolved_at = now(), "
+            "       resolved_by = :by WHERE id = :i"),
+            {"by": escalated["admin_email"], "i": review["id"]})
+        held.commit()
+    finally:
+        winner.close()
+        loser.join(timeout=30)
+        assert not loser.is_alive(), "the losing resolve never returned"
+
+    response = outcome["response"]
+    assert response.status_code == 200, response.text
+    assert response.json()["resolution"] == "confirmed_breach", (
+        "the loser was told its own decision had been recorded")
+    assert _reviews(escalated["org_id"])[0]["resolution"] == "confirmed_breach", (
+        "the loser overwrote a governance decision that was already recorded")
+    assert _event_count(escalated["org_id"], "human_review_resolved") == 0, (
+        "a resolve that lost the race still appended an evidence event")
+
+
+# ══ 8 · the queue is a human surface, because `note` is human text ══════════
+
+def test_the_sdk_key_cannot_read_the_queue(escalated, client):
+    """`note` is free text a reviewer typed, so it can carry anything they type —
+    including the raw prompt content this product is built never to hold.
+
+    The workspace's API key lives in application config on the customer's own
+    servers, precisely so it never needs to see content, and every OTHER customer
+    read here accepts it (`auth.resolve_org` takes the Bearer key OR a session).
+    This one must not: resolving already requires a human session, and a read
+    looser than the write it feeds is the wrong way round.
+    """
+    denied = client.get("/v1/reviews", headers=escalated["auth"])
+    assert denied.status_code == 401, denied.text
+    assert "clinical tag" not in denied.text, "the queue leaked through the SDK key"
+
+
+# ══ 9 · and somebody is actually told ══════════════════════════════════════
+
+def _notify_to(org_id, **fields) -> None:
+    sets = ", ".join(f"{name} = :{name}" for name in fields)
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE org_policies SET {sets} WHERE org_id = :o"),
+                     {**fields, "o": str(org_id)})
+
+
+def _grade_and_drain(monkeypatch):
+    """Grade every pending row, then drain the notice queue as the thread does.
+
+    Draining is a separate step in production and therefore here: `_grade_one`
+    only ENQUEUES, so that a wedged mail provider can never stall the batch that
+    also drives the worker heartbeat.
+    """
+    sent, posted = [], []
+    monkeypatch.setattr(org_notifications.email_mod, "send_email",
+                        lambda **kw: sent.append(kw) or True)
+    monkeypatch.setattr(org_notifications.requests, "post",
+                        lambda url, **kw: posted.append(kw.get("json")) or True)
+    _grade_all()
+    db = SessionLocal()
+    try:
+        org_notifications.drain_breach_notices(db)
+    finally:
+        db.close()
+    return sent, posted
+
+
+def test_an_escalation_notifies_the_workspace_and_does_not_call_it_a_breach(
+        make_org, client, monkeypatch):
+    """The hole A1 exists to close has TWO halves, and the queue row is only one.
+
+    `worker._grade_one`'s single post-commit notification branch gates on
+    `verdict.policy_breach`, which is False on an escalation — so before this
+    phase an escalation told nobody. A `human_reviews` row that nothing announces
+    is that same defect wearing a different hat: until the A2 reviewer page ships,
+    this notice is the only way an escalation reaches a person at all.
+
+    ⚠ AND IT MUST NOT ARRIVE AS A BREACH. The judge found no violation; it
+    declined to decide and asked for a person, and `passport.compliant_events`
+    subtracts the two separately. An integration routing on the webhook's `type`
+    has to be able to tell them apart, and so does a customer reading a subject
+    line at 2am.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test",
+               notify_webhook_url="https://corp.test/hook")
+    _ingest(client, org)
+
+    sent, posted = _grade_and_drain(monkeypatch)
+
+    assert [message["to"] for message in sent] == ["reviews@corp.test"], sent
+    subject = sent[0]["subject"]
+    assert "breach" not in subject.lower(), (
+        f"an escalation was announced as a breach: {subject!r}")
+    assert [payload["type"] for payload in posted] == ["human_review"], posted
+    assert posted[0]["seq"] == 1
+
+
+def test_a_clean_verdict_notifies_nobody(make_org, client, monkeypatch):
+    """The escalation notice rides the breach notifier's queue, drain and thread.
+    Sharing the transport must not share the trigger: a clean grade stays silent.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _graded(decision="clean"))
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test",
+               notify_webhook_url="https://corp.test/hook")
+    _ingest(client, org)
+
+    sent, posted = _grade_and_drain(monkeypatch)
+    assert sent == [] and posted == []

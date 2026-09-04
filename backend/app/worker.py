@@ -292,19 +292,21 @@ def _queue_human_review(db: Session, row, verdict) -> None:
         db.execute(_QUEUE_REVIEW_SQL,
                    {"id": uuid.uuid4(), "org_id": row["org_id"],
                     "audit_log_id": row["id"],
-                    # ⚠ THE SLICE IS FOR THE MERGED CASE, NOT THE TOOL CALL.
-                    # `qwen_judge._escalation` already bounds its reason at 300,
-                    # so on a single-judge escalation this is a no-op and the
-                    # value is carried through untouched. But an escalation that
-                    # SURVIVED `judge.combine` — qwen escalating beside gemini
-                    # returning clean — carries a merged reason: a
+                    # ⚠ THE SLICE IS FOR THE MERGED CASE, NOT THE TOOL CALL, AND
+                    # IT TRUNCATES RATHER THAN GUARDS. `qwen_judge._escalation`
+                    # already bounds its reason at 300, so on a single-judge
+                    # escalation this is a no-op. An escalation that SURVIVED
+                    # `judge.combine` — qwen escalating beside gemini returning
+                    # clean — carries a merged reason instead: a
                     # `multi_judge_human_review: ` prefix plus both judges'
-                    # 300-character reasons, which overruns `reason` and would
-                    # raise. Best-effort catches that, so the cost would be a
-                    # silently missing queue entry precisely when two judges
-                    # disagreed — the case a person most needs to see. The full
-                    # merged reason is on the ledger row's `gemini_verdict`
-                    # either way; only the worklist's copy is bounded.
+                    # 300-character reasons. Without the slice that INSERT would
+                    # raise, best-effort would swallow it, and the queue would
+                    # silently lose its entry precisely when two judges
+                    # disagreed — the case a person most needs to see. With it,
+                    # the entry always lands and the worklist's copy of a merged
+                    # reason is cut at 300 characters; the full text is on the
+                    # ledger row's `gemini_verdict` either way, so nothing is
+                    # lost from the record, only from the worklist's preview.
                     "reason": verdict.reason[:300],
                     "risk_score": verdict.risk_score})
         db.commit()
@@ -417,6 +419,12 @@ def _grade_one(db: Session, row) -> None:
     # a gemini breach is a breach, and must not also queue a review.
     if verdict.decision == "human_review":
         _queue_human_review(db, row, verdict)
+        # ⚠ AND THE ESCALATION IS ANNOUNCED, not merely filed. A worklist row
+        # nobody is told about is the same defect A1 exists to close wearing a
+        # different hat, and until the A2 reviewer page ships this notice is the
+        # only way an escalation reaches a person. Queued, never sent here —
+        # the same contract as the breach notices above.
+        org_notifications.enqueue_escalation_notice(row, verdict)
     # Outbound webhook subscriptions (P3 §F): a signed 'graded' (and 'breach')
     # event per matching subscription. QUEUED, not delivered here — this fires
     # on EVERY graded row, and one synchronous POST per subscription inside the

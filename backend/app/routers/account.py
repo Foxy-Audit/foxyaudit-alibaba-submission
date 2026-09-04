@@ -30,8 +30,8 @@ from ..auth import require_role, require_step_up_user, require_user, resolve_org
 from ..config import get_settings
 from ..db import get_db
 from ..models import (
-    AccountAction, AiSystem, ApiKey, AuditLog, ChainAnchor, ExportJob, HumanReview,
-    Invoice, LoginEvent, Notification, Organization, OrgPolicy, PaymentEvent,
+    AccountAction, AiSystem, ApiKey, AuditEvent, AuditLog, ChainAnchor, ExportJob,
+    HumanReview, Invoice, LoginEvent, Notification, Organization, OrgPolicy, PaymentEvent,
     SsoConnection, StripeEvent, UsageDaily, User, WebhookSubscription,
 )
 from .logs import limiter          # the app's single Limiter instance
@@ -488,11 +488,23 @@ EXPORT_EXCLUSIONS = {
         "Auth plumbing. Single-use, short-lived tokens that hand a browser "
         "session to the desktop app, stored only as a one-way hash."),
     # (c) org-scoped, but not data about the subject.
+    # ⚠ THIS REASON WAS TRUE OF ONE ROW SHAPE AND THE TABLE NOW HOLDS TWO. It
+    # read "one row per graded interaction … adds nothing you do not have", which
+    # A1 made FALSE the moment `human_review_resolved` started landing here: that
+    # row is not a projection of any ledger column, and nothing else in the bundle
+    # carried it. A stale exclusion reason is the #252 defect exactly — a
+    # completeness claim that stopped describing what it excludes — so the second
+    # shape is exported under `human_reviews` and this sentence now names both.
     "audit_events": (
-        "Duplicate of data already in this bundle. It is an append-only "
-        "projection of the same grading verdict carried on every ledger row as "
-        "gemini_verdict, one row per graded interaction — exporting it would "
-        "roughly double the largest section and add nothing you do not have."),
+        "Duplicate of data already in this bundle, in both of the shapes it "
+        "holds. Its `verdict` rows are an append-only projection of the same "
+        "grading verdict carried on every ledger row as gemini_verdict, one per "
+        "graded interaction — exporting them would roughly double the largest "
+        "section and add nothing you do not have. Its `human_review_resolved` "
+        "rows are one per resolved escalation and are NOT a projection of any "
+        "ledger column, so they are carried in full under human_reviews "
+        "instead: the resolution, who made it and when, the judge's reason for "
+        "escalating, and that event's own event_hash."),
     "traffic_events": (
         "Server access log, written for platform operations, abuse detection "
         "and incident response across all three sites. It DOES record which "
@@ -781,9 +793,24 @@ def account_export(
     # list below: that list is BOUNDED at EXPORT_PAGE_MAX, so a review pointing
     # past the ledger page would have silently exported a null sequence — an
     # escalation the bundle could not tie to an interaction.
+    #
+    # ⚠ AND OUTER-JOINED TO THE RESOLUTION EVENT FOR ITS `event_hash`. That digest
+    # is the ONLY part of a `human_review_resolved` row not otherwise in this
+    # bundle, and `EXPORT_EXCLUSIONS["audit_events"]` above now states that the
+    # row is carried here in full. Dropping it would make that sentence false, in
+    # the file whose whole subject is what it does and does not contain. Null
+    # while a review is still pending — there is no event to hash yet.
+    _resolution_event = (
+        select(AuditEvent.audit_log_id, AuditEvent.event_hash)
+        .where(AuditEvent.org_id == admin.org_id,
+               AuditEvent.event_type == "human_review_resolved")
+        .subquery())
     reviews = db.execute(
-        select(HumanReview, AuditLog.seq)
+        select(HumanReview, AuditLog.seq, _resolution_event.c.event_hash)
         .join(AuditLog, AuditLog.id == HumanReview.audit_log_id)
+        .join(_resolution_event,
+              _resolution_event.c.audit_log_id == HumanReview.audit_log_id,
+              isouter=True)
         .where(HumanReview.org_id == admin.org_id, AuditLog.org_id == admin.org_id)
         .order_by(HumanReview.created_at.asc())
     ).all()
@@ -941,12 +968,21 @@ def account_export(
         # is free text a reviewer typed and those artefacts are content-blind.
         # This bundle is the opposite kind of document: the subject asking for
         # their own data back, including the words they wrote themselves.
-        "human_reviews": [{"seq": seq,
+        # `id` is here because the resolution event's payload names it as
+        # `review_id`, and the sentence in EXPORT_EXCLUSIONS["audit_events"] says
+        # that row is carried in full. Every field of that payload is in this
+        # projection: review_id, resolution, resolved_by, resolved_at,
+        # escalation_reason, escalation_risk_score — and its event_hash beside
+        # them. Add a field to the event and it is added here, or that sentence
+        # stops being true.
+        "human_reviews": [{"id": str(h.id), "seq": seq,
                            "status": h.status, "resolution": h.resolution,
                            "reason": h.reason, "risk_score": h.risk_score,
                            "note": h.note, "created_at": _iso(h.created_at),
                            "resolved_at": _iso(h.resolved_at),
-                           "resolved_by": h.resolved_by} for h, seq in reviews],
+                           "resolved_by": h.resolved_by,
+                           "resolution_event_hash": event_hash}
+                          for h, seq, event_hash in reviews],
         # ⚠ #269: THE SAME PROJECTION AS GET /v1/logs/export, NOT A SUMMARY OF IT.
         # The nine columns this used to carry could not be verified: the chain
         # hash is taken over seventeen inputs, thirteen of which were absent, so

@@ -1,11 +1,21 @@
-"""Org-level breach notices — queued by grading, sent from their own thread.
+"""Org-level notices — queued by grading, sent from their own thread.
 
 This is the notice a tenant configures in their policy
 (``org_policies.notify_on_breach == "immediate"``): one email to the org's
-notification address, plus an optional webhook POST. It is a different thing
+notification address, plus an optional webhook POST.
+
+It is a different thing
 from the per-user alerts in ``user_notifications`` — that fan-out is driven by
 each member's own preference bag, this one by the org's policy — and the two are
 deduped against each other so no address receives the same breach twice.
+
+**Two kinds travel this way**, dispatched on the queued item's ``kind``: a graded
+BREACH, which is what this module was built for, and since A1 an ESCALATION — a
+verdict the agentic judge declined to reach, asking for a person instead. They
+share the queue, the drain and the thread because the delivery problem is
+identical; they share nothing else, and ``send_escalation_notice`` is careful
+never to announce an escalation as a finding. An item with no ``kind`` is a
+breach, so notices already in flight across the A1 deploy keep their meaning.
 
 **Why it moved out of the grading batch.** It used to be sent inline in
 ``worker._grade_one``: a synchronous ``send_email`` plus a 5-second webhook POST,
@@ -117,6 +127,98 @@ def enqueue_breach_notice(row, verdict) -> None:
         log.warning("could not queue org breach notice: %s", exc)
 
 
+def enqueue_escalation_notice(row, verdict) -> None:
+    """A1 · the same contract as :func:`enqueue_breach_notice`, for an escalation.
+
+    ⚠ THIS IS THE HALF OF A1 THAT MAKES THE QUEUE ARRIVE. A `human_reviews` row
+    nobody is told about is a worklist nobody opens, which is the defect A1 exists
+    to close wearing a different hat — and until the A2 reviewer page ships, this
+    email is the ONLY way an escalation reaches a person at all.
+
+    Rides the same queue and the same drain thread as the breach notice rather
+    than growing a second one: the delivery problem is identical, and a second
+    thread would be a second thing that can stall the worker heartbeat. `kind`
+    is what `drain_breach_notices` dispatches on; an item without it is a breach,
+    so every notice already in flight when this deploys is unaffected.
+    """
+    try:
+        _NOTICE_QUEUE.put_nowait({
+            "kind": "human_review",
+            "org_id": str(row["org_id"]),
+            "seq": row.get("seq"),
+            "risk": verdict.risk_score,
+            "reason": (verdict.reason or "")[:200],
+        })
+    except queue.Full:
+        log.warning("org notice queue full — dropping escalation notice for org "
+                    "%s seq %s", row.get("org_id"), row.get("seq"))
+    except Exception as exc:                # noqa: BLE001 — never break grading
+        log.warning("could not queue escalation notice: %s", exc)
+
+
+def send_escalation_notice(db: Session, item: dict) -> bool:
+    """Tell a tenant a review is waiting. Returns True if an email went out.
+
+    ⚠ IT IS NOT A BREACH AND MUST NOT READ AS ONE. The judge did not find a
+    violation — it declined to decide and asked for a person, `policy_breach` is
+    False, and `passport.compliant_events` subtracts the two separately. So the
+    subject, the tone and the webhook `type` all say escalation; nothing here
+    calls it a finding.
+
+    ⚠ AND IT REUSES THE TENANT'S EXISTING PREFERENCE RATHER THAN INVENTING ONE.
+    `org_policies` has no "notify me about escalations" column and A1 does not add
+    a fifth policy field, a migration for it and two clients' worth of UI in a
+    backend-only phase. A tenant who asked to hear about graded outcomes
+    immediately hears about this one; `monitor` still suppresses the email and
+    still fires the webhook; `none` still means none, because an escalation that
+    overrides an off switch is a dark pattern exactly as a breach would be.
+    A dedicated preference is recorded as an A1 follow-up in the plan.
+    """
+    oid = uuid.UUID(str(item["org_id"]))
+    policy = db.get(OrgPolicy, oid)
+    if policy is None:
+        return False
+    mode, wants = policy.enforcement_mode, policy.notify_on_breach
+    if not breach_notice_wanted(mode, wants):
+        return False
+
+    seq, risk, reason = item.get("seq"), item.get("risk"), item.get("reason") or ""
+    org = db.get(Organization, oid)
+    sent = False
+    to = policy.notify_email or (org.contact_email if org else None)
+    if to and breach_email_allowed(mode, wants):
+        html, plain = et.layout(
+            title="A review is waiting",
+            preheader=f"The AI judge asked for a human decision on record #{seq} "
+                      f"(risk {risk}).",
+            blocks=[
+                et.paragraph(
+                    f"The AI judge did not reach a verdict on record #{seq} and "
+                    f"asked for a person to decide (risk {risk}). This is not a "
+                    f"breach — it is a determination the model declined to make."),
+                et.callout(reason, tone="warn"),
+                et.muted("Open your dashboard to resolve it. Only hashes are "
+                         "stored — never the prompt or response."),
+            ],
+            surface="customer",
+        )
+        email_mod.send_email(
+            to=to, subject="\U0001f7e3 A review is waiting — Foxy Audit",
+            html=html, text=plain)
+        sent = True
+
+    if policy.notify_webhook_url:
+        try:
+            requests.post(policy.notify_webhook_url, json={
+                # NOT "policy_breach". An integration that routes on this string
+                # must be able to tell a finding from a request to look at one.
+                "type": "human_review", "seq": seq, "risk_score": risk,
+                "reason": reason, "org_id": str(oid)}, timeout=WEBHOOK_TIMEOUT)
+        except Exception:                   # noqa: BLE001 — webhook is best-effort
+            log.warning("escalation webhook POST failed for org %s", oid)
+    return sent
+
+
 def send_breach_notice(db: Session, item: dict) -> bool:
     """Send one queued notice. Returns True if an email went out.
 
@@ -168,19 +270,26 @@ def send_breach_notice(db: Session, item: dict) -> bool:
 
 
 def drain_breach_notices(db: Session, *, limit: int = 200) -> int:
-    """Send every queued notice (up to `limit`). Returns emails sent."""
+    """Send every queued notice (up to `limit`). Returns emails sent.
+
+    Named for the only kind it used to carry. It now also drains A1's escalation
+    notices, dispatched on `kind` — an item without one is a breach, so nothing
+    already queued changes meaning.
+    """
     sent = 0
     for _ in range(limit):
         try:
             item = _NOTICE_QUEUE.get_nowait()
         except queue.Empty:
             break
+        send = (send_escalation_notice if item.get("kind") == "human_review"
+                else send_breach_notice)
         try:
-            sent += 1 if send_breach_notice(db, item) else 0
+            sent += 1 if send(db, item) else 0
         except Exception as exc:            # noqa: BLE001 — one notice must not stop the drain
             db.rollback()
-            log.warning("org breach notice failed for org %s: %s",
-                        item.get("org_id"), exc)
+            log.warning("org notice (%s) failed for org %s: %s",
+                        item.get("kind", "breach"), item.get("org_id"), exc)
     return sent
 
 

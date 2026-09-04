@@ -211,6 +211,55 @@ route an org to Qwen today. Add the parameter here; it is two lines and it unblo
 every later Qwen integration test. Qwen currently has **zero** integration coverage;
 the three-provider fold is pinned only by AST-parsing `worker.py`, never by execution.
 
+### 4.6 A1 follow-ups — recorded here so they are not lost
+
+Found in review of the A1 branch, **deliberately not built in A1**. None of them
+is a regression: each is a boundary A1 draws and does not cross, written down so
+the next phase inherits the decision rather than rediscovering it.
+
+**(a) A dropped queue insert is permanent — there is no reconciliation sweep.**
+`_grade_one` commits the verdict *first*, so `_claim_batch` never revisits the
+row: it is `graded`, and the outbox has nothing left to retry. The insert that
+follows is best-effort by design (a queue failure must not cost the grade), so a
+SIGTERM, a connection reset or a full disk between the commit and the insert
+loses the escalation **silently and permanently** — the ledger row still says
+`decision="human_review"` and nothing points at it.
+
+The window is small and the trade was the right one at this size, but the fix is
+not "make the insert non-optional": that would restore exactly the failure the
+best-effort contract exists to prevent. The fix is a **reconciliation sweep** —
+one periodic query for `audit_logs` rows whose verdict decision is
+`human_review` and which have no `human_reviews` row, inserting the missing ones
+(the unique constraint makes it idempotent). It belongs beside the anchor sweep
+in the worker loop, and it is also what would backfill escalations graded
+*before* A1 shipped, which A1 does not do either.
+
+**(b) Any member can permanently close an escalation, and it leaves no account
+trail.** `POST /v1/reviews/{id}/resolve` takes `require_user` and no role gate,
+so a `viewer` seat resolves as freely as an admin. Because resolution is
+**first-write-wins** (§4.1 — the evidence event is append-only, so a resolve
+cannot be corrected by re-resolving), a wrong or malicious close is
+**uncorrectable through the API**. It also writes no `AccountAction`, unlike
+every other customer-facing governance write in this product — so the customer's
+own audit trail (`GET /v1/account/audit`) cannot answer "who has been closing our
+escalations?" even though the answer is sitting in `human_reviews.resolved_by`.
+
+Two separable changes, and they are not the same size. The `AccountAction` write
+is small and uncontroversial. The role gate is a **product decision** — whether
+review is an admin act or something a compliance seat does — and it interacts
+with a role model that has no "reviewer" in it. Take the account trail first.
+
+**(c) An escalation notice rides the tenant's breach preference, because there is
+no other one.** `send_escalation_notice` gates on `notify_on_breach` /
+`enforcement_mode` via the same two helpers the breach notice uses. That is
+defensible — a tenant who asked to hear about graded outcomes immediately hears
+about this one, `monitor` still silences the email, `none` still means none — but
+it is a reused field, not a chosen one: a workspace cannot ask for escalations
+and not breaches, or the reverse. A dedicated `notify_on_human_review` column
+means a migration, the policy API, and both shipped clients' settings UI, which
+is not a backend-only phase. Revisit with A2, where the reviewer surface makes
+the preference visible anyway.
+
 ---
 
 ## 5 · Phase A2 — the reviewer surface *(branch `feat/human-review-ui`)*
