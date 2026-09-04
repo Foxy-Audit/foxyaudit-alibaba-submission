@@ -68,6 +68,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - STRIPE_PRICE_COMPANION=${STRIPE_PRICE_COMPANION:-}
@@ -168,6 +172,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       - BREVO_API_KEY=${BREVO_API_KEY:-}
       - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-no-reply@foxyaudit.tech}
       - BREVO_SENDER_NAME=${BREVO_SENDER_NAME:-Foxy Audit}
