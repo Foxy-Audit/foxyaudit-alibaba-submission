@@ -132,12 +132,23 @@ def test_the_guard_is_released_even_if_population_throws(markup):
 def test_the_selects_are_shown_by_provider_not_by_key_mode(markup):
     block = markup[markup.index("window.renderJudgeKeyFields="):]
     block = block[:block.index("polKeyModeHint")]
-    assert "polGeminiModelRow" in block and "polOpenaiModelRow" in block, (
-        "renderJudgeKeyFields must show/hide the model rows"
+    assert ("polGeminiModelRow" in block and "polOpenaiModelRow" in block
+            and "polQwenModelRow" in block), (
+        "renderJudgeKeyFields must show/hide the model rows — all three since Q4"
     )
-    assert re.search(r"provider===f\[0\]\|\|provider==='both'\)&&!!\(sel&&sel\.options\.length\)",
+    # ⚠ THE EXPRESSION MOVED IN Q4, THE PROPERTY DID NOT. This pinned
+    # `provider===f[0]||provider==='both'`, which is a two-judge membership
+    # test and is False for every combination word (gemini+qwen, all, ...).
+    # It is now a lookup in JUDGE_MEMBERS, the mirror of the backend's
+    # _PROVIDER_MEMBERS. BOTH CONJUNCTS ARE STILL PINNED, because the second
+    # one is the actual subject of this test: a row shows when its provider is
+    # in play AND the select has options.
+    assert re.search(r"selected\.indexOf\(f\[0\]\)>=0&&!!\(sel&&sel\.options\.length\)",
                      block), (
         "a model row shows when its provider is in play AND the select actually "
         "has options — an older server sends none, and an empty select is worse "
         "than no select"
+    )
+    assert "JUDGE_MEMBERS" in markup, (
+        "the membership table the row test depends on is gone"
     )

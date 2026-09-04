@@ -335,8 +335,13 @@ class PolicySections:
         right = QVBoxLayout()
         right.setSpacing(8)
         o.pol_key_rows = {}
+        # ⚠ A ROW PER PROVIDER, AND THE LIST HAS TO MATCH policy_data.
+        # `key_field()` decides whether a provider's row is USED, but a
+        # provider with no row here has nothing to decide about — so the
+        # membership fix in policy_data is unreachable without this line.
         for provider, title in (("gemini", "Gemini API key"),
-                                ("openai", "OpenAI API key")):
+                                ("openai", "OpenAI API key"),
+                                ("qwen", "Qwen API key")):
             key_row = KeyRow(provider, title)
             key_row.field.textEdited.connect(lambda _t: o.mark_policy_dirty())
             key_row.remove_btn.clicked.connect(

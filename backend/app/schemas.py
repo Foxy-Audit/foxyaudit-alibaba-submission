@@ -582,6 +582,19 @@ class StatsResponse(BaseModel):
     grading: GradingCounts
     activity_7d: list[ActivityDay]
     evaluator_unknown: int = 0
+    # Q4 · rows an agentic judge ESCALATED by calling flag_for_human_review.
+    #
+    # ⚠ THIS FIELD EXISTS SO THE CLIENTS CAN SUBTRACT IT. Both the dashboard and
+    # the desktop derive their "clean" slice by subtraction — graded minus
+    # breaches, blocked, redacted and evaluator-unknown — so a graded row that is
+    # none of those falls through and is counted CLEAN. Without this count an
+    # escalated event would be reported to the customer as a safety result the
+    # system explicitly declined to reach, which is the defect Q2a corrected in
+    # `passport.compliant_events` and which lives in two more places.
+    #
+    # Separate from `evaluator_unknown` deliberately: an unknown is an evaluator
+    # that COULD NOT determine; this is one that determined a PERSON should.
+    human_review: int = 0
     # Host-side enforcement (prevented egress), counted separately from breaches.
     blocked: int = 0
     redacted: int = 0

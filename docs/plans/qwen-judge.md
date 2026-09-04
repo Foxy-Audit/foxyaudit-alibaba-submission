@@ -741,19 +741,87 @@ the fold asserts non-empty rather than assuming it.
 
 ## 10 · Phase Q4 — the two clients that would undo the feature
 
+⚠ **RE-SCOPED 2026-09-04, BEFORE BUILDING.** The reading found three things this
+section did not have, one of which is a backend change. The section as written
+would have shipped a UI that reports escalated events as clean.
+
+### 10.1 · `human_review` folds into CLEAN on both clients — and there is no
+### number to subtract
+
+The dashboard derives the donut's clean slice by subtraction
+(`foxy-audit-premium.html:6686`):
+
+```js
+clean = Math.max(0, graded - breaches - blocked - redacted - unknown)
+```
+
+and `desktop/ledger_data.py` does the same, with a docstring that states the
+principle exactly: *"folding any of them into clean would report a safety result
+the system never actually reached."* A `human_review` row is graded, is not a
+breach, is not blocked, redacted or unknown — **so both clients count it as
+clean**. This is the same defect Q2a fixed in `passport.py::compliant_events`,
+in two more places.
+
+⚠ **And it cannot be fixed in the clients alone.** They subtract what
+`GET /v1/stats` gives them, and `StatsResponse` has no `human_review` field. So
+Q4 carries a small BACKEND change — `StatsResponse.human_review`, counted the way
+`evaluator_unknown` already is — before either client can be made correct.
+
+### 10.2 · The pill takes `--c-6`, the reserved sixth series slot
+
+`human_review` needs a verdict pill and must not reuse `warn`, which already
+carries `unknown`/`pending`/`flag` — conflating them would discard the
+distinction Q2a exists to draw.
+
+**It is NOT a new colour.** `--c-6` → `--violet-series` already exists, and
+`foxy-audit-premium.html:176-181` says why: *"NO SHIPPED CALL NAMES `violet`
+TODAY, and saying so is the point… it is kept correct through TONE.violet and by
+position through SER[5]."* The slot was reserved and kept measured for a sixth
+series member. This is that member.
+
+**Measured, both directions, both themes** — per `CLAUDE.md`'s rule that a fill
+is judged against its background and not only its ink:
+
+| | dark | light |
+|---|---|---|
+| ink on fill | `#160a2e` on `#9b8cff` = **6.79** | `#fff` on `#6b42c8` = **6.48** |
+| fill on `--bg` | **6.71** | **5.26** |
+| fill on `--surf` | **6.27** | **5.70** |
+
+Near-black measures **2.90** on the light fill, which is exactly why
+`.pill.blocked`/`.pill.redacted` already carry an
+`html[data-theme="light"] … {color:#fff}` override. `human_review` joins that
+rule rather than inventing a second mechanism.
+
+⚠ **The one real risk, and the reason it is acceptable.** In DARK, violet
+`#9b8cff` and blocked's blue `#5b8cff` differ only in the red channel and are
+close in hue and luminance. Colour is **not** the carrier here: every `.pill`
+renders an uppercase text label, so "HUMAN REVIEW" and "BLOCKED" are
+unmistakable, and the UX rule this would otherwise break — never convey meaning
+by colour alone — is satisfied by the label. **If `human_review` is ever added to
+the verdict DONUT, this stops being true** (a slice's only label is its legend),
+and the pair must be re-checked then. It is deliberately not added to the donut
+in this phase.
+
+### 10.3 · The rest, as originally scoped
+
 **Desktop** (`desktop/policy_data.py`): `PROVIDERS` gains the new names so
 `_choice` stops coercing them to `"gemini"`, and `key_field()`'s
-`judge_provider in (provider, "both")` becomes a membership test over the same
-`_PROVIDER_MEMBERS` shape the backend uses.
+`judge_provider in (provider, "both")` becomes a membership test.
+`desktop/policy_page.py`'s `pol_key_rows` and `judge_view()` gain the qwen row
+(§3.10 — without them the `key_field` fix is unreachable).
+`desktop/ledger_data.py` gains the verdict option, the quick chip and the status
+mapping.
 
-**Dashboard** (`foxy-dashboard/foxy-audit-premium.html`): the provider `<select>`
-gains the new options; the save path stops defaulting a missing value to
-`"gemini"`.
+**Dashboard**: the provider `<select>` and the model-select loop at `:5252`
+gain qwen; the verdict `<select>` gains `human_review`; `verdictOf` gains its
+branch.
 
 ⚠ **The dashboard half is UI work.** Load all three frontend skills, in order —
 `ui-ux-pro-max`, then `impeccable`, then `frontend-design` — before touching the
-markup. No chart is involved, so `dataviz` is not loaded, and this sentence is
-the record of that decision.
+markup. `dataviz` is NOT loaded: no chart mark, scale or palette changes in this
+phase, and 10.2's decision to keep `human_review` out of the donut is what keeps
+that true. This sentence is the record of both decisions.
 
 ---
 

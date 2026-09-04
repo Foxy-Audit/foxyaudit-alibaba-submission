@@ -10,7 +10,7 @@ OpenAI) is a tenant secret. It reaches this module in exactly one direction —
 from the field the user just typed into, straight onto the wire in
 `save_body()` — and it is never stored here, never logged, never formatted
 into a message, and never read back: `GET /v1/policies` returns only
-`gemini_key_set` / `openai_key_set` booleans (policies.py:33-36, 78-79), so
+`gemini_key_set` / `openai_key_set` / `qwen_key_set` booleans, so
 there is no stored key for this app to render even if it wanted to.
 
 `save_body()` is where that rule is actually enforced, because the wire
@@ -89,8 +89,34 @@ CONFIDENCE = (("high", "high — fewer false positives"),
 NOTIFY = (("immediate", "immediate alert"),
           ("digest", "no email — unless handling is Urgent"),
           ("none", "no notification"))
+#: ⚠ EVERY WORD THE SERVER MAY SEND MUST BE HERE. `_choice` falls back to
+#: "gemini" for anything it does not recognise, and `save_body` posts what
+#: the form holds — so a routing word missing from this tuple is not merely
+#: unrenderable, it is SILENTLY OVERWRITTEN on the next save. That is how a
+#: "gemini+qwen" org would have been reset to gemini-only by opening the
+#: policy page and saving something unrelated.
+#:
+#: "both" stays: it is the pre-0071 spelling of gemini+openai, stored
+#: verbatim and never rewritten by the server, so this client still meets it.
 PROVIDERS = (("gemini", "Google Gemini"), ("openai", "OpenAI"),
-             ("both", "Both — graded twice, any breach wins"))
+             ("qwen", "Qwen — can escalate to a human"),
+             ("gemini+openai", "Gemini + OpenAI"),
+             ("gemini+qwen", "Gemini + Qwen"),
+             ("openai+qwen", "OpenAI + Qwen"),
+             ("all", "All three — any breach wins"),
+             ("both", "Both — Gemini + OpenAI"))
+
+#: Which judges each routing word selects — the mirror of
+#: judge_routing._PROVIDER_MEMBERS, including the "both" alias. One table, so
+#: a word added above cannot be right in one reader and stale in another.
+PROVIDER_MEMBERS = {
+    "gemini": ("gemini",), "openai": ("openai",), "qwen": ("qwen",),
+    "gemini+openai": ("gemini", "openai"),
+    "gemini+qwen": ("gemini", "qwen"),
+    "openai+qwen": ("openai", "qwen"),
+    "all": ("gemini", "openai", "qwen"),
+    "both": ("gemini", "openai"),
+}
 
 #: PolicyConfig's own bounds (policies.py:39). Enforced here too so the field
 #: cannot send a value the server will only reject.
@@ -197,6 +223,7 @@ def judge_view(data: dict | None) -> dict:
         # Presence booleans — the only thing the server ever says about a key.
         "gemini_key_set": bool(d.get("gemini_key_set")),
         "openai_key_set": bool(d.get("openai_key_set")),
+        "qwen_key_set": bool(d.get("qwen_key_set")),
     }
 
 
@@ -207,7 +234,11 @@ def key_field(provider: str, *, judge_provider: str, mode: str,
     `placeholder` is the only thing that ever hints at a stored key, and it
     says "stored", not the key — there is nothing here to reveal.
     """
-    used = mode == "own" and judge_provider in (provider, "both")
+    # A MEMBERSHIP TEST, not a two-name comparison. `judge_provider in
+    # (provider, "both")` is False for every combination word, so a
+    # "gemini+qwen" org was told BOTH of its keys were unused while the
+    # backend was spending them.
+    used = mode == "own" and provider in PROVIDER_MEMBERS.get(judge_provider, ())
     still_set = key_set and not cleared
     return {
         "used": used,
@@ -258,7 +289,8 @@ def save_body(form: dict, judge: dict, *,
         "judge_key_mode": "platform" if judge.get("mode") == "platform" else "own",
     }
     for provider, field in (("gemini", "gemini_api_key"),
-                            ("openai", "openai_api_key")):
+                            ("openai", "openai_api_key"),
+                            ("qwen", "qwen_api_key")):
         entered = str(typed.get(provider) or "").strip()
         if entered:
             body[field] = entered           # store

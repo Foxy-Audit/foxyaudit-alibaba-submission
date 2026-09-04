@@ -25,11 +25,13 @@ PAGE_LIMIT = 50            # the web's _ledgerLimit (html:2209)
 
 #: The verdict <select>, in the web's order (html:1200).
 VERDICT_OPTIONS = (("", "any verdict"), ("breach", "breach"), ("clean", "clean"),
+                   ("human_review", "human review"),
                    ("unknown", "unknown"), ("pending", "pending"),
                    ("blocked", "blocked"), ("redacted", "redacted"))
 
 #: The quick chips (html:1204-1210). "All" clears the verdict filter.
 QUICK_CHIPS = (("All", ""), ("Breaches", "breach"), ("Clean", "clean"),
+               ("Human review", "human_review"),
                ("Blocked", "blocked"), ("Redacted", "redacted"),
                ("Pending", "pending"))
 
@@ -67,6 +69,11 @@ def verdict_of(item: dict) -> tuple[str, str]:
         return "unknown", "warn"
     if verdict.get("policy_breach"):
         return "breach", "bad"
+    # AFTER breach, matching judge.combine's ladder and the web's verdictOf,
+    # and BEFORE the graded->safe fallthrough, which is what would otherwise
+    # paint an escalated event green.
+    if verdict.get("decision") == "human_review":
+        return "human review", "warn"
     if item.get("grading_status") == "graded":
         return "safe", "ok"
     if item.get("grading_status") == "failed":
@@ -196,7 +203,14 @@ def verdict_slices(stats: dict | None) -> tuple[list[dict], int]:
     blocked = _num(stats.get("blocked")) + _num(stats.get("response_blocked"))
     redacted = _num(stats.get("redacted"))
     unknown = _num(stats.get("evaluator_unknown"))
-    clean = max(0.0, graded - breaches - blocked - redacted - unknown)
+    # Q4 · escalations, for the reason the docstring above already gives:
+    # `clean` is derived by SUBTRACTION, so a graded row that is none of the
+    # named categories is painted green. A human_review row is graded and is
+    # none of them, so without this term the donut reports an event the judge
+    # explicitly declined to clear as clean.
+    human_review = _num(stats.get("human_review"))
+    clean = max(0.0, graded - breaches - blocked - redacted - unknown
+                - human_review)
     pending = _num(grading.get("pending")) + _num(grading.get("in_progress"))
     failed = _num(grading.get("failed"))
     slices = [

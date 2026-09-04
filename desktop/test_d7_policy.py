@@ -417,10 +417,17 @@ def test_no_response_can_put_a_key_into_a_key_field(console):
     """The GET only returns booleans, but the point is that even a server that
     wrongly sent one could not get it onto the page."""
     _as_admin(console)
+    # "all" and all three booleans, so the loop below covers EVERY key row.
+    # Q4 added the qwen row: with "both" it is correctly hidden and its badge
+    # correctly off, which the blanket `not row.badge.isHidden()` below read
+    # as a failure. Widening the payload keeps the loop honest and extends the
+    # no-leak property to the new field rather than exempting it.
     console._on_policy({"gemini_key_set": True, "openai_key_set": True,
-                        "judge_provider": "both",
+                        "qwen_key_set": True,
+                        "judge_provider": "all",
                         "gemini_api_key": "AIza-leaked-leaked",
-                        "openai_api_key": "sk-leaked-leaked"})
+                        "openai_api_key": "sk-leaked-leaked",
+                        "qwen_api_key": "sk-leaked-leaked"})
     for row in console.pol_key_rows.values():
         assert row.field.text() == ""
         assert "leaked" not in row.field.placeholderText()

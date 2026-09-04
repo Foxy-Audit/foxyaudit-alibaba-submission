@@ -66,6 +66,11 @@ _UNKNOWN = (
     | (AuditLog.gemini_verdict["reason"].astext.like("evaluator_unavailable:%"))
     | (AuditLog.gemini_verdict["reason"].astext == "evaluator_unavailable")
 )
+# Q4 · an agentic judge called flag_for_human_review on this row. A single
+# decision test, unlike _UNKNOWN above: there is no reason-string spelling of an
+# escalation, because only qwen_judge produces one and it sets the decision
+# directly. Deliberately disjoint from _UNKNOWN — a row is at most one of them.
+_HUMAN_REVIEW = AuditLog.gemini_verdict["decision"].astext == "human_review"
 # #228 · authorship, read from the stored verdict. Not `GROUP BY` on the JSON
 # path: SQLAlchemy binds the key as a parameter and Postgres will not match two
 # separately-bound expressions, so the group key never equals the select key.
@@ -981,6 +986,13 @@ def stats(
         select(func.count()).select_from(AuditLog)
         .where(AuditLog.org_id == org.id, AuditLog.grading_status == "graded", _UNKNOWN)
     ).scalar_one()
+    # Q4 · escalations, counted the same way and kept separate. Both clients need
+    # this number to subtract — see StatsResponse.human_review.
+    human_review = db.execute(
+        select(func.count()).select_from(AuditLog)
+        .where(AuditLog.org_id == org.id, AuditLog.grading_status == "graded",
+               _HUMAN_REVIEW)
+    ).scalar_one()
     known_graded = db.execute(
         select(func.count()).select_from(AuditLog)
         .where(AuditLog.org_id == org.id, AuditLog.grading_status == "graded", ~_UNKNOWN)
@@ -1088,7 +1100,7 @@ def stats(
         judge_model=judge_model,
         avg_seconds_to_verdict=round(float(avg_verdict), 1) if avg_verdict is not None else None,
         grading=GradingCounts(**gc), activity_7d=activity,
-        evaluator_unknown=evaluator_unknown,
+        evaluator_unknown=evaluator_unknown, human_review=human_review,
         blocked=blocked, redacted=redacted, response_blocked=response_blocked,
         ai_graded=ai_graded, rules_graded=rules_graded,
     )

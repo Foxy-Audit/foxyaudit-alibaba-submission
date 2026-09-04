@@ -586,6 +586,14 @@ html[data-theme="light"] .crumb-logo{filter:brightness(0);opacity:.42;}
 .ltag.safe{background:var(--safe-bg);color:var(--safe-tx);}
 .ltag.breach{background:var(--breach-bg);color:var(--breach-tx);}
 .ltag.warn{background:var(--warn-bg);color:var(--warn-tx);}
+/* Q4 · an agentic judge asked for a person. NOT .warn — that already carries
+   unknown, pending and flag, and folding an escalation in with them discards the
+   distinction the verdict exists to draw: a judge that COULD NOT determine
+   versus one that determined a human SHOULD. --c-6 is the reserved sixth series
+   slot (see the --violet-series note above), measured before use: ink 6.79 on
+   the dark fill, and the FILL itself 6.71/6.27 against --bg/--surf — so this
+   chip cannot dissolve into the card behind it the way a 1.01:1 fill once did. */
+.ltag.human_review{background:var(--c-6);color:#160a2e;}
 /* host-side enforcement — prevented egress, distinct from graded verdicts */
 .ltag.blocked{background:var(--c-2);color:#04122e;}
 .ltag.redacted{background:var(--c-4);color:#3a0620;}
@@ -604,6 +612,7 @@ html[data-theme="light"] .crumb-logo{filter:brightness(0);opacity:.42;}
 .pill.safe{background:var(--safe-bg);color:var(--safe-tx);}
 .pill.breach{background:var(--breach-bg);color:var(--breach-tx);}
 .pill.warn{background:var(--warn-bg);color:var(--warn-tx);}
+.pill.human_review{background:var(--c-6);color:#160a2e;}
 .pill.blocked{background:var(--c-2);color:#04122e;}
 .pill.redacted{background:var(--c-4);color:#3a0620;}
 /* ⚠ G6.1 · THE DONUT IS THIS LIST'S KEY, so the tag and the slice have to be
@@ -619,10 +628,15 @@ html[data-theme="light"] .crumb-logo{filter:brightness(0);opacity:.42;}
    already does with every deep status fill (--safe-bg carries --safe-tx #fff).
    Dark is untouched: --c-2/--c-4 alias --dec1/--dec3 there, so the near-black
    keeps its 5.87:1 and 6.42:1. */
+/* Q4 · --c-6 joins this rule for the same reason, measured the same way: the
+   light theme deepens violet to #6b42c8, where the near-black above falls to
+   2.90:1 and white clears 6.48:1. Same mechanism, not a second one. */
 html[data-theme="light"] .ltag.blocked,
 html[data-theme="light"] .pill.blocked,
 html[data-theme="light"] .ltag.redacted,
-html[data-theme="light"] .pill.redacted{color:#fff;}
+html[data-theme="light"] .pill.redacted,
+html[data-theme="light"] .ltag.human_review,
+html[data-theme="light"] .pill.human_review{color:#fff;}
 .pill i{width:5px;height:5px;border-radius:50%;background:currentColor;}
 
 /* ════════ P6b §1 · remembered verification state (ledger detail row) ════════
@@ -2304,7 +2318,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
       <div class="clay" style="margin-bottom:12px;padding:11px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <input class="cin" id="ledgerQ" placeholder="Search hash or agent…" style="margin:0;flex:1;min-width:150px;" onkeydown="if(event.key==='Enter')applyLedgerFilters()">
         <input class="cin" id="ledgerPolicy" placeholder="policy tag" style="margin:0;width:120px;" onkeydown="if(event.key==='Enter')applyLedgerFilters()">
-        <select id="ledgerVerdict" style="margin:0;width:140px;"><option value="">any verdict</option><option value="breach">breach</option><option value="clean">clean</option><option value="unknown">unknown</option><option value="pending">pending</option><option value="blocked">blocked</option><option value="redacted">redacted</option></select>
+        <select id="ledgerVerdict" style="margin:0;width:140px;"><option value="">any verdict</option><option value="breach">breach</option><option value="clean">clean</option><option value="human_review">human review</option><option value="unknown">unknown</option><option value="pending">pending</option><option value="blocked">blocked</option><option value="redacted">redacted</option></select>
         <button class="btn pri sm" style="margin:0;" onclick="applyLedgerFilters()">Filter</button>
         <button class="btn ghost sm" style="margin:0;" onclick="clearLedgerFilters()">Clear</button>
       </div>
@@ -2405,7 +2419,18 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
             <select id="polJudgeProvider" onchange="renderJudgeKeyFields()">
               <option value="gemini">Google Gemini</option>
               <option value="openai">OpenAI</option>
-              <option value="both">Both — graded twice, any breach wins</option>
+              <option value="qwen">Qwen — can escalate to a human</option>
+              <option value="gemini+openai">Gemini + OpenAI</option>
+              <option value="gemini+qwen">Gemini + Qwen</option>
+              <option value="openai+qwen">OpenAI + Qwen</option>
+              <option value="all">All three — any breach wins</option>
+              <!-- ⚠ "both" IS STILL AN OPTION AND MUST STAY. It is what every
+                   two-judge org chose before Qwen existed, it is stored verbatim
+                   and never rewritten, and a <select> set to a value with no
+                   matching <option> reads back "" — which the save path below
+                   would post as "gemini", silently downgrading exactly those
+                   orgs. It is labelled as the pair it has always meant. -->
+              <option value="both">Both — Gemini + OpenAI</option>
             </select>
             <!-- P6f · the model itself is now a CHOICE, not a readout. One select
                  per provider, shown by the same rule the key rows use, so
@@ -2419,6 +2444,10 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
             <div id="polOpenaiModelRow" style="margin-top:10px;">
               <label class="flabel" style="margin-top:0;" for="polOpenaiModel">OpenAI model</label>
               <select id="polOpenaiModel"></select>
+            </div>
+            <div id="polQwenModelRow" style="margin-top:10px;">
+              <label class="flabel" style="margin-top:0;" for="polQwenModel">Qwen model</label>
+              <select id="polQwenModel"></select>
             </div>
             <div class="flabel">whose API key pays for grading</div>
             <div class="seg" id="polKeyMode" role="group" aria-label="Judge key source">
@@ -2442,6 +2471,14 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
               <div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5;">
                 <span id="polOpenaiKeyHelp">Stored encrypted; never shown again and never included in exports or the audit chain.</span>
                 <a href="#" id="polOpenaiKeyClear" style="color:var(--fox2);display:none;margin-left:4px;" onclick="clearJudgeKey('openai');return false;">remove key</a>
+              </div>
+            </div>
+            <div id="polQwenKeyRow">
+              <div class="flabel">Qwen API key <span class="keyset" id="polQwenKeySet" style="display:none;">key set ✓</span></div>
+              <input class="cin" id="polQwenKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+              <div style="font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5;">
+                <span id="polQwenKeyHelp">Stored encrypted; never shown again and never included in exports or the audit chain.</span>
+                <a href="#" id="polQwenKeyClear" style="color:var(--fox2);display:none;margin-left:4px;" onclick="clearJudgeKey('qwen');return false;">remove key</a>
               </div>
             </div>
           </div>
@@ -4487,6 +4524,14 @@ async function loadLoginHistory(scope){
     const verdict=it.gemini_verdict||{};
     if(String(verdict.reason||'').startsWith('evaluator_unavailable') || String(verdict.reason||'').startsWith('evaluator_unknown') || verdict.decision==='unknown') return {v:'unknown',cls:'warn'};
     if(verdict.policy_breach) return {v:'breach',cls:'breach'};
+    // Q4 · AFTER the breach test, matching judge.combine's ladder
+    // (breach > human_review > clean) rather than inventing a second order for
+    // the same vocabulary. The pair cannot occur today — qwen_judge never sets
+    // policy_breach on an escalation and judge.validate quarantines it if a
+    // provider ever does — but where a surface CAN disagree with the backend
+    // about precedence, it should not, and a UI that ranked an escalation above
+    // a recorded breach would hide the stronger finding.
+    if(verdict.decision==='human_review') return {v:'human review',cls:'human_review'};
     if(it.grading_status==='graded') return {v:'safe',cls:'safe'};
     if(it.grading_status==='failed') return {v:'flag',cls:'warn'};
     return {v:'pending',cls:'warn'};
@@ -5232,6 +5277,7 @@ async function loadLoginHistory(scope){
   function loadJudgeSelection(p){
     JUDGE.platformAllowed=!!p.platform_keys_allowed;
     JUDGE.set.gemini=!!p.gemini_key_set; JUDGE.set.openai=!!p.openai_key_set;
+    JUDGE.set.qwen=!!p.qwen_key_set;
     JUDGE.clear.gemini=false; JUDGE.clear.openai=false;
     JUDGE.mode=(p.judge_key_mode==='platform'&&JUDGE.platformAllowed)?'platform':'own';
     // setFieldValue-exempt: 'polJudgeProvider' — renderJudgeKeyFields() is called
@@ -5250,7 +5296,8 @@ async function loadLoginHistory(scope){
     try{
       const avail=p.judge_models_available||{};
       [['gemini','polGeminiModel',p.judge_gemini_model],
-       ['openai','polOpenaiModel',p.judge_openai_model]].forEach(function(f){
+       ['openai','polOpenaiModel',p.judge_openai_model],
+       ['qwen','polQwenModel',p.judge_qwen_model]].forEach(function(f){
         const sel=$(f[1]); if(!sel)return;
         const list=Array.isArray(avail[f[0]])?avail[f[0]]:[];
         const pinned=f[2]||'';
@@ -5278,7 +5325,7 @@ async function loadLoginHistory(scope){
         window.setFieldValue(sel,pinned);
       });
     } finally { JUDGE.loading=false; }
-    ['polGeminiKey','polOpenaiKey'].forEach(function(id){ const el=$(id); if(el)el.value=''; });
+    ['polGeminiKey','polOpenaiKey','polQwenKey'].forEach(function(id){ const el=$(id); if(el)el.value=''; });
     const plat=$('polKeyModePlatform');
     if(plat){
       plat.disabled=!JUDGE.platformAllowed;
@@ -5297,12 +5344,28 @@ async function loadLoginHistory(scope){
   };
   window.clearJudgeKey=function(which){
     JUDGE.clear[which]=true; JUDGE.set[which]=false;
-    const el=$(which==='gemini'?'polGeminiKey':'polOpenaiKey'); if(el)el.value='';
+    // A MAP, not a ternary: the two-branch form sent every provider that was
+    // not 'gemini' to the OpenAI box, so clearing a Qwen key would have
+    // emptied the wrong input while marking qwen cleared.
+    const el=$({gemini:'polGeminiKey',openai:'polOpenaiKey',qwen:'polQwenKey'}[which]); if(el)el.value='';
     renderJudgeKeyFields(); window.markPolicyDirty();
     toast('Key will be removed when you save the ruleset');
   };
+  /* Q4 · which judges each routing word selects. The mirror of
+     judge_routing._PROVIDER_MEMBERS, including the pre-Qwen "both" alias, which
+     is stored verbatim and never rewritten — so this page has to understand it
+     rather than expect the server to have converted it. One table, so a word
+     added to the <select> cannot be right in the key rows and stale in the
+     model rows. */
+  const JUDGE_DEFAULT_PROVIDER='gemini';
+  const JUDGE_MEMBERS={
+    gemini:['gemini'], openai:['openai'], qwen:['qwen'],
+    'gemini+openai':['gemini','openai'], 'gemini+qwen':['gemini','qwen'],
+    'openai+qwen':['openai','qwen'], all:['gemini','openai','qwen'],
+    both:['gemini','openai']
+  };
   window.renderJudgeKeyFields=function(){
-    const provider=(($('polJudgeProvider')||{}).value)||'gemini';
+    const provider=(($('polJudgeProvider')||{}).value)||JUDGE_DEFAULT_PROVIDER;
     document.querySelectorAll('#polKeyMode button').forEach(function(b){
       b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===JUDGE.mode)); });
     const byok=JUDGE.mode==='own';
@@ -5311,16 +5374,23 @@ async function loadLoginHistory(scope){
     // grades you is a separate question from whose key pays for it, so these stay
     // visible on Foxy's managed keys too. An empty select means an older server
     // sent no options — hide it rather than offer an empty control.
+    // Q4 · ONE decode of the routing word, mirroring judge_routing._PROVIDER_MEMBERS.
+    // `provider===f[0]||provider==='both'` was correct for two judges and false
+    // for every combination name, so a "gemini+qwen" org would have been shown
+    // neither key field while the backend used both keys.
+    const selected=JUDGE_MEMBERS[provider]||JUDGE_MEMBERS[JUDGE_DEFAULT_PROVIDER];
     [['gemini','polGeminiModelRow','polGeminiModel'],
-     ['openai','polOpenaiModelRow','polOpenaiModel']].forEach(function(f){
+     ['openai','polOpenaiModelRow','polOpenaiModel'],
+     ['qwen','polQwenModelRow','polQwenModel']].forEach(function(f){
       const sel=$(f[2]), row=$(f[1]);
-      const show=(provider===f[0]||provider==='both')&&!!(sel&&sel.options.length);
+      const show=selected.indexOf(f[0])>=0&&!!(sel&&sel.options.length);
       if(row)row.style.display=show?'':'none';
     });
     [['gemini','polGeminiKeyRow','polGeminiKeySet','polGeminiKey','polGeminiKeyClear'],
-     ['openai','polOpenaiKeyRow','polOpenaiKeySet','polOpenaiKey','polOpenaiKeyClear']
+     ['openai','polOpenaiKeyRow','polOpenaiKeySet','polOpenaiKey','polOpenaiKeyClear'],
+     ['qwen','polQwenKeyRow','polQwenKeySet','polQwenKey','polQwenKeyClear']
     ].forEach(function(f){
-      const used=byok&&(provider===f[0]||provider==='both');
+      const used=byok&&selected.indexOf(f[0])>=0;
       const row=$(f[1]); if(row)row.style.display=used?'':'none';
       const badge=$(f[2]); if(badge)badge.style.display=JUDGE.set[f[0]]?'':'none';
       const input=$(f[3]);
@@ -5349,7 +5419,7 @@ async function loadLoginHistory(scope){
   let _polWired=false;
   function wirePolicy(){ if(_polWired)return; _polWired=true;
     ['polMaxTokens','polEnforcement','polConfidence','polNotify','polNotifyEmail','polNotifyWebhook',
-     'polJudgeProvider','polGeminiKey','polOpenaiKey'].forEach(function(id){
+     'polJudgeProvider','polGeminiKey','polOpenaiKey','polQwenKey'].forEach(function(id){
       const el=$(id); if(el){ el.addEventListener('change',window.markPolicyDirty); el.addEventListener('input',window.markPolicyDirty); } });
     // P6f · the model selects mark dirty like any other field, but skip the change
     // event the loader emits through setFieldValue (see JUDGE.loading above).
@@ -5382,10 +5452,12 @@ async function loadLoginHistory(scope){
       // or un-pinning a model would appear to do nothing.
       judge_gemini_model:(($('polGeminiModel')||{}).value||'')||null,
       judge_openai_model:(($('polOpenaiModel')||{}).value||'')||null,
+      judge_qwen_model:(($('polQwenModel')||{}).value||'')||null,
       judge_key_mode:JUDGE.mode };
     // Provider keys are WRITE-ONLY: send one only when the user typed a new key
     // (empty box = leave the stored key alone) or explicitly removed it ("" clears).
-    [['gemini','polGeminiKey','gemini_api_key'],['openai','polOpenaiKey','openai_api_key']]
+    [['gemini','polGeminiKey','gemini_api_key'],['openai','polOpenaiKey','openai_api_key'],
+     ['qwen','polQwenKey','qwen_api_key']]
       .forEach(function(f){
         const typed=(($(f[1])||{}).value||'').trim();
         if(typed)body[f[2]]=typed;
@@ -6681,9 +6753,27 @@ async function loadLoginHistory(scope){
         // the SDK withheld was counted GREEN.
         blocked=(+s.blocked||0)+(+s.response_blocked||0),
         redacted=+s.redacted||0, unknown=+s.evaluator_unknown||0,
-        // Blocked/redacted are prevented egress and evaluator-unknown is a non-pass —
+        // Q4 · escalations. Subtracted for the reason the line below gives —
+        // `clean` is DERIVED BY SUBTRACTION, so any graded row that is none of
+        // the named categories falls through and is painted green. A
+        // human_review row is graded, is not a breach, and is not blocked,
+        // redacted or unknown, so without this term the donut would report an
+        // event the judge explicitly refused to clear as CLEAN. The same defect
+        // Q2a fixed in passport.compliant_events, in the second of three places
+        // it lived.
+        //
+        // ⚠ THIS COMMENT MUST CONTAIN NO SEMICOLON, AND MUST NOT SPELL THE
+        // CLEAN ASSIGNMENT. test_s12_verdict_donut slices this statement at the
+        // FIRST semicolon, EXECUTES it in node, and asserts the assignment
+        // appears exactly once. The first draft of this very warning broke both
+        // rules in turn — a semicolon truncated the statement, then quoting the
+        // assignment made it appear twice. Prose inside a statement a guard
+        // parses is code as far as that guard is concerned.
+        humanReview=+s.human_review||0,
+        // Blocked/redacted are prevented egress, evaluator-unknown is a non-pass and
+        // human-review is a deferral —
         // none of them are "clean", so exclude them rather than mislabel them green.
-        clean=Math.max(0,graded-breaches-blocked-redacted-unknown),
+        clean=Math.max(0,graded-breaches-blocked-redacted-unknown-humanReview),
         pending=(+g.pending||0)+(+g.in_progress||0), failed=+g.failed||0;
     /* G8 · #152/#150 · TONES SETTLED FIRST, THEN ORDER — the second depends on
        the first, so deciding them the other way round reorders against a
