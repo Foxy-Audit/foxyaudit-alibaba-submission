@@ -1,0 +1,363 @@
+# Alibaba Cloud AI Hackathon Pakistan 2026 — the escalation gets a destination
+
+> **Plan of record · written 2026-09-05 @ `23cddea`.**
+> Successor to `docs/plans/qwen-judge.md`, which is the plan of record for Q1–Q4
+> (all four shipped; that file's §6 State column is stale — see §7 here).
+>
+> **Deadline: 2026-09-07, 11:59 pm PKT.** Roughly 2.5 days from this file's date.
+
+---
+
+## 0 · The one-paragraph version
+
+The Qwen agentic judge can call `flag_for_human_review` and return
+`decision="human_review"`. Nothing receives that escalation: no table, no endpoint,
+no reviewer UI, no notification. This plan builds the destination — a review queue
+(A1), a reviewer surface (A2), a demo that runs the whole loop for real (A3), and
+the submission artefacts (A4) — so the product's central claim is *demonstrated*
+rather than asserted.
+
+---
+
+## 1 · Why this is the phase
+
+`qwen-judge.md` §3.5, written before Q2b shipped:
+
+> The draft's §0 says the judge escalates "to a human queue instead of just scoring
+> them." **That queue does not exist**, and neither the three phases nor their file
+> lists build one. Shipping the tool-call without a destination would record an
+> escalation nothing acts on — placeholder functionality, which the hard rules
+> forbid in code as well as in UI.
+
+Q2b shipped the tool-call. Option C (a real queue) was deferred with *"It is not a
+hackathon-week phase."* It is now the hackathon week.
+
+**Verified state of the hole at `23cddea`:**
+
+| Surface | Exists? |
+|---|---|
+| `decision="human_review"` in the wire enum | ✅ `schemas.py:347-349` |
+| Merge ladder `breach > human_review > clean` | ✅ `judge.py:34` |
+| Ledger filter `?verdict=human_review` | ✅ `routers/logs.py:541-548` |
+| Stats count, Passport subtraction | ✅ `logs.py:991-994`, `passport.py:365` |
+| Dashboard violet chip + filter option | ✅ `foxy-audit-premium.html:596,615,2321` |
+| **A table to escalate into** | ❌ none — no `review`/`escalation`/`queue` table among the 35 in `models.py`; `grep -rn "review" backend/migrations/versions/*.py` → 0 hits |
+| **An endpoint to act on one** | ❌ none across the 39 files in `backend/app/routers/` |
+| **A reviewer UI** | ❌ none |
+| **A notification** | ❌ `worker.py:333` gates on `verdict.policy_breach`, which is **always `False`** for a `human_review` (`judge.py:230`) — an escalation notifies nobody |
+
+---
+
+## 2 · The premise correction (read before writing any submission prose)
+
+The rules previously in play in this repo — **Track 4 "Autopilot Agent"**, the 30%
+Innovation & AI Creativity weight, the "Stage One … reasonably applies the required
+APIs/SDKs" clause, and the public-repo/architecture-diagram/3-min-video checklist —
+belong to the **global** *Qwen Cloud Global AI Hackathon Series* on Devpost. That
+event ran **May 25 – Jul 20 2026 and has ended**; winners were announced ~2026-08-29.
+
+The live event is the **Alibaba Cloud AI Hackathon Pakistan 2026** (Bano Qabil ×
+Alibaba Cloud × Cognix Solutions), `https://aihackathon.cognix-pk.com/`:
+
+> "Submissions are open until 7 Sep 2026, 11:59 pm PKT"
+
+with a note that the build phase was extended after the training sessions. Its
+tracks are **entirely different**:
+
+> Smart Agriculture · Financial Inclusion · Urdu & Regional Language Tech ·
+> Healthcare · Education · Open Innovation
+
+⚠ **The Pakistan site publishes no judging weights and no submission checklist.**
+Do not plan against the global event's checklist — A0.3 reads the real one off the
+portal.
+
+⚠ `qwen-judge.md:1,23,34` says **"Track 4: Agentic Applications"**, sourced from
+undated owner documentation. That matches **neither** event. Do not repeat it in any
+submission artefact, and do not treat it as evidence of the brief.
+
+---
+
+## 3 · Owner decisions, 2026-09-05
+
+| Question | Decision | Consequence |
+|---|---|---|
+| Track | **Open Innovation** declared; the demo covers **healthcare (PHI)** and **financial** scenarios | Both domain claims are demonstrated, not asserted. Revisit only if the portal's list differs (A0.3) |
+| Repo | **`foxyaudit-devtool`, stays PRIVATE** | No visibility change, no history secret-scan project. `fatimaatta-09/Foxy-Audit` is excluded by the 2026-09-18 merge freeze |
+| Qwen key | Owner obtains **2026-09-05** | A0 is the gate; A3 degrades honestly if it slips |
+| Vault | Move the 2026-09-04 devlog into the main `Devlogs\`, then remove `Alibaba Submission Changes` | See §7 — three lines in `qwen-judge.md` point at the folder being deleted |
+
+### Explicitly out of scope
+
+- **Alibaba Cloud deployment.** `deploy/` contains zero Alibaba infra; the only
+  `aliyuncs.com` string in the repo is the Qwen *API* endpoint, which is a judge
+  provider and not a deploy target. Standing up ECS in 2 days against a frozen
+  `deploy.yml` that SSHes into a *different* repo's VM is not a 2-day task. If the
+  portal requires deployment proof, that reopens as an **owner decision** — never a
+  silent attempt.
+- **A second judge tool** — A5, and only after A1–A4 merge.
+- **Any retroactive change to the compliance rate** — §4.4.
+
+---
+
+## 4 · Phase A1 — the review queue *(branch `feat/human-review-queue`, backend only)*
+
+### 4.1 The design constraint that makes this safe
+
+`chain.py:85 verdict_hash_hex()` binds the **local**, SDK-side verdict. The AI
+judge's verdict is written by the worker *after* the row is chained, which is the
+only reason the worker can write it at all. A human decision must follow the same
+rule: **it never mutates the chained row.**
+
+`AuditEvent`'s own docstring (`models.py:242-247`) already states the principle:
+
+> The original `audit_logs.gemini_verdict` column is retained as a compatibility
+> projection for old clients. New verdicts are also written here **so grading does
+> not rewrite the evidence event itself.**
+
+So the human decision gets **both**:
+
+| Vehicle | Role | Why both |
+|---|---|---|
+| `human_reviews` table | the **queue** — mutable `status`, so "what is pending" is one indexed query | an append-only log cannot answer "pending" cheaply |
+| `AuditEvent(event_type="human_review_resolved")` | the **evidence** — append-only, `event_hash`, never rewritten | the human's decision belongs in the tamper-evident record, not only in a mutable ops table |
+
+This is the submission's strongest technical point: *even the human's decision is
+appended, hashed, and independently verifiable — nothing rewrites history.*
+
+### 4.2 Files
+
+- **`backend/migrations/versions/0072_human_reviews.py`** — 0071 is the current
+  head; keep a single head.
+  Table `human_reviews`: `id` (UUID pk), `org_id` (FK `organizations.id`,
+  `ondelete="CASCADE"`, indexed), `audit_log_id` (FK `audit_logs.id`,
+  `ondelete="CASCADE"`, indexed), `status` (`pending`|`resolved`),
+  `resolution` (nullable: `confirmed_breach`|`cleared`|`policy_gap`),
+  `reason` + `risk_score` carried from the tool call (already truncated to 300 and
+  clamped 0–100 at `qwen_judge.py:203` — do not re-clamp, do not widen),
+  `note` (nullable, capped), `created_at`, `resolved_at`, `resolved_by`.
+  Index `(org_id, status, created_at)`.
+  **A unique constraint on `audit_log_id`** — one escalation per event; it makes the
+  worker insert idempotent under retry, which matters because `_grade_one` can be
+  re-entered after `_handle_failure`.
+
+- **`backend/app/models.py`** — the model. Match the RLS posture `audit_events`
+  uses; `Database\CLAUDE.md` documents three postures — pick the matching one, do
+  not invent a fourth.
+
+- **`backend/app/worker.py`** — in `_grade_one`, after the existing `db.commit()`
+  that durably persists the verdict:
+  - the notify block at `:333-337` is `if verdict.policy_breach:`. Add the
+    escalation branch **beside** it, not by widening that condition. A
+    `human_review` is **not** a breach and must not start being counted as one —
+    `policy_breach` is `False` by design (`judge.py:230`) and the Passport
+    arithmetic depends on it.
+  - insert the `human_reviews` row and append the `AuditEvent`.
+  - RLS: the write-back already scopes with
+    `SELECT set_config('app.current_org', :oid, true)` — the new writes must be
+    inside that scope.
+  - **Best-effort, never raises into grading.** The comment above the notifier
+    states the rule: a notify failure must never lose the grade. The same applies
+    here — a queue-insert failure must not fail the row.
+  - **While in this file:** delete the unreachable `return verdicts[0]` at
+    `worker.py:249`. It is dead after the Q3 fold and it is exactly the line a
+    future edit resurrects.
+
+- **`backend/app/routers/reviews.py`** (new, registered on `customer_api`) —
+  `GET /v1/reviews` (filter by `status`, paged — follow the **seq-cursor paging
+  shape** the export endpoint uses; do not invent a second paging contract) and
+  `POST /v1/reviews/{id}/resolve`. Org-scoped. Rate-limit in line with neighbours.
+
+- **`backend/app/schemas.py`** — request/response models. `resolution` constrained
+  the same way `decision` is (`:347-349` uses a regex-constrained `str`, **not** an
+  Enum and **not** a `Literal` — §3.2 of `qwen-judge.md` explains why narrowing a
+  `Literal` 500s an existing client; follow the established shape).
+
+### 4.3 `note` is annotation, not evidence
+
+A reviewer can type anything into a free-text field, including raw prompt content.
+So: cap it, and make it structurally impossible to mistake for content-blind
+evidence — **excluded from the Compliance Passport, excluded from the export
+bundle's evidence surface, and documented as customer-authored.** The
+*structured* `resolution` is the machine-readable outcome; the note is a human aid.
+
+### 4.4 Two decisions to encode, not re-litigate
+
+- **Resolving does not retroactively alter the compliance rate.** `human_review`
+  stays subtracted from `compliant_events` (`passport.py:365`) whatever the human
+  decides. Changing it would move a headline number on **already-issued** Passports
+  — precisely the trap open issue **#317** is about. Record the resolution; do not
+  re-arithmetic history.
+- **`graded_by` stays `"ai"`.** A human resolution is a new event, not a re-grade.
+  Nothing in `judge.py` changes in this phase.
+
+### 4.5 Tests
+
+Hermetic in `backend/tests/` where the logic allows; integration in
+`backend/tests/integration/` for RLS and endpoint behaviour.
+
+Must cover:
+1. An escalated verdict creates **exactly one** `human_reviews` row.
+2. Re-grading the same row (retry path) does not create a second — the unique
+   constraint holds.
+3. A `clean` and a `breach` verdict create **none**.
+4. Another org can neither list nor resolve it (RLS).
+5. Resolving is idempotent; a second resolve does not double-write the `AuditEvent`.
+6. **The assertion that proves the design:** the audit row's `chain_hash` is
+   **byte-identical before and after** a review resolves.
+
+⚠ **`judge_helpers.give_judge_key()` (`backend/tests/integration/judge_helpers.py:22-25`)
+has `gemini_key` and `openai_key` but no `qwen_key`** — so no integration test can
+route an org to Qwen today. Add the parameter here; it is two lines and it unblocks
+every later Qwen integration test. Qwen currently has **zero** integration coverage;
+the three-provider fold is pinned only by AST-parsing `worker.py`, never by execution.
+
+---
+
+## 5 · Phase A2 — the reviewer surface *(branch `feat/human-review-ui`)*
+
+⚠ **Load all three frontend skills, `ui-ux-pro-max` FIRST**, then `impeccable`, then
+`frontend-design`. Query the palette; never invent one.
+⚠ **Measure every fill against its background, not only its ink.** This surface has
+already shipped a chip whose text cleared 4.5:1 while the pill sat at 1.01:1 against
+its own card and dissolved.
+
+`foxy-dashboard/foxy-audit-premium.html` is one 9,520-line file with a `go(page)`
+router. A page is an established additive pattern — three touch points:
+
+- a `.dock-item` with `data-page="review"` (siblings `:1943-1985`) **and** its mobile
+  `.mnbtn` twin (`:3373-3377`) — the desktop-only half is the one people forget;
+- a `<div class="page" id="page-review">` (siblings `:2069-2916`);
+- the fetch + render, following how `page-ledger` loads.
+
+**Content:** pending queue — event seq, time, the AI's `reason`, `risk_score`, the AI
+system — a resolve control writing the three resolutions, and a resolved view.
+
+**Reuse the existing `human_review` violet `--c-6` token** from Q4 (`:596,615`). Do
+not introduce a second escalation colour. Note `:176-181` — *"NO SHIPPED CALL NAMES
+`violet`"* — read it before touching the token.
+
+**Honest empty state.** Zero pending reviews is the **good** state and must read that
+way: not an error, not a placeholder, no invented sample rows. Hard rule.
+
+A pending count on the dock item follows the existing badge pattern on `analytics`
+(`:1947`) and `notifications` (`:1980`).
+
+**Tests:** `pytest foxy-dashboard` runs in CI; follow `test_p6f_judge_model_ui.py`'s
+style. `node --check` every inline `<script>` touched — it is on the merge gate.
+
+---
+
+## 6 · Phase A3 — the demo that is also the video *(branch `feat/agentic-demo`)*
+
+One runnable script producing the whole narrative, so the video is a recording of a
+real run rather than a slideshow. **Extend `demo/`** (`mock_llm.py`,
+`offline_demo.py`, `judge_client.py`) — do not start a parallel demo framework.
+
+The run, in order:
+
+1. **Healthcare** prompt carrying PHI → the SDK host-side guard **blocks before the
+   model call** (`mode="block"`, `sdk/src/foxy_audit/policy.py`). *Works today.*
+2. **Financial** prompt, clean → allowed, graded `clean`. *Works today.*
+3. A genuinely **ambiguous** case → Qwen calls `flag_for_human_review` →
+   `decision="human_review"` → lands in the A1 queue. *Needs A0's key.*
+4. A human resolves it on the A2 page. *Needs A1 + A2.*
+5. `python verifier/foxy_verify.py logs.json` → the chain verifies **independently**,
+   dependency-free. *Works today.*
+6. Tamper demo: alter one byte, re-verify, watch it fail. *Works today.*
+
+That sequence *is* the submission argument: autonomous decision → escalation →
+human → independently verifiable evidence, with raw content never leaving the host.
+
+⚠ **If the key has not arrived, the script must SAY the judge is unavailable** and
+still run 1/2/5/6 honestly. Never simulate a Qwen response — the product's entire
+thesis is that you can check the evidence rather than trust the vendor.
+
+---
+
+## 7 · Phase A4 — submission artefacts + bookkeeping
+
+Nothing here may repeat a claim the code does not support.
+
+- **`README.md`** — `:17` still reads *"An OpenAI Build Week submission — category
+  Developer Tools · GPT-5.6"* and `:210-238` is the Codex/GPT-5.6 disclosure. **Add**
+  the Pakistan framing and an equivalent honest "built with Qwen during this period"
+  section (Q1–Q4 on 2026-09-04; A1–A3 on 2026-09-05/06). **Do not delete the OpenAI
+  disclosure** — both are true, and quietly rewriting history in a submission about
+  tamper-evidence would be a poor look.
+- **Architecture diagram** — SDK → local commitment → hash-chained ledger → worker →
+  **Qwen agent (tool-calling)** → escalation → human review → export → independent
+  verifier. Mark the **content-blindness boundary** explicitly; it is the thesis.
+- **Track declaration** — Open Innovation, naming the healthcare and financial
+  scenarios as the evidence.
+- **`JUDGES.pdf` / `JUDGES.html`** are OpenAI Build Week artefacts. Regenerate or
+  exclude — never submit them describing the wrong event.
+
+**Stale facts to correct while here:**
+- Root `CLAUDE.md` says Alembic head **0061**; it is **0071** (0072 after A1).
+- `qwen-judge.md` §6's State column shows Q2b/Q3/Q4 pending; all four shipped
+  (`04ae280`, `a050718`, `7fa7f30`, `c9d5ba5`, `1de4dd1`).
+- `qwen-judge.md:521-522,840,842` point executors at
+  `Alibaba Submission Changes\` in the vault, which §3 removes. **Repoint them in
+  the same change** or the next executor writes to a path that no longer exists.
+
+⚠ `ci.yml` carries `paths-ignore: ['docs/**','**/*.md','LICENSE']`, so a docs-only
+commit runs **no CI at all** (open issue **#322**, and the reason `d18f391` triggered
+nothing). A commit touching both docs and code needs a deliberate check.
+
+---
+
+## 8 · Phase A5 — a second tool *(only after A1–A4 merge)*
+
+The agent has one tool and one turn. A second tool that changes what the system does
+— the judge requesting the tenant's policy detail before deciding, say — is the
+difference between "calls a function" and "acts". **Do not start it until A1–A4 are
+merged.** A second tool without a destination repeats §3.5's mistake exactly.
+
+---
+
+## 9 · Merge gate — every phase
+
+Per root `CLAUDE.md` §5:
+
+- Branch off **fresh `origin/main`**; isolate in a `git worktree` (shared-tree lock).
+- Fast-forward-safe over `origin/main`.
+- `node --check` every inline `<script>` in changed HTML (A2).
+- Scope grep · **no fake/placeholder data** grep · **no secret** grep.
+- **Single Alembic head** — A1 adds 0072 on top of 0071.
+- `code-review` skill before merge.
+- Merge by direct SHA push: `git push origin <sha>:refs/heads/main`.
+
+⛔ **The deploy freeze holds.** `deploy.yml` and `release.yml` are
+`workflow_dispatch`-only and **must not be run**: `deploy.yml:156` clones and
+`git reset --hard`s `fatimaatta-09/Foxy-Audit` onto VM `34.18.4.58`, so one manual
+run overwrites what judges see on a **different** repo. Pushing to this repo's `main`
+does **not** deploy.
+
+**Known noise — do not mistake it for a regression:** `backend-integration` was
+already red at `da61819` before any Qwen work and went green with nothing targeting
+it (**#321**); the full backend suite can hit a TRUNCATE deadlock — run per-file if
+it trips.
+
+---
+
+## 10 · Verification
+
+```bash
+cd backend && python -m pytest tests --ignore=tests/integration -q   # hermetic
+cd backend && python -m pytest tests/integration -q                  # per-file if the deadlock trips
+python -m pytest foxy-dashboard                                      # A2 guards
+python demo/<A3 script>                                              # the full narrative
+python verifier/foxy_verify.py logs.json                             # independent chain check
+```
+
+End to end: escalate → row appears in `GET /v1/reviews` → resolve on the dashboard →
+leaves pending → `AuditEvent` appended → **the audit row's `chain_hash` is unchanged**.
+If that last one fails, A1's design is wrong, not the test.
+
+---
+
+## 11 · Change log
+
+| Date | What |
+|---|---|
+| 2026-09-05 | Written at `23cddea`. Premise corrected: the global Devpost event ended 2026-07-20; the live one is Alibaba Cloud AI Hackathon Pakistan 2026, deadline 2026-09-07 23:59 PKT. Owner chose Open Innovation, private `foxyaudit-devtool`, key today, vault folder moved-then-removed. |
