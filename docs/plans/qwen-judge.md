@@ -325,11 +325,32 @@ echo "QWEN_API_KEY=sk-XXXXXXXXXXXXXXXX" >> backend/.env
 triple would be 18 and would not fit. A future fourth provider needs a column
 widening, not a longer name.
 
-### OPEN — blocking Q2, not Q1
+### ✅ SETTLED 2026-09-04 — **the owner chose B: widen the `decision` enum**
 
-**How does an escalation get recorded, and where does it go?** §3.4 rules out the
-drafted answer and §3.5 says there is no queue. Three shapes, materially
-different work:
+`human_review` becomes a real value in the verdict vocabulary. The options and
+the argument are kept below, unedited, because the plan recommended **A** and
+the owner chose otherwise — and the reasoning is what a future reader needs, not
+a tidied record that makes the recommendation look prescient.
+
+**What that decides, concretely:**
+
+* `Verdict.decision`'s pattern gains `human_review`;
+* `judge.validate()` must ACCEPT it rather than quarantining it as
+  `decision_out_of_schema`;
+* `judge.combine()` needs merge semantics for it — see the ladder in §8a;
+* and **every reader of `decision` has to learn it.** That inventory was not in
+  this plan and is now §8a. It is bigger than the "wide" the table below
+  estimated: the ledger FILTER and the clean-rate STAT read the value too, not
+  only the display surfaces.
+
+⚠ **The consequence the plan did not see: B's UI work lands on the SAME two
+files as Q4.** The dashboard's verdict `<select>` and pill mapping, and the
+desktop's `VERDICT_OPTIONS` / status mapping, are the files Q4 was already going
+to open for the provider selector. Doing them as two phases means loading the
+three frontend skills twice and reviewing the same two files twice. **They are
+merged into one UI phase — see §6.**
+
+### The options, as they stood before the decision
 
 | | Shape | Cost | Honest? |
 |---|---|---|---|
@@ -371,8 +392,65 @@ this plan should keep guessing; it needs the decision, not a third argument.
 C is the right eventual answer if human review becomes a product feature. It is
 not a hackathon-week phase.
 
-⚠ Q1 does not depend on this, and Q1 has shipped. Q2 does not start until it is
-answered.
+**The owner chose B.** Recorded above; the concern was raised once and the
+decision is theirs. The rest of this plan is written for B.
+
+---
+
+## 8a · The `human_review` vocabulary — every reader, verified at `6b145b6`
+
+⚠ **This inventory is the deliverable of the B decision, and it was measured, not
+recalled.** A value added to a vocabulary is only as safe as the list of things
+that read it, and §3.10 has already shown this codebase hides those in places a
+plan does not think to look.
+
+### The merge ladder — decide this before writing any code
+
+`judge.combine()` currently filters to `{"clean", "breach"}` and everything else
+is dropped. With three judges, a `human_review` from one and a `clean` from
+another must produce something. The conservative ordering, and the one that
+matches how `_quarantine` already reasons:
+
+```
+breach  >  human_review  >  clean
+```
+
+A breach is a determination and outranks a request to look. `human_review`
+outranks `clean` because a judge asking for a human is *not* a pass, and
+laundering it into one is the [[#228]] defect in a new coat. `unknown` stays
+outside the ladder — it is not a grade at all.
+
+⚠ **`policy_breach` must stay `False` on a `human_review` verdict.** The two
+fields are cross-checked by `validate()` (`clean_flag_with_breach_decision`), and
+a human_review that sets the breach flag would be a breach the ledger did not
+call a breach.
+
+### Who reads `decision`
+
+| Where | What it does | Breaks how, untouched |
+|---|---|---|
+| `schemas.py` `Verdict.decision` | the regex | `ValidationError` — nothing can construct the verdict |
+| `judge.py` `_JUDGE_DECISIONS` | `validate()`'s allowlist | quarantined as `decision_out_of_schema` |
+| `judge.py` `combine()` `known` filter | multi-judge merge | the escalation is **dropped** for any org with 2+ judges |
+| `judge.py` `_decision()` | the clean/policy_breach contradiction guard | passes through; check it does not mis-fire |
+| **`routers/logs.py` the `?verdict=` filter** | the ledger's own query | a `human_review` row matches **no filter value** and is invisible in the ledger UI |
+| **`routers/logs.py` clean-rate** | `decision == "clean"` stat | silently excluded — arguably right, but it must be a decision, not an accident |
+| `routers/passport.py` | reads `policy_breach` and `decision == "unknown"` | a human_review row is counted as **neither**, in the auditor-facing PDF |
+| `openai_judge.py` JSON schema `enum` | that provider's response contract | leave it — OpenAI is not the agentic judge |
+| `foxy-dashboard/foxy-audit-premium.html` | the verdict `<select>`, the pill mapping, the breach-ish predicate | no option to filter by; renders with no pill class |
+| `desktop/ledger_data.py` | `VERDICT_OPTIONS`, `QUICK_CHIPS`, status mapping | same, on the desktop |
+| `verifier/foxy_verify.py` | **nothing — it never reads `decision`** | ✅ no verifier or chain impact |
+| `export_bundle.py` | **nothing** | ✅ |
+
+⚠ **The two rows in bold are the ones that matter most and are the least
+visible.** A new verdict value that no ledger filter matches produces rows a
+customer cannot find in the product that exists to let them find rows. Neither
+is a display bug.
+
+⚠ **No chain version is needed.** `verdict_hash` binds `local_verdict`, which
+`policy_engine` produces — and `policy_engine` never emits `human_review`. The
+judge verdict lives in `gemini_verdict`, which is not hashed. Confirmed by the
+verifier reading no `decision` at all.
 
 ---
 
@@ -407,9 +485,21 @@ the drift the boundary comment exists to prevent.
 | Phase | Branch | Scope | State |
 |---|---|---|---|
 | **Q1** | `feat/qwen-judge-routing` | Migration 0071 · per-provider default mapping · `config.py` · `models.py` · `judge_routing.py` · `policies.py` · `account.py` withheld fields · `admin_data.py` staff denylist | ✅ **shipped** — `779b8ed` + `32f2152` |
-| **Q2** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests | ⛔ **blocked on the §4 open decision** |
-| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way combine + prefix fix · **`logs.py` stats `judge_model`** (§3.10) | needs Q2 |
-| **Q4** | `feat/qwen-judge-surfaces` | `desktop/policy_data.py` · **`desktop/policy_page.py` + `judge_view()`** (§3.10) · dashboard provider `<select>` | ready — needs the three frontend skills |
+| **Q2a** | `feat/judge-human-review-vocab` | the `human_review` value, backend only: `schemas.py` · `judge.py` (`validate`, the `combine` ladder) · `logs.py` **verdict filter + clean-rate** · `passport.py` | ✅ **unblocked** — the owner chose B on 2026-09-04 |
+| **Q2b** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests — the tool-calling provider | needs Q2a |
+| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way fold + prefix fix · **`logs.py` stats `judge_model`** (§3.10) | needs Q2b |
+| **Q4** | `feat/qwen-judge-surfaces` | **one UI phase, both vocabularies** — the provider selector *and* the `human_review` verdict: `desktop/policy_data.py` · `desktop/policy_page.py` + `judge_view()` (§3.10) · `desktop/ledger_data.py` · the dashboard's provider `<select>`, verdict `<select>` and pill mapping | needs Q2a for the verdict half; the provider half is ready now |
+
+⚠ **Q2 SPLIT INTO Q2a AND Q2b BECAUSE OF THE B DECISION.** The provider module
+cannot return a verdict the schema rejects, so the vocabulary lands first, on its
+own, where it can be reviewed as the evidence change it is rather than as a
+detail of an integration.
+
+⚠ **AND Q4 ABSORBED B's UI WORK.** The dashboard verdict `<select>` and the
+desktop `VERDICT_OPTIONS` are in the same two files as the provider selector.
+Two phases would load the three frontend skills twice and review the same files
+twice, for one merge's worth of change. **Q4 is now one UI phase covering both
+vocabularies** — and it is the only phase that needs those skills.
 
 ⚠ **Q4 is not optional and it is not cosmetic.** Q1 deliberately leaves
 `judge_provider` stored and returned verbatim, so today's clients keep working
@@ -677,4 +767,5 @@ credential column and touches the DSAR credential manifest.
 | 2026-09-04 | `d4c3dde` | Plan written at `12a9ade`. Three phases, owner decisions captured |
 | 2026-09-04 | `779b8ed` | **Q1 built.** Six files + migration 0071. 15 behavioural checks; four re-broken by hand and all four went red |
 | 2026-09-04 | `32f2152` | **Q1 gate.** `code-review` found a second credential registry (§3.9 — `admin_data._NEVER_EXPOSE` would have served `qwen_key_enc` to staff) and a downgrade the Q1 commit had introduced by normalising `judge_provider` on the read and write paths. Both fixed; checks 15 → 17, mutants 4 → 6, all killed. §3 gains 3.9 and 3.10; §4's Option A recommendation corrected — `Verdict` **is** the hashed `local_verdict` |
+| 2026-09-04 | *(this entry)* | **Owner chose B** — widen the `decision` enum — against the plan's recommendation of A. §8a added: the merge ladder (`breach > human_review > clean`) and every reader of `decision`, measured at `6b145b6`. Two of them are not display surfaces: the ledger's `?verdict=` filter and the clean-rate stat, so an escalated row would be invisible in the product built to find rows. Q2 splits into **Q2a** (the vocabulary) and **Q2b** (the provider), and **Q4 absorbs B's UI work** because it lands on the same two files as the provider selector. No chain version needed — the verifier reads no `decision` at all |
 | 2026-09-04 | *(the revision below)* | Re-verified every premise at `d4c3dde`. Eight findings (§3): the provider ternary that resolves Qwen to the OpenAI default · the Literal that 500s the policy read · the DSAR credential claim · `decision="human_review"` rejected by the schema in three places · no human-review queue exists · both shipped clients silently reset the provider · pairwise `combine` · a static system prompt. Phases go 3 → 4 (Q4: the clients). Q2 now blocked on an open owner decision about the escalation's shape |
