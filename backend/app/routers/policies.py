@@ -310,8 +310,11 @@ def update_policies(
         detail={"enforcement_mode": body.enforcement_mode,
                 "sdk_enforcement": row.sdk_enforcement,
                 "notify_on_breach": body.notify_on_breach,
-                # `row`, not `body`: the audit record has to say what was STORED,
-                # and an alias submitted as "both" is stored as "gemini+openai".
+                # `row`, not `body`: the audit record has to say what was STORED.
+                # Today the two are identical, because the write path above
+                # stores the submitted word verbatim — so this is reading from
+                # the authoritative place rather than correcting anything, and it
+                # stays correct if a later phase ever does transform on write.
                 "judge_provider": row.judge_provider,
                 "judge_key_mode": body.judge_key_mode,
                 # A model id is not a secret, so unlike the keys beside it this

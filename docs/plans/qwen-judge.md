@@ -140,9 +140,15 @@ chose two judges — would raise a pydantic `ValidationError` **on read**. The
 shim never runs, because the policies router does not call
 `resolve_judge_routing`.
 
-**Fix:** `"both"` stays in the accepted vocabulary as a deprecated alias. It is
-normalised on write and mapped at resolve time; no row is migrated, and no
-tenant loses their policy page.
+**Fix:** `"both"` stays in the accepted vocabulary as a deprecated alias, is
+stored and returned VERBATIM, and is mapped only at grading time. No row is
+migrated and no tenant loses their policy page.
+
+> **Corrected 2026-09-04, after `32f2152`.** This originally said "normalised on
+> write". That was built, and it was wrong: both shipped clients coerce a word
+> they do not recognise back to `"gemini"` and save it, so converting the
+> spelling on write or on read would silently downgrade every pre-0071
+> two-judge org. Resolve-time only.
 
 ### 3.3 🔴 A new `*_key_enc` column makes a published claim false
 
@@ -457,9 +463,13 @@ verifier reading no `decision` at all.
 ## 5 · The traps
 
 **"Both" is a lie in a three-provider world.** Stored `"both"` means
-gemini+openai. It stays an accepted, deprecated alias — normalised on write,
-mapped at resolve time, never migrated in the database, and **never removed from
-the Literal** (§3.2).
+gemini+openai. It stays an accepted, deprecated alias — **stored and returned
+verbatim**, mapped at grading time ONLY, never migrated in the database, and
+**never removed from the Literal** (§3.2).
+
+⚠ Do NOT normalise it on the API's read or write path. That was tried and
+reverted in `32f2152`: handing a client a word it does not know makes it post
+`"gemini"` back, so tidying the spelling destroys the setting it tidied.
 
 **Model IDs are volatile.** `qwen-plus`, `qwen3.5-plus`, `qwen3.7-max-preview`
 change in days. The default comes from `settings.qwen_model`; org pins validate
@@ -586,10 +596,17 @@ dict lookups over `{"gemini": …, "openai": …, "qwen": …}` for the same rea
 ### `policies.py`
 
 * the Literal gains the seven names **and keeps `"both"`** (deprecated alias);
-* `_to_config` passes `normalise_provider(row.judge_provider)` so a stored
-  `"both"` reads back as `"gemini+openai"` and the response validates;
-* the PUT handler stores `normalise_provider(body.judge_provider)`, so writing
-  `"both"` converts the row on the next save without a data migration;
+* `_to_config` returns `row.judge_provider` **raw** — the Literal keeps
+  `"both"`, so the response validates without converting anything;
+* the PUT handler stores `body.judge_provider` **as submitted**;
+
+  > ⚠ **AS BUILT, AND THE REVERSE OF WHAT THIS SECTION FIRST SAID.** Both
+  > bullets originally called `normalise_provider`. That shipped in `779b8ed`
+  > and was reverted in `32f2152`, because both shipped clients coerce an
+  > unrecognised word back to `"gemini"` and save it — so normalising here
+  > silently downgrades every pre-0071 two-judge org on its next policy save.
+  > The alias is resolved in `judge_routing`, at grading time, and nowhere else.
+  > **Q3 and Q4 executors: do not "restore" the normalisation.**
 * `qwen_api_key` (write-only), `qwen_key_set` (read-only), `judge_qwen_model`
   (writable) mirror the existing pairs exactly — `_store_key` and
   `_checked_model` are reused unchanged;

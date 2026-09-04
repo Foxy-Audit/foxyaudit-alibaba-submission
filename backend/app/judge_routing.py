@@ -94,10 +94,17 @@ def normalise_provider(value: str | None) -> str:
     model pin. A row holding a word we no longer know must not take grading down
     for that tenant.
 
-    ⚠ CALLED ON THE READ PATH TOO, not only when routing. `PolicyConfig` is one
-    model for both directions and is built straight from the stored column, so a
-    row saying "both" would otherwise fail response validation and 500 the
-    policy page for every org that ever chose two judges.
+    ⚠ CALLED AT GRADING TIME ONLY — **not** on the policy API's read or write
+    path, and that is deliberate. An earlier cut of Q1 did call it there; it was
+    reverted in `32f2152`, because both shipped clients coerce a routing word
+    they do not recognise back to "gemini" and then SAVE it, so converting a
+    stored "both" into "gemini+openai" on the way out silently downgraded every
+    pre-0071 two-judge org on its next policy save.
+
+    What keeps `GET /v1/policies` working instead is that `"both"` stays in
+    `PolicyConfig`'s Literal — one model serves both directions and is built
+    straight from the stored column, so removing the value there is what would
+    500 the policy page for exactly those orgs.
     """
     resolved = PROVIDER_ALIASES.get(value, value)
     return resolved if resolved in PROVIDERS else DEFAULT_PROVIDER

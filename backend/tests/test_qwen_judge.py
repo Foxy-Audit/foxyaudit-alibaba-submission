@@ -280,3 +280,46 @@ def test_an_escalation_survives_a_merge_with_a_clean_judge(monkeypatch):
     assert merged.decision == "human_review", (
         "a second judge's clean deleted the request for a human")
     assert merged.policy_breach is False
+
+
+# ── the worker's empty-verdict guard ──────────────────────────────────────────
+
+def test_the_worker_guards_an_empty_verdict_list_before_indexing_it():
+    """Q1 made `judge_provider="qwen"` storable before the worker could dispatch
+    it, so `_judge_verdict` can reach its tail with NO verdicts. `verdicts[0]`
+    would raise IndexError, `_grade_one` counts the row as a failure, and a batch
+    failing with zero successes trips the breaker in `_loop` — which is
+    PROCESS-WIDE. One tenant's configuration would pause grading for everyone.
+
+    ⚠ THIS IS A STRUCTURAL TEST AND IT PROVES LESS THAN A BEHAVIOURAL ONE. It
+    parses `worker.py` rather than running it, because importing `app.worker`
+    constructs the SQLAlchemy engine and so needs a database driver, which puts
+    it outside this hermetic tier. What it pins is that the guard EXISTS and runs
+    BEFORE the subscript. What it cannot see is whether the guard's body is
+    right. Parsed rather than grepped, so it cannot score a comment.
+    """
+    import ast
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "app" / "worker.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_judge_verdict")
+
+    guards = [n.lineno for n in ast.walk(fn)
+              if isinstance(n, ast.If) and isinstance(n.test, ast.UnaryOp)
+              and isinstance(n.test.op, ast.Not)
+              and isinstance(n.test.operand, ast.Name)
+              and n.test.operand.id == "verdicts"]
+    subscripts = [n.lineno for n in ast.walk(fn)
+                  if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+                  and n.value.id == "verdicts"]
+
+    assert guards, (
+        "_judge_verdict has no `if not verdicts:` guard — a routing word that "
+        "selects no dispatch branch raises IndexError and trips the "
+        "process-wide grading breaker")
+    assert subscripts, "the test's own anchor is gone; re-aim it"
+    assert min(guards) < min(subscripts), (
+        f"the guard is at line {min(guards)} but verdicts is first indexed at "
+        f"{min(subscripts)} — the guard cannot run first")
