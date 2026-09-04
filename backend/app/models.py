@@ -433,14 +433,31 @@ class OrgPolicy(Base):
     #    org's events, and whose key pays for it. Deliberately NOT part of the
     #    policy snapshot: routing/billing is operational, not evidence, and a
     #    provider key must never reach the chain. ──
-    judge_provider: Mapped[str] = mapped_column(         # gemini | openai | both
+    # gemini | openai | qwen | gemini+openai | gemini+qwen | openai+qwen | all
+    # ⚠ AND `both`, which is what every two-judge org stored before qwen existed
+    # (0071). It is NOT migrated: it is an accepted alias, normalised on write
+    # and mapped at resolve time by judge_routing.normalise_provider. See that
+    # function for why the row is left alone.
+    #
+    # ⚠ String(16) IS THE CONSTRAINT ON THE VOCABULARY, not a formality.
+    # "gemini+openai" is 13 characters; the three-provider value is spelled
+    # "all" precisely because "gemini+openai+qwen" is 18 and would not fit. A
+    # fourth provider needs a column widening, not a longer name.
+    judge_provider: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="gemini")
     judge_key_mode: Mapped[str] = mapped_column(         # own (BYOK) | platform (Foxy's, premium only)
         String(16), nullable=False, server_default="own")
     # BYOK secrets — Fernet ciphertext ONLY (app/crypto_secrets.py). Never
     # returned by an API, never logged, never copied into event metadata.
+    #
+    # ⚠ A NEW `*_key_enc` COLUMN IS ALSO A CHANGE TO A PUBLISHED CLAIM. The DSAR
+    # bundle states that every credential this workspace holds is named in
+    # `withheld_fields`, so a column added here without a matching name in
+    # routers/account.py EXPORT_WITHHELD_FIELDS["policy"] makes that sentence
+    # false the moment the migration runs. The two are edited together.
     gemini_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     openai_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    qwen_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Which VERSION of the chosen provider grades this org (P6f). NULL = inherit
     # the deployment default; see migration 0058 for why there is no server
     # default and no CHECK constraint. Unlike the two columns above, a model id
@@ -448,6 +465,7 @@ class OrgPolicy(Base):
     # model produced each grade.
     gemini_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     openai_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    qwen_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

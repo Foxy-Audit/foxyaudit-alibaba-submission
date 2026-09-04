@@ -3,7 +3,9 @@
 Two independent choices per org, held on the LIVE OrgPolicy row (never on the
 chain snapshot — routing is an operational/billing decision, not evidence):
 
-  judge_provider  gemini | openai | both
+  judge_provider  one of :data:`PROVIDERS` — a single provider, a named pair,
+                  or ``all``. Plus ``both``, the pre-0071 spelling of
+                  ``gemini+openai``, accepted forever as an alias
   judge_key_mode  own (BYOK, the tenant's encrypted key) | platform (Foxy's keys)
 
 ``platform`` is a paid privilege, decided in ONE place —
@@ -42,24 +44,114 @@ log = logging.getLogger("foxy.judge_routing")
 # (pro, free, trial, max, NULL, anything unknown) are BYOK-only.
 PLATFORM_KEY_TIERS = {"premium"}
 
-PROVIDERS = ("gemini", "openai", "both")
+# Every judge this deployment can call. ONE name per provider, and the
+# combinations spelled out — because "both" stopped being an answer the moment a
+# third provider existed, and a word that used to mean one thing and now could
+# mean three is worse than no word.
+JUDGE_PROVIDERS = ("gemini", "openai", "qwen")
+
+PROVIDERS = ("gemini", "openai", "qwen",
+             "gemini+openai", "gemini+qwen", "openai+qwen", "all")
 KEY_MODES = ("own", "platform")
+
+# ⚠ `both` IS STILL STORED, AND IS NOT MIGRATED. It is what every two-judge org
+# chose before 0071, it means gemini+openai, and it is mapped here rather than in
+# the database for two reasons:
+#
+#   * a data migration would rewrite rows to say something the customer never
+#     chose, on a table whose whole job is recording what they did choose;
+#   * the alias has to survive anyway. Two shipped clients (the desktop and the
+#     dashboard) still SEND "both", and will until Q4 updates them.
+#
+# So it stays an accepted input forever, normalised on write and at resolve time.
+PROVIDER_ALIASES = {"both": "gemini+openai"}
+
+# Which judges each vocabulary word actually selects. ONE mapping, so a
+# combination added above cannot be forgotten in three `uses_*` properties —
+# which is exactly how a chain of `provider in (...)` tests goes stale.
+_PROVIDER_MEMBERS = {
+    "gemini": frozenset({"gemini"}),
+    "openai": frozenset({"openai"}),
+    "qwen": frozenset({"qwen"}),
+    "gemini+openai": frozenset({"gemini", "openai"}),
+    "gemini+qwen": frozenset({"gemini", "qwen"}),
+    "openai+qwen": frozenset({"openai", "qwen"}),
+    "all": frozenset(JUDGE_PROVIDERS),
+}
 
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_KEY_MODE = "own"
+
+
+def normalise_provider(value: str | None) -> str:
+    """The stored routing word, as this version of the code understands it.
+
+    Resolves the ``both`` alias and falls back to the default for anything
+    unrecognised — the same posture :func:`resolve_model` takes for a withdrawn
+    model pin. A row holding a word we no longer know must not take grading down
+    for that tenant.
+
+    ⚠ CALLED ON THE READ PATH TOO, not only when routing. `PolicyConfig` is one
+    model for both directions and is built straight from the stored column, so a
+    row saying "both" would otherwise fail response validation and 500 the
+    policy page for every org that ever chose two judges.
+    """
+    resolved = PROVIDER_ALIASES.get(value, value)
+    return resolved if resolved in PROVIDERS else DEFAULT_PROVIDER
+
+
+def providers_in(value: str | None) -> frozenset[str]:
+    """The individual judges a routing word selects."""
+    return _PROVIDER_MEMBERS[normalise_provider(value)]
 
 # Which model versions an org may pin, per provider (P6f). One constant, in the
 # same spirit as PLATFORM_KEY_TIERS above: adding a model is a one-line change.
 #
 # The DEPLOYMENT DEFAULT IS NOT LISTED HERE and is not required to be. It comes
-# from settings.gemini_model / settings.openai_model and is always allowed, so a
-# deployment can move to a model this list has not heard of without anyone having
-# to edit it first. That ordering matters — the operator's setting outranks a
-# constant in source.
+# from settings (see _PROVIDER_DEFAULTS) and is always allowed, so a deployment
+# can move to a model this list has not heard of without anyone having to edit it
+# first. That ordering matters — the operator's setting outranks a constant in
+# source.
 JUDGE_MODELS = {
     "gemini": ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"),
     "openai": ("gpt-5.6", "gpt-5.6-mini", "chat-latest"),
+    "qwen": ("qwen-plus", "qwen-max", "qwen-turbo"),
 }
+
+# Where each provider's deployment default comes from.
+#
+# ⚠ A MAPPING, AND IT RAISES ON AN UNKNOWN PROVIDER. This was a two-way ternary
+# — `settings.gemini_model if provider == "gemini" else settings.openai_model` —
+# in both functions below, which is correct for exactly as long as there are two
+# providers. With a third, EVERY name that is not "gemini" takes the second
+# branch: a qwen org with no pin would have resolved to the OpenAI default, sent
+# `gpt-5.6` to dashscope, and written `judge_provider="qwen"` beside
+# `judge_model="gpt-5.6"` onto the verdict — a false provenance line in the one
+# artefact this product sells. `allowed_models("qwen")` would also have listed
+# `gpt-5.6` as a valid qwen pin and accepted it.
+#
+# Refusing an unknown key is the point: a fourth provider must fail loudly here
+# rather than inherit a third one's model.
+_PROVIDER_DEFAULTS = {
+    "gemini": lambda s: s.gemini_model,
+    "openai": lambda s: s.openai_model,
+    "qwen": lambda s: s.qwen_model,
+}
+
+
+def default_model(provider: str) -> str:
+    """This deployment's default model id for one provider.
+
+    Raises :class:`ValueError` for a provider it has no setting for, rather than
+    silently answering with another provider's model.
+    """
+    try:
+        return _PROVIDER_DEFAULTS[provider](get_settings())
+    except KeyError:
+        raise ValueError(
+            f"no deployment default model for judge provider {provider!r}; "
+            f"known providers are {', '.join(sorted(_PROVIDER_DEFAULTS))}"
+        ) from None
 
 
 def allowed_models(provider: str) -> tuple[str, ...]:
@@ -68,8 +160,7 @@ def allowed_models(provider: str) -> tuple[str, ...]:
     The default is prepended rather than assumed present, and de-duplicated, so
     the list is correct whether or not the running default happens to appear in
     JUDGE_MODELS."""
-    settings = get_settings()
-    default = settings.gemini_model if provider == "gemini" else settings.openai_model
+    default = default_model(provider)
     out = [default] if default else []
     for m in JUDGE_MODELS.get(provider, ()):
         if m not in out:
@@ -86,8 +177,7 @@ def resolve_model(provider: str, stored: str | None) -> str:
     and the org finds out through a grading outage it cannot diagnose. The same
     posture the BYOK path takes when a key will not decrypt: record the problem,
     carry on with something that works."""
-    settings = get_settings()
-    default = settings.gemini_model if provider == "gemini" else settings.openai_model
+    default = default_model(provider)
     if stored and stored in allowed_models(provider):
         return stored
     if stored:
@@ -145,17 +235,18 @@ def platform_keys_allowed(org) -> bool:
 class JudgeRouting:
     """One org's resolved judge configuration for a single grading call.
 
-    ``gemini_key`` / ``openai_key`` are plaintext BYOK keys held in memory only.
-    ``None`` means "no tenant key for this provider": in platform mode that is
-    correct (the provider falls back to settings.*), and in own mode it means the
-    provider must be SKIPPED rather than charged to the platform — which is what
-    :meth:`can_call` encodes.
+    ``gemini_key`` / ``openai_key`` / ``qwen_key`` are plaintext BYOK keys held in
+    memory only. ``None`` means "no tenant key for this provider": in platform
+    mode that is correct (the provider falls back to settings.*), and in own mode
+    it means the provider must be SKIPPED rather than charged to the platform —
+    which is what :meth:`can_call` encodes.
     """
 
     provider: str = DEFAULT_PROVIDER
     key_mode: str = DEFAULT_KEY_MODE
     gemini_key: str | None = None
     openai_key: str | None = None
+    qwen_key: str | None = None
     # The RESOLVED model id per provider — an org pin if it survived validation,
     # otherwise the deployment default. Never None once resolve_judge_routing has
     # run. Unlike the keys above these are safe to record: a model id identifies
@@ -163,23 +254,44 @@ class JudgeRouting:
     # can say which model graded each event.
     gemini_model: str | None = None
     openai_model: str | None = None
+    qwen_model: str | None = None
     # Why a chosen provider had to be skipped (e.g. "no_byok_key"), for the
     # evaluator_unavailable reason string. Never contains key material.
     problems: dict[str, str] = field(default_factory=dict)
 
     @property
+    def selected(self) -> frozenset[str]:
+        """The judges this routing selects — the ONE place the word is decoded."""
+        return providers_in(self.provider)
+
+    # Kept as named properties because the worker reads them one branch at a
+    # time, but all three now answer from `selected`: a new combination added to
+    # PROVIDERS cannot be right in two of these and stale in the third.
+    @property
     def uses_gemini(self) -> bool:
-        return self.provider in ("gemini", "both")
+        return "gemini" in self.selected
 
     @property
     def uses_openai(self) -> bool:
-        return self.provider in ("openai", "both")
+        return "openai" in self.selected
+
+    @property
+    def uses_qwen(self) -> bool:
+        return "qwen" in self.selected
 
     def key_for(self, provider: str) -> str | None:
-        return self.gemini_key if provider == "gemini" else self.openai_key
+        """This org's BYOK key for one provider, or None.
+
+        A LOOKUP, NOT A TERNARY — the two-branch form answered `openai_key` for
+        every provider that was not "gemini", so an unrecognised name silently
+        borrowed another provider's credential and `can_call` said yes.
+        """
+        return {"gemini": self.gemini_key, "openai": self.openai_key,
+                "qwen": self.qwen_key}.get(provider)
 
     def model_for(self, provider: str) -> str | None:
-        return self.gemini_model if provider == "gemini" else self.openai_model
+        return {"gemini": self.gemini_model, "openai": self.openai_model,
+                "qwen": self.qwen_model}.get(provider)
 
     def can_call(self, provider: str) -> bool:
         """False when this provider is chosen but has no usable key in own mode."""
@@ -222,9 +334,13 @@ def resolve_judge_routing(db: Session, org_id) -> JudgeRouting:
     policy = db.get(OrgPolicy, oid)
     if policy is None:
         return JudgeRouting(gemini_model=resolve_model("gemini", None),
-                            openai_model=resolve_model("openai", None))
+                            openai_model=resolve_model("openai", None),
+                            qwen_model=resolve_model("qwen", None))
 
-    provider = policy.judge_provider if policy.judge_provider in PROVIDERS else DEFAULT_PROVIDER
+    # normalise_provider, not a membership test: it also resolves the "both"
+    # alias, which no amount of `in PROVIDERS` would.
+    provider = normalise_provider(policy.judge_provider)
+    selected = providers_in(provider)
     key_mode = policy.judge_key_mode if policy.judge_key_mode in KEY_MODES else DEFAULT_KEY_MODE
 
     if key_mode == "platform":
@@ -238,17 +354,27 @@ def resolve_judge_routing(db: Session, org_id) -> JudgeRouting:
     # independent choices, and a platform-key org still gets to pick a model.
     gemini_model = resolve_model("gemini", policy.gemini_judge_model)
     openai_model = resolve_model("openai", policy.openai_judge_model)
+    qwen_model = resolve_model("qwen", policy.qwen_judge_model)
 
     if key_mode == "platform":
         return JudgeRouting(provider=provider, key_mode=key_mode,
-                            gemini_model=gemini_model, openai_model=openai_model)
+                            gemini_model=gemini_model, openai_model=openai_model,
+                            qwen_model=qwen_model)
 
+    # Decrypt ONLY the keys this routing will actually spend. `selected` is the
+    # same set the worker branches on, so a provider can never be called with a
+    # key that was not materialised for it, and a key is never decrypted for a
+    # provider this org did not choose.
     problems: dict[str, str] = {}
     gemini_key = (_decrypt_optional(policy.gemini_key_enc, oid, "gemini", problems)
-                  if provider in ("gemini", "both") else None)
+                  if "gemini" in selected else None)
     openai_key = (_decrypt_optional(policy.openai_key_enc, oid, "openai", problems)
-                  if provider in ("openai", "both") else None)
+                  if "openai" in selected else None)
+    qwen_key = (_decrypt_optional(policy.qwen_key_enc, oid, "qwen", problems)
+                if "qwen" in selected else None)
     return JudgeRouting(provider=provider, key_mode=key_mode,
                         gemini_key=gemini_key, openai_key=openai_key,
+                        qwen_key=qwen_key,
                         gemini_model=gemini_model, openai_model=openai_model,
+                        qwen_model=qwen_model,
                         problems=problems)

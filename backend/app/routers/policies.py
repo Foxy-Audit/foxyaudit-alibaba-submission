@@ -19,7 +19,8 @@ from .. import account_audit
 from ..auth import require_role, resolve_org
 from ..crypto_secrets import SecretsNotConfigured, encrypt_secret
 from ..db import get_db
-from ..judge_routing import allowed_models, platform_keys_allowed, resolve_model
+from ..judge_routing import (allowed_models, normalise_provider,
+                             platform_keys_allowed, resolve_model)
 from ..models import OrgPolicy, Organization, User
 
 router = APIRouter()
@@ -58,16 +59,28 @@ class PolicyConfig(BaseModel):
     # Optional destinations for the breach notifier (P2 · §F).
     notify_email: str | None = Field(default=None, max_length=320)
     notify_webhook_url: str | None = Field(default=None, max_length=1024)
-    # ── Per-tenant AI Judge selection (0053) ──
-    judge_provider: Literal["gemini", "openai", "both"] = "gemini"
+    # ── Per-tenant AI Judge selection (0053; qwen + combinations, 0071) ──
+    #
+    # ⚠ "both" IS IN THIS LIST DELIBERATELY, AND MUST STAY. This model is used
+    # for BOTH directions — the request body and the response — and `_to_config`
+    # builds it from the stored column. Every org that chose two judges before
+    # 0071 has "both" in the database, so removing it here does not deprecate the
+    # value: it raises ValidationError on the READ path and 500s the policy page
+    # for exactly those orgs. It is normalised to "gemini+openai" on the way out
+    # and on the way in, so a client that sends it converts the row on save.
+    judge_provider: Literal["gemini", "openai", "qwen",
+                            "gemini+openai", "gemini+qwen", "openai+qwen", "all",
+                            "both"] = "gemini"
     judge_key_mode: Literal["own", "platform"] = "own"
     # WRITE-ONLY. Submit a key to store it (encrypted); submit "" to clear it;
     # omit to leave it untouched. Never populated on a response.
     gemini_api_key: str | None = Field(default=None, max_length=512, exclude=True)
     openai_api_key: str | None = Field(default=None, max_length=512, exclude=True)
+    qwen_api_key: str | None = Field(default=None, max_length=512, exclude=True)
     # READ-ONLY, derived. Presence booleans + what this plan is allowed to do.
     gemini_key_set: bool = False
     openai_key_set: bool = False
+    qwen_key_set: bool = False
     plan_tier: str | None = None
     platform_keys_allowed: bool = False
     # WRITABLE (P6f · 0058). Which model of the chosen provider grades this org.
@@ -75,6 +88,7 @@ class PolicyConfig(BaseModel):
     # state for every tenant — see migration 0058 for why there is no default here.
     judge_gemini_model: str | None = Field(default=None, max_length=64)
     judge_openai_model: str | None = Field(default=None, max_length=64)
+    judge_qwen_model: str | None = Field(default=None, max_length=64)
     # §7.6 · read-only. Which model each provider will ACTUALLY grade with —
     # the org's pick where it has one, the deployment default otherwise. It
     # resolves through the same function the worker routes with, so this can
@@ -100,10 +114,15 @@ def _to_config(row: OrgPolicy, org: Organization | None = None) -> "PolicyConfig
         notify_on_breach=row.notify_on_breach,
         notify_email=row.notify_email,
         notify_webhook_url=row.notify_webhook_url,
-        judge_provider=row.judge_provider,
+        # NORMALISED, not raw: a row still holding the pre-0071 "both" reads back
+        # as "gemini+openai", which is what it has always meant. The same
+        # function the worker routes with, so the page cannot show a selection
+        # the grader would not act on.
+        judge_provider=normalise_provider(row.judge_provider),
         judge_key_mode=row.judge_key_mode,
         gemini_key_set=bool((row.gemini_key_enc or "").strip()),
         openai_key_set=bool((row.openai_key_enc or "").strip()),
+        qwen_key_set=bool((row.qwen_key_enc or "").strip()),
         plan_tier=tier,
         # The ORG, not `tier` (M4a): premium alone no longer distinguishes a
         # paying customer from an evaluator, and this boolean is what the
@@ -111,14 +130,17 @@ def _to_config(row: OrgPolicy, org: Organization | None = None) -> "PolicyConfig
         platform_keys_allowed=platform_keys_allowed(org),
         judge_gemini_model=row.gemini_judge_model,
         judge_openai_model=row.openai_judge_model,
+        judge_qwen_model=row.qwen_judge_model,
         # Resolved, not reported raw: an org pinned to a model that has since been
         # withdrawn would otherwise be shown a name the worker no longer calls.
         judge_models={
             "gemini": resolve_model("gemini", row.gemini_judge_model),
             "openai": resolve_model("openai", row.openai_judge_model),
+            "qwen": resolve_model("qwen", row.qwen_judge_model),
         },
         judge_models_available={"gemini": list(allowed_models("gemini")),
-                                "openai": list(allowed_models("openai"))},
+                                "openai": list(allowed_models("openai")),
+                                "qwen": list(allowed_models("qwen"))},
     )
 
 
@@ -188,8 +210,8 @@ def get_policies(
 ) -> PolicyConfig:
     """Return the org's current compliance policy settings.
 
-    Provider keys are reported as booleans (gemini_key_set / openai_key_set) and
-    never returned — not even to the org that owns them.
+    Provider keys are reported as booleans (gemini_key_set / openai_key_set /
+    qwen_key_set) and never returned — not even to the org that owns them.
     """
     row = _get_or_create(org, db)
     return _to_config(row, org)
@@ -239,8 +261,11 @@ def update_policies(
         raise HTTPException(
             status_code=403,
             detail="Foxy's managed provider keys require the premium plan; "
-                   "use your own Gemini/OpenAI key on this plan")
-    row.judge_provider = body.judge_provider
+                   "use your own Gemini/OpenAI/Qwen key on this plan")
+    # NORMALISED ON WRITE, so a client still sending the pre-0071 "both" converts
+    # its own row on the next save and the database drifts towards the current
+    # vocabulary without a data migration rewriting anyone's choice for them.
+    row.judge_provider = normalise_provider(body.judge_provider)
     row.judge_key_mode = body.judge_key_mode
     # The model pick, on the same absent/present rule as sdk_enforcement above and
     # for the same reason — the desktop client (desktop/policy_data.py::put_body)
@@ -258,22 +283,30 @@ def update_policies(
     if "judge_openai_model" in body.model_fields_set:
         row.openai_judge_model = _checked_model("openai", body.judge_openai_model,
                                                 row.openai_judge_model)
+    if "judge_qwen_model" in body.model_fields_set:
+        row.qwen_judge_model = _checked_model("qwen", body.judge_qwen_model,
+                                              row.qwen_judge_model)
     row.gemini_key_enc = _store_key(body.gemini_api_key, row.gemini_key_enc, org.id, "gemini")
     row.openai_key_enc = _store_key(body.openai_api_key, row.openai_key_enc, org.id, "openai")
+    row.qwen_key_enc = _store_key(body.qwen_api_key, row.qwen_key_enc, org.id, "qwen")
     account_audit.record_account_action(
         db, org_id=admin.org_id, actor_email=admin.email, action="policy.update",
         # Records THAT a key changed, never the key itself.
         detail={"enforcement_mode": body.enforcement_mode,
                 "sdk_enforcement": row.sdk_enforcement,
                 "notify_on_breach": body.notify_on_breach,
-                "judge_provider": body.judge_provider,
+                # `row`, not `body`: the audit record has to say what was STORED,
+                # and an alias submitted as "both" is stored as "gemini+openai".
+                "judge_provider": row.judge_provider,
                 "judge_key_mode": body.judge_key_mode,
                 # A model id is not a secret, so unlike the keys beside it this
                 # records the value, not merely that it changed.
                 "judge_gemini_model": row.gemini_judge_model,
                 "judge_openai_model": row.openai_judge_model,
+                "judge_qwen_model": row.qwen_judge_model,
                 "gemini_key_set": bool((row.gemini_key_enc or "").strip()),
-                "openai_key_set": bool((row.openai_key_enc or "").strip())})
+                "openai_key_set": bool((row.openai_key_enc or "").strip()),
+                "qwen_key_set": bool((row.qwen_key_enc or "").strip())})
     db.commit()
     db.refresh(row)
     return _to_config(row, org)

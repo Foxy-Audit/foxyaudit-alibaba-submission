@@ -33,6 +33,21 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5.6"
     openai_timeout: float = 12.0
+    # Optional Qwen (Alibaba Cloud) judge, over the OpenAI-compatible
+    # /chat/completions endpoint. Blank key disables this provider, exactly as
+    # above. The BASE URL is a setting rather than a constant because the
+    # international and mainland endpoints differ, and a deployment must be able
+    # to move between them without a code change.
+    #
+    # ⚠ QWEN MODEL IDS TURN OVER IN DAYS (qwen-plus, qwen3.5-plus,
+    # qwen3.7-max-preview ...). This default decides what a tenant with no pin
+    # grades on, so it lives here, in the operator's hands, and
+    # judge_routing.default_model() is the only thing that reads it. Nothing
+    # hardcodes a model id.
+    qwen_api_key: str = ""
+    qwen_model: str = "qwen-plus"
+    qwen_timeout: float = 12.0
+    qwen_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     # Fernet key (urlsafe-base64, 32 bytes) that encrypts customer-supplied BYOK
     # provider keys at rest. Empty = BYOK unavailable on this deployment; every
     # store/read of a tenant key then fails closed rather than touching plaintext.

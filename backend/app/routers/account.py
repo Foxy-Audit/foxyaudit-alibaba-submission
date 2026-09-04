@@ -537,10 +537,18 @@ EXPORT_WITHHELD_FIELDS = {
               "passwords, multi-factor codes and password-reset tokens",
               "Stored only as one-way hashes and never serialised anywhere."),
     # ⚠ `policy` was missing entirely until #252b, while `org_policies` holds
-    # TWO Fernet-encrypted BYOK provider keys. `grep -c key_enc` over this file
+    # Fernet-encrypted BYOK provider keys. `grep -c key_enc` over this file
     # returned 0: the bundle withheld them correctly and said so nowhere, which
     # is the same false claim as omitting a table, one layer down.
-    "policy": (("gemini_key_enc", "openai_key_enc"),
+    #
+    # ⚠ AND THIS TUPLE IS EDITED IN THE SAME COMMIT AS THE COLUMN. There were two
+    # keys until 0071 added `qwen_key_enc`; EXPORT_STATEMENT below claims that
+    # every credential this workspace holds is named here, so a `*_key_enc`
+    # column that lands without its name makes a PUBLISHED sentence false at the
+    # moment the migration runs — not at the moment someone notices. The
+    # structural guard is `test_every_credential_we_hold_is_named_in_the_manifest`,
+    # which walks the model registry for the `_key_enc` pattern.
+    "policy": (("gemini_key_enc", "openai_key_enc", "qwen_key_enc"),
                "the AI-provider keys you brought to this workspace",
                "Held encrypted at rest with a key this service never returns, "
                "and never decrypted outside the grading path."),
@@ -861,8 +869,11 @@ def account_export(
             # Added at #252b: the rest of what the workspace CONFIGURED. The
             # notify addresses are personal data in their own right, and the
             # judge settings are the customer's choice about who grades their
-            # evidence. The two `*_key_enc` columns are withheld and now SAID
-            # to be, in export_scope.
+            # evidence. The `*_key_enc` columns — three of them since 0071 added
+            # Qwen — are withheld and SAID to be, in export_scope. The count is
+            # not written down here on purpose: it was "two" until a migration
+            # made that false, and a number in a comment beside a list is a
+            # second place for the same fact to go stale.
             "confidence_threshold": policy.confidence_threshold,
             "notify_email": policy.notify_email,
             "notify_webhook_url": policy.notify_webhook_url,
