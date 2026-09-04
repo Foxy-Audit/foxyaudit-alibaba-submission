@@ -19,8 +19,7 @@ from .. import account_audit
 from ..auth import require_role, resolve_org
 from ..crypto_secrets import SecretsNotConfigured, encrypt_secret
 from ..db import get_db
-from ..judge_routing import (allowed_models, normalise_provider,
-                             platform_keys_allowed, resolve_model)
+from ..judge_routing import allowed_models, platform_keys_allowed, resolve_model
 from ..models import OrgPolicy, Organization, User
 
 router = APIRouter()
@@ -114,11 +113,20 @@ def _to_config(row: OrgPolicy, org: Organization | None = None) -> "PolicyConfig
         notify_on_breach=row.notify_on_breach,
         notify_email=row.notify_email,
         notify_webhook_url=row.notify_webhook_url,
-        # NORMALISED, not raw: a row still holding the pre-0071 "both" reads back
-        # as "gemini+openai", which is what it has always meant. The same
-        # function the worker routes with, so the page cannot show a selection
-        # the grader would not act on.
-        judge_provider=normalise_provider(row.judge_provider),
+        # ⚠ RAW, DELIBERATELY — do NOT normalise "both" to "gemini+openai" here.
+        # It is tempting, and it was written that way first. But the two shipped
+        # clients coerce any word they do not recognise back to "gemini" and then
+        # SAVE it (desktop/policy_data.py `_choice(..., PROVIDERS, "gemini")`;
+        # foxy-audit-premium.html sets a <select> to a missing option, reads back
+        # "", and posts `|| 'gemini'`). Handing them a word they have never heard
+        # of would therefore silently downgrade every existing two-judge org to
+        # gemini-only on their next policy save — a data loss caused entirely by
+        # tidying up the spelling of a value that was already correct.
+        #
+        # The alias is resolved where it is USED instead: judge_routing at
+        # grading time. Q4 teaches both clients the new vocabulary; until then
+        # they keep seeing the word they wrote.
+        judge_provider=row.judge_provider,
         judge_key_mode=row.judge_key_mode,
         gemini_key_set=bool((row.gemini_key_enc or "").strip()),
         openai_key_set=bool((row.openai_key_enc or "").strip()),
@@ -262,10 +270,11 @@ def update_policies(
             status_code=403,
             detail="Foxy's managed provider keys require the premium plan; "
                    "use your own Gemini/OpenAI/Qwen key on this plan")
-    # NORMALISED ON WRITE, so a client still sending the pre-0071 "both" converts
-    # its own row on the next save and the database drifts towards the current
-    # vocabulary without a data migration rewriting anyone's choice for them.
-    row.judge_provider = normalise_provider(body.judge_provider)
+    # STORED AS SUBMITTED, for the same reason the read path is raw: normalising
+    # here would convert an old client's "both" into a word that same client
+    # cannot render, and its next save would post "gemini" back. The row keeps
+    # the customer's word; judge_routing resolves it at grading time.
+    row.judge_provider = body.judge_provider
     row.judge_key_mode = body.judge_key_mode
     # The model pick, on the same absent/present rule as sdk_enforcement above and
     # for the same reason — the desktop client (desktop/policy_data.py::put_body)

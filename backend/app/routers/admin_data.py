@@ -68,7 +68,26 @@ router = APIRouter()
 # not registered here at all; it has a purpose-built route in `admin_billing`
 # that builds every item from an explicit field list.
 _NEVER_EXPOSE = {"password_hash", "key_hash", "api_key_hash",
-                 "gemini_key_enc", "openai_key_enc", "payload"}
+                 "gemini_key_enc", "openai_key_enc", "qwen_key_enc", "payload"}
+
+
+def _never_exposed(name: str) -> bool:
+    """True for a column staff must never read — by name, OR by shape.
+
+    ⚠ THE SUFFIX RULE IS WHY THIS IS A FUNCTION AND NOT A SET MEMBERSHIP. The
+    set above is a denylist BY NAME in front of a serializer that emits every
+    column it does not name, so a credential column added later is exposed by
+    default and stays exposed until somebody remembers this file. That is not
+    hypothetical: 0071 added `org_policies.qwen_key_enc`, `org_policies` is a
+    registered table, and the phase that added the column did not come here —
+    staff would have been served a tenant's encrypted provider key.
+
+    `*_key_enc` is the BYOK envelope's naming convention (app/crypto_secrets.py)
+    and the same pattern `test_account_export_scope` walks the model registry
+    for. Matching on it means this registry and the DSAR one now go stale the
+    same way — which is to say, they do not.
+    """
+    return name in _NEVER_EXPOSE or name.endswith("_key_enc")
 
 TABLE_REGISTRY: dict[str, dict[str, Any]] = {
     # "filterable" is a SEPARATE, explicit allowlist from "search": search is
@@ -160,7 +179,7 @@ def _serialize(obj: Any, columns) -> dict[str, Any]:
     return {
         col.name: _jsonable(getattr(obj, col.name))
         for col in columns
-        if col.name not in _NEVER_EXPOSE
+        if not _never_exposed(col.name)
     }
 
 
@@ -234,7 +253,7 @@ def list_rows(
             # side channel. _NEVER_EXPOSE is checked again here directly as a
             # second, independent guard in case a future edit ever puts a
             # sensitive column on some table's filterable list by mistake.
-            if col_name not in filterable or col_name in _NEVER_EXPOSE:
+            if col_name not in filterable or _never_exposed(col_name):
                 continue
             col = col_by_name.get(col_name)
             if col is not None:
