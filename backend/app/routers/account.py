@@ -30,8 +30,8 @@ from ..auth import require_role, require_step_up_user, require_user, resolve_org
 from ..config import get_settings
 from ..db import get_db
 from ..models import (
-    AccountAction, AiSystem, ApiKey, AuditLog, ChainAnchor, ExportJob, Invoice,
-    LoginEvent, Notification, Organization, OrgPolicy, PaymentEvent,
+    AccountAction, AiSystem, ApiKey, AuditLog, ChainAnchor, ExportJob, HumanReview,
+    Invoice, LoginEvent, Notification, Organization, OrgPolicy, PaymentEvent,
     SsoConnection, StripeEvent, UsageDaily, User, WebhookSubscription,
 )
 from .logs import limiter          # the app's single Limiter instance
@@ -452,6 +452,16 @@ EXPORT_SECTION_TABLES = {
     "export_jobs": "export_jobs",
     "payment_events": "payment_events",
     "stripe_events": "stripe_events",
+    # A1 · INCLUDED RATHER THAN EXCLUDED, and there was no honest third option.
+    # `test_every_org_scoped_table_is_either_exported_or_named_as_excluded`
+    # forces the decision the moment a table gains an `org_id`, and none of the
+    # exclusion reasons below is true of this one: it holds no credential, it is
+    # not a duplicate of anything else in the bundle, and it grows one row per
+    # ESCALATION rather than per interaction or per request, so it cannot move
+    # the bundle's size. What it holds is the workspace's own governance record —
+    # what its judge asked a person to look at and what that person decided —
+    # which is data a subject would plainly recognise as theirs.
+    "human_reviews": "human_reviews",
 }
 
 #: Every org-scoped table this bundle does NOT carry, with the reason, IN THE
@@ -763,6 +773,20 @@ def account_export(
         select(AccountAction).where(AccountAction.org_id == admin.org_id)
         .order_by(AccountAction.created_at.asc())
     ).scalars().all()
+    # One row per escalation the agentic judge raised — orders of magnitude
+    # smaller than `account_actions` above, which is itself unbounded here for
+    # the reason stated there.
+    #
+    # Joined to the ledger for `seq` rather than looked up against the `logs`
+    # list below: that list is BOUNDED at EXPORT_PAGE_MAX, so a review pointing
+    # past the ledger page would have silently exported a null sequence — an
+    # escalation the bundle could not tie to an interaction.
+    reviews = db.execute(
+        select(HumanReview, AuditLog.seq)
+        .join(AuditLog, AuditLog.id == HumanReview.audit_log_id)
+        .where(HumanReview.org_id == admin.org_id, AuditLog.org_id == admin.org_id)
+        .order_by(HumanReview.created_at.asc())
+    ).all()
     # ⚠ #271 — THE ONE SECTION THAT COULD OOM THIS ENDPOINT IS BOUNDED NOW.
     # A `ledger` row costs 1450.3 B measured through this endpoint, so a Max-plan
     # year (3,000,000 rows) was ~4.4 GB built in memory here. `limit + 1` detects
@@ -911,6 +935,18 @@ def account_export(
         "account_actions": [{"actor_email": a.actor_email, "action": a.action,
                              "target": a.target, "detail": a.detail,
                              "created_at": _iso(a.created_at)} for a in actions],
+        # ⚠ `note` IS EXPORTED HERE AND NOWHERE ELSE, and the two are consistent.
+        # It is excluded from the EVIDENCE surfaces — the `human_review_resolved`
+        # event payload, the ledger export, the Compliance Passport — because it
+        # is free text a reviewer typed and those artefacts are content-blind.
+        # This bundle is the opposite kind of document: the subject asking for
+        # their own data back, including the words they wrote themselves.
+        "human_reviews": [{"seq": seq,
+                           "status": h.status, "resolution": h.resolution,
+                           "reason": h.reason, "risk_score": h.risk_score,
+                           "note": h.note, "created_at": _iso(h.created_at),
+                           "resolved_at": _iso(h.resolved_at),
+                           "resolved_by": h.resolved_by} for h, seq in reviews],
         # ⚠ #269: THE SAME PROJECTION AS GET /v1/logs/export, NOT A SUMMARY OF IT.
         # The nine columns this used to carry could not be verified: the chain
         # hash is taken over seventeen inputs, thirteen of which were absent, so

@@ -246,7 +246,72 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
     for verdict in verdicts[1:]:
         result = judge.combine(result, verdict)
     return result
-    return verdicts[0]
+
+
+#: Queue an escalated verdict, once per event however many times it is graded.
+#:
+#: ⚠ `ON CONFLICT DO NOTHING` IS THE POINT, not defensive decoration. `_grade_one`
+#: is re-entered for the same row whenever `_handle_failure` puts it back to
+#: 'pending' — a provider timeout, a dropped connection, a restart mid-batch — and
+#: without this the reviewer's queue would grow one duplicate per retry, every one
+#: of them pointing at a single event. The `uq_human_review_audit_log` constraint
+#: (0072) is what the inference clause resolves against.
+_QUEUE_REVIEW_SQL = text(
+    """
+    INSERT INTO human_reviews (id, org_id, audit_log_id, status, reason, risk_score)
+    VALUES (:id, :org_id, :audit_log_id, 'pending', :reason, :risk_score)
+    ON CONFLICT (audit_log_id) DO NOTHING
+    """
+)
+
+
+def _queue_human_review(db: Session, row, verdict) -> None:
+    """Put an escalated verdict in front of a person. Best-effort, never raises.
+
+    ⚠ THE GRADE IS ALREADY COMMITTED WHEN THIS RUNS, and that ordering is the
+    contract: exactly like the breach notifier above it, a failure here must cost
+    the escalation's QUEUE ENTRY and never the verdict. The escalation itself is
+    already durable and already in the append-only record — `_grade_one` wrote it
+    to `audit_logs.gemini_verdict` and appended the `verdict` AuditEvent carrying
+    `decision="human_review"`, its reason and its risk score — so a failed insert
+    loses the worklist row, not the evidence.
+
+    ⚠ NO SECOND AuditEvent IS APPENDED HERE. The `verdict` event above already
+    records this escalation, hashed and append-only; a `human_review_queued` twin
+    would be the same facts under a second name. The append-only half of A1's
+    two-vehicle design is the HUMAN's decision — `human_review_resolved`, written
+    by `POST /v1/reviews/{id}/resolve`, which is a fact the ledger does not
+    otherwise hold.
+
+    Re-scopes RLS: `_grade_one`'s `set_config(..., true)` is transaction-local and
+    the commit before this call ended that transaction.
+    """
+    try:
+        db.execute(text("SELECT set_config('app.current_org', :oid, true)"),
+                   {"oid": str(row["org_id"])})
+        db.execute(_QUEUE_REVIEW_SQL,
+                   {"id": uuid.uuid4(), "org_id": row["org_id"],
+                    "audit_log_id": row["id"],
+                    # ⚠ THE SLICE IS FOR THE MERGED CASE, NOT THE TOOL CALL.
+                    # `qwen_judge._escalation` already bounds its reason at 300,
+                    # so on a single-judge escalation this is a no-op and the
+                    # value is carried through untouched. But an escalation that
+                    # SURVIVED `judge.combine` — qwen escalating beside gemini
+                    # returning clean — carries a merged reason: a
+                    # `multi_judge_human_review: ` prefix plus both judges'
+                    # 300-character reasons, which overruns `reason` and would
+                    # raise. Best-effort catches that, so the cost would be a
+                    # silently missing queue entry precisely when two judges
+                    # disagreed — the case a person most needs to see. The full
+                    # merged reason is on the ledger row's `gemini_verdict`
+                    # either way; only the worklist's copy is bounded.
+                    "reason": verdict.reason[:300],
+                    "risk_score": verdict.risk_score})
+        db.commit()
+    except Exception as exc:                                  # noqa: BLE001
+        db.rollback()
+        log.warning("queueing human review for %s failed (%s)",
+                    row["id"], type(exc).__name__)
 
 
 def _claim_batch(db: Session, batch: int, stuck: int) -> list:
@@ -335,6 +400,23 @@ def _grade_one(db: Session, row) -> None:
         org_notifications.enqueue_breach_notice(row, verdict)
         # Per-user fan-out (D-S): one email per opted-in seat.
         user_notifications.enqueue_breach_alert(row, verdict)
+    # ── A1 · the escalation finally has somewhere to go ──────────────────────
+    #
+    # ⚠ BESIDE THE BRANCH ABOVE, NEVER FOLDED INTO IT. Widening
+    # `if verdict.policy_breach:` to cover an escalation would be the shortest
+    # edit and the wrong one twice over: `policy_breach` is `False` on a
+    # human_review BY DESIGN (`judge.py`, `schemas.py`) and `judge.validate`
+    # refuses the pair, and `passport.compliant_events` subtracts breaches and
+    # escalations SEPARATELY — so a human_review counted as a breach would move a
+    # headline number on the artefact a customer hands to a regulator. A request
+    # to look at something is not a finding.
+    #
+    # Read off `decision` rather than off the tool call: `judge.combine` folds
+    # three providers and its ladder (breach > human_review > clean) is what
+    # decides whether an escalation SURVIVED the merge. A qwen escalation beside
+    # a gemini breach is a breach, and must not also queue a review.
+    if verdict.decision == "human_review":
+        _queue_human_review(db, row, verdict)
     # Outbound webhook subscriptions (P3 §F): a signed 'graded' (and 'breach')
     # event per matching subscription. QUEUED, not delivered here — this fires
     # on EVERY graded row, and one synchronous POST per subscription inside the

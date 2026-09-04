@@ -611,3 +611,79 @@ class StatsResponse(BaseModel):
     ai_graded: int = 0
     rules_graded: int = 0
 
+
+
+# ── human review queue (A1 · GET /v1/reviews, POST /v1/reviews/{id}/resolve) ──
+
+class ReviewResolveRequest(BaseModel):
+    """What a human decided about an escalated verdict.
+
+    ⚠ A REGEX-CONSTRAINED `str`, NOT an Enum AND NOT a `Literal`, matching how
+    `Verdict.decision` is spelled above. The reason is the one qwen-judge.md §3.2
+    gives: a `Literal` is a CLOSED set that a later phase narrows or renames at
+    its peril — an existing client sending a word that has since moved gets a 500
+    out of the response model rather than a 422 out of validation, and the failure
+    lands on the server after the work is done. A pattern is widened by editing
+    one string, and every rejection stays a 422 the client can read.
+    """
+
+    resolution: str = Field(
+        pattern=r"^(confirmed_breach|cleared|policy_gap)$",
+        description="confirmed_breach · cleared · policy_gap")
+    # ⚠ ANNOTATION, NOT EVIDENCE. This is the only free-text field a human writes
+    # anywhere near the ledger, so a reviewer can put raw prompt content in it.
+    # It is capped here, it is never hashed, it is excluded from the payload of
+    # the `human_review_resolved` event, and it is excluded from the Compliance
+    # Passport. The structured `resolution` above is the machine-readable outcome;
+    # this is a human aid beside it and is documented as customer-authored.
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ReviewItem(BaseModel):
+    """One queued escalation, as the reviewer's queue reads it."""
+
+    id: uuid.UUID
+    # The LEDGER row's per-org sequence, not a row number in this table: it is
+    # what the customer already identifies an interaction by everywhere else, and
+    # it is what this endpoint pages on (see ReviewPage).
+    seq: int
+    status: str
+    resolution: str | None
+    # The judge's own words for why it wanted a person — 300 chars, bounded at
+    # the tool-call parse.
+    reason: str
+    risk_score: int
+    note: str | None
+    # Enough of the interaction to act on without opening the ledger.
+    policy_tag: str
+    agent: str | None
+    event_created_at: datetime | None
+    created_at: datetime | None
+    resolved_at: datetime | None
+    resolved_by: str | None
+
+
+class ReviewPage(BaseModel):
+    """The SAME seq-cursor page block `GET /v1/logs/export` ships (#271).
+
+    ⚠ ONE PAGING CONTRACT FOR THE PRODUCT, not one per endpoint. A client that has
+    learned `after_seq` + `page.next_after_seq` + `page.complete` for the export
+    reads this queue with the code it already has.
+
+    `prev_chain_hash` is the one field of the export's block deliberately ABSENT:
+    there it seeds a recompute of the chain, and this endpoint returns queue
+    entries rather than chain rows. Carrying it here would be a verifiability
+    claim about an artefact that makes none.
+    """
+
+    from_seq: int | None
+    to_seq: int | None
+    complete: bool
+    next_after_seq: int | None
+    next: str | None
+    max_rows_per_page: int
+
+
+class ReviewListResponse(BaseModel):
+    items: list[ReviewItem]
+    page: ReviewPage

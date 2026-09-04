@@ -261,6 +261,70 @@ class AuditEvent(Base):
         DateTime(timezone=True), server_default=func.now())
 
 
+class HumanReview(Base):
+    """The queue an escalated verdict lands in — A1's destination (migration 0072).
+
+    An agentic judge that called `flag_for_human_review` returns
+    `decision="human_review"` (`qwen_judge.py`), and until this table existed the
+    escalation was recorded on the ledger row and received by nobody:
+    `worker._grade_one`'s only post-commit branch gates on `policy_breach`, which
+    is `False` on an escalation by design.
+
+    ⚠ THE QUEUE AND THE EVIDENCE ARE DELIBERATELY TWO OBJECTS. This row is the
+    QUEUE: `status` is mutable so "what is still pending" is one indexed lookup,
+    which an append-only log cannot answer cheaply. The human's DECISION is the
+    append-only `AuditEvent(event_type="human_review_resolved")` written beside it
+    — the tamper-evident half, never rewritten.
+
+    ⚠ AND NEITHER TOUCHES `audit_logs`. `chain.verdict_hash_hex` binds the local,
+    SDK-side verdict decided at ingest; that boundary is the whole reason the
+    worker may write an AI grade after the row is chained, and a human decision
+    arriving later still has to respect it. If resolving could move `chain_hash`,
+    every block after it would stop verifying.
+
+    `audit_log_id` is UNIQUE: `_grade_one` is re-entered for the same row after
+    `_handle_failure`, so the worker's insert has to be idempotent under retry.
+
+    `note` is the ONE field a human writes freely. It is annotation, not evidence
+    — capped, never hashed, and kept out of the resolution event's payload and the
+    Compliance Passport. `resolution` is the machine-readable outcome.
+    """
+
+    __tablename__ = "human_reviews"
+    __table_args__ = (
+        UniqueConstraint("audit_log_id", name="uq_human_review_audit_log"),
+        Index("ix_human_reviews_org_status_created", "org_id", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    audit_log_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("audit_logs.id", ondelete="CASCADE"),
+        nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending")     # pending|resolved
+    # confirmed_breach|cleared|policy_gap — null while pending.
+    resolution: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Carried verbatim from the tool call, which `qwen_judge._escalation` already
+    # truncated to 300 and clamped to 0-100 — so for a single-judge escalation
+    # this width is the SAME bound rather than a second one. It is a real bound
+    # only for an escalation that survived `judge.combine`, whose merged reason
+    # concatenates two judges' 300 characters; `worker._queue_human_review` says
+    # why that is sliced rather than allowed to raise.
+    reason: Mapped[str] = mapped_column(String(300), nullable=False)
+    risk_score: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0")
+    note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
+
+
 class AccountAction(Base):
     """Customer-visible audit trail of an org's OWN account actions — key/policy/
     member/MFA/settings changes (P2 · §D). Org-scoped by RLS, mirrors the staff
