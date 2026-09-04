@@ -505,9 +505,9 @@ def list_logs(
     policy_tag: str | None = Query(default=None, max_length=64),
     agent: str | None = Query(default=None, max_length=128),
     verdict: str | None = Query(default=None,
-                                description="clean | breach | unknown | pending | blocked "
-                                            "(includes response_blocked) | redacted | "
-                                            "response_blocked"),
+                                description="clean | breach | human_review | unknown | "
+                                            "pending | blocked (includes response_blocked) "
+                                            "| redacted | response_blocked"),
     since: datetime | None = Query(default=None, description="created_at >= (ISO)"),
     until: datetime | None = Query(default=None, description="created_at <= (ISO)"),
 ):
@@ -533,6 +533,14 @@ def list_logs(
     elif v == "clean":
         conds.append(AuditLog.grading_status == "graded")
         conds.append(AuditLog.gemini_verdict["decision"].astext == "clean")
+    elif v == "human_review":
+        # Q2a · WITHOUT THIS BRANCH AN ESCALATED ROW MATCHES NO FILTER AT ALL.
+        # `breach` above keys off policy_breach (false here) and `clean` and
+        # `unknown` key off other decision values, so adding the vocabulary
+        # without adding the filter would create a class of row that exists in
+        # the ledger and cannot be found in the product built to find rows.
+        conds.append(AuditLog.grading_status == "graded")
+        conds.append(AuditLog.gemini_verdict["decision"].astext == "human_review")
     elif v == "unknown":
         conds.append(AuditLog.grading_status == "graded")
         conds.append(AuditLog.gemini_verdict["decision"].astext == "unknown")
@@ -1039,6 +1047,14 @@ def stats(
                AuditLog.gemini_verdict["decision"].astext == "clean")
     ).scalar_one()
     determinate = clean + breaches
+    # Q2a · A `human_review` ROW IS IN NEITHER TERM, AND THAT IS DELIBERATE.
+    # `determinate` is the rows a judge actually decided, so an escalation — a
+    # model asking for a human rather than answering — belongs outside it, in
+    # exactly the way `unknown` already does. Putting it in the denominator
+    # would depress a customer's clean rate for events nobody has graded yet;
+    # putting it in the numerator would count "please look at this" as a pass.
+    # Checked rather than assumed to be right: the ledger filter above makes
+    # these rows findable, so they are excluded from a rate, not from the product.
     clean_rate = round(100.0 * clean / determinate, 1) if determinate else None
 
     # #228 · WHO graded, from the ledger. `judge_model` below reads this

@@ -317,13 +317,36 @@ class Verdict(BaseModel):
     policy_breach: bool = False
     reason: str = ""
     risk_score: int = Field(default=0, ge=0, le=100)
-    # clean|breach|unknown are AI-judge outcomes; blocked|redacted|response_blocked
-    # are terminal host-side enforcement outcomes decided locally (nothing to grade).
-    # response_blocked is a response the SDK withheld from the calling application
-    # — see policy_engine.ENFORCEMENT_EVENT_TYPES for why it is not `blocked`.
+    # clean|breach|human_review|unknown are AI-judge outcomes;
+    # blocked|redacted|response_blocked are terminal host-side enforcement
+    # outcomes decided locally (nothing to grade). response_blocked is a response
+    # the SDK withheld from the calling application — see
+    # policy_engine.ENFORCEMENT_EVENT_TYPES for why it is not `blocked`.
+    #
+    # ── `human_review` (Q2a) ──────────────────────────────────────────────────
+    # An AGENTIC judge asked for a human. The model was given a tool
+    # (`flag_for_human_review`) and CALLED it, so this is a determination the
+    # model made deliberately — not a failure, and emphatically not a pass.
+    #
+    # ⚠ IT IS A JUDGE OUTCOME ONLY. `policy_engine` never emits it: the
+    # deterministic engine has no tool to call and no human to ask. That
+    # boundary is what keeps this change off the chain — `local_verdict` is the
+    # engine's output and is what `chain.verdict_hash_hex` binds, so widening
+    # this vocabulary cannot alter a hash. The judge's verdict lives in the
+    # unhashed `gemini_verdict` column. `verifier/foxy_verify.py` reads no
+    # `decision` at all, checked at 6b145b6.
+    #
+    # ⚠ `policy_breach` STAYS FALSE ON A human_review VERDICT. The two fields
+    # are cross-checked in `judge.validate`, and a human_review carrying the
+    # breach flag would be a breach the ledger never called a breach. A judge
+    # that is sure enough to set that flag should be returning `breach`.
+    #
+    # ⚠ ORDERING MATTERS WHEN JUDGES DISAGREE: breach > human_review > clean.
+    # See `judge.combine` — a request to look at something must never be
+    # laundered into a pass by a second judge that saw nothing.
     decision: str = Field(
         default="unknown",
-        pattern=r"^(clean|breach|unknown|blocked|redacted|response_blocked)$")
+        pattern=r"^(clean|breach|human_review|unknown|blocked|redacted|response_blocked)$")
     rules: list[str] = Field(default_factory=list)
 
     # P6f provenance: WHICH model produced this grade. A model id is not a secret;

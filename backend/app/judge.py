@@ -8,10 +8,40 @@ from .schemas import Verdict
 
 log = logging.getLogger("foxy.judge")
 
-# A definite decision the audit report is allowed to trust from an AI judge. Host
+# A decision the audit report is allowed to trust from an AI judge. Host
 # enforcement outcomes (blocked/redacted) are decided locally and must never arrive
 # from a judge, so they are treated as out-of-schema here.
-_JUDGE_DECISIONS = {"clean", "breach"}
+#
+# `human_review` (Q2a) is an agentic judge calling `flag_for_human_review`. It is
+# a DELIBERATE determination, so it belongs here — quarantining it as
+# `decision_out_of_schema` would turn the one outcome the model chose on purpose
+# into evidence that the model misbehaved.
+_JUDGE_DECISIONS = {"clean", "breach", "human_review"}
+
+# How judges' answers rank when they disagree. HIGHER WINS.
+#
+# ⚠ `human_review` OUTRANKS `clean`, and that is the whole reason this is a
+# ladder and not a boolean. A judge that asked for a human did not pass the
+# event; if a second judge saw nothing and returned `clean`, merging to `clean`
+# would delete the request. That is #228's defect — an absence of evidence
+# rendered as a confident result — reappearing one vocabulary later.
+#
+# `breach` outranks `human_review` because a breach is a finding, and a finding
+# does not become weaker because another model wanted a second opinion.
+#
+# `unknown` is deliberately ABSENT: it is not a grade, and `combine` filters it
+# out before ranking anything. Its handling is the early return below.
+_DECISION_RANK = {"clean": 0, "human_review": 1, "breach": 2}
+
+# The `reason` prefix each merged outcome carries, so a reader can tell a merged
+# verdict from a single judge's one. Keyed by the same vocabulary as the ladder —
+# a rank without a prefix would KeyError at merge time rather than silently
+# picking a wrong label.
+_MERGE_PREFIX = {
+    "clean": "multi_judge_clean",
+    "human_review": "multi_judge_human_review",
+    "breach": "multi_judge_breach",
+}
 # A usable reason must carry at least this much signal; a blank/near-blank reason
 # from an affirmative judge is low-confidence noise, not audit evidence.
 _MIN_REASON_LEN = 3
@@ -123,6 +153,14 @@ def validate(verdict: Verdict) -> Verdict:
         problems.append("breach_flag_with_clean_decision")
     if not verdict.policy_breach and verdict.decision == "breach":
         problems.append("clean_flag_with_breach_decision")
+    # Q2a · the same contradiction, one rung down the ladder. A judge that sets
+    # the breach flag AND asks for a human has said two different things: the
+    # flag is a finding, the decision is a request to look. Neither half can be
+    # trusted over the other, so the pair is quarantined rather than resolved —
+    # and resolving it silently is what would put a breach in the ledger under a
+    # decision that never called it one.
+    if verdict.policy_breach and verdict.decision == "human_review":
+        problems.append("breach_flag_with_human_review_decision")
     if len((verdict.reason or "").strip()) < _MIN_REASON_LEN:
         problems.append("empty_or_low_confidence_reason")
 
@@ -140,23 +178,35 @@ def _decision(verdict: Verdict) -> str:
 
 
 def combine(first: Verdict, second: Verdict) -> Verdict:
-    """Merge two provider results; any known breach wins, unknown is not clean."""
+    """Merge two provider results; the strongest known outcome wins.
+
+    `breach > human_review > clean` (:data:`_DECISION_RANK`), and `unknown` is
+    still not a grade — it is filtered out before anything is ranked, so a
+    single judge answering `unknown` beside one answering `clean` merges to
+    `clean` exactly as it did before Q2a.
+    """
     results = [(first, _decision(first)), (second, _decision(second))]
     known = [(verdict, decision) for verdict, decision in results
-             if decision in {"clean", "breach"}]
+             if decision in _DECISION_RANK]
     if not known:
         return first
 
-    breach = any(decision == "breach" for _, decision in known)
+    # The strongest answer any judge gave, by the ladder. NOT `any(... ==
+    # "breach")`: that shape only has room for two outcomes, and it is what
+    # would have silently dropped a human_review beside a clean.
+    decision = max((d for _, d in known), key=_DECISION_RANK.__getitem__)
+    breach = decision == "breach"
     rules: list[str] = []
     for verdict, _ in known:
         for rule in verdict.rules:
             if rule not in rules:
                 rules.append(rule)
     reasons = [verdict.reason for verdict, _ in known if verdict.reason]
-    decision = "breach" if breach else "clean"
-    prefix = "multi_judge_breach" if breach else "multi_judge_clean"
+    prefix = _MERGE_PREFIX[decision]
     return Verdict(
+        # ⚠ TRACKS `decision`, so it is False for a human_review merge. A
+        # request to look at something is not a finding, and `validate` would
+        # refuse the pair anyway.
         policy_breach=breach,
         reason=f"{prefix}: " + "; ".join(reasons),
         risk_score=max(verdict.risk_score for verdict, _ in known),

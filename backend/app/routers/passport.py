@@ -255,6 +255,12 @@ def generate_passport(
     # thing this document must not do.
     response_blocked_events = 0
     unknown_evaluator_events = 0
+    # Q2a · an agentic judge CALLED `flag_for_human_review` on these. Counted on
+    # its own because it is neither of the two things this document already
+    # tallies: not a breach (no finding was made) and not "could not determine"
+    # (the model determined, deliberately, that a person should look). Folding it
+    # into either would misdescribe it to an auditor in opposite directions.
+    human_review_events = 0
     # ── #228 · WHO GRADED THESE EVENTS ────────────────────────────────────────
     # This document is what a customer hands an auditor, and until now it stated
     # a compliance rate without ever saying what produced the verdicts behind it.
@@ -305,6 +311,8 @@ def generate_passport(
                 or reason.startswith("evaluator_unavailable")
                 or reason.startswith("evaluator_unknown")):
             unknown_evaluator_events += 1
+        elif verdict.get("decision") == "human_review":
+            human_review_events += 1
         # Authorship, over the rows that actually carry a verdict. A pending or
         # failed row is not "unrecorded" — it is not graded yet, and grading
         # already has its own tallies elsewhere in this document.
@@ -338,7 +346,23 @@ def generate_passport(
     )
 
     total_events = len(rows)
-    compliant_events = total_events - breach_events
+    # Q2a · ESCALATED EVENTS ARE NOT COMPLIANT EVENTS. Without the second term a
+    # row a judge deliberately handed to a human would be printed to an auditor
+    # under "Compliant", which is a claim nobody made about it. Subtracting is
+    # safe for every existing passport: no historical row can carry this
+    # decision, so the number only moves for events graded after Q2b ships.
+    #
+    # ⚠ AND WHILE ADDING THAT TERM, A PRE-EXISTING CONTRADICTION CAME INTO VIEW,
+    # LEFT UNFIXED ON PURPOSE. `unknown` rows are in `total_events` and are not
+    # breaches, so they ARE counted in the figure this document labels
+    # "Compliant" — while the fine print under §02 states that they are
+    # "never counted as a compliant pass". One of those two is wrong, in the
+    # document a customer hands an auditor. Filed in the register rather than
+    # corrected here: the fix moves the headline Compliance rate that already
+    # issued passports have reported, which is an owner's decision with its own
+    # blast radius, and is a different question from adding a value nothing has
+    # ever emitted. DO NOT "tidy" this line without reading that entry first.
+    compliant_events = total_events - breach_events - human_review_events
     compliance_rate = round(
         (compliant_events / total_events * 100) if total_events else 100, 1
     )
@@ -420,6 +444,7 @@ def generate_passport(
         response_blocked_events=response_blocked_events,
         enforced_events=enforced_events,
         unknown_evaluator_events=unknown_evaluator_events,
+        human_review_events=human_review_events,
         ai_graded_events=ai_graded_events,
         rules_graded_events=rules_graded_events,
         grader_unrecorded_events=grader_unrecorded_events,

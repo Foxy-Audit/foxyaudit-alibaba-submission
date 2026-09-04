@@ -410,7 +410,17 @@ code.cmd{font-family:'DejaVu Sans Mono',Consolas,'Courier New',monospace;
       <dt>Responses Withheld from the Application</dt><dd>{{ response_blocked_events }}</dd>
       <dt>Enforced in Total</dt><dd>{{ enforced_events }}</dd>
       <dt>Evaluator Could Not Determine</dt><dd>{{ unknown_evaluator_events }}</dd>
+      {% if human_review_events %}<dt>Escalated for Human Review</dt><dd>{{ human_review_events }}</dd>{% endif %}
     </dl>
+    {% if human_review_events %}
+    <p class="fine">
+      “Escalated for human review” is a judge that was asked to grade an event and instead
+      invoked a tool to hand it to a person. It is <strong>not</strong> a breach — no finding was
+      made — and it is <strong>not</strong> an evaluator that could not determine, because the
+      model determined, deliberately, that a person should look. These events are
+      <strong>not counted as compliant</strong>.
+    </p>
+    {% endif %}
     <p class="fine">
       “Evaluator could not determine” is an honest unknown — a judge was reached but returned no
       usable verdict, or none could be reached and no deterministic verdict replaced it. These
