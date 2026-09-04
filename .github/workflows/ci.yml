@@ -161,8 +161,29 @@ jobs:
           grep -q '\[BLOCKED\]' repl-session.txt
           grep -q '\[ALLOWED\]' repl-session.txt
           grep -q 'PASS | enforcement' repl-session.txt
-      - name: Hash-chain regression test
-        run: pytest backend/tests/test_chain.py -q
+      - name: Backend hermetic tests (hash chain, judges)
+        # THE DIRECTORY, NOT ONE FILE FROM IT — register #55's lesson, which the
+        # dashboard step below already learned and this one had not. Naming
+        # `backend/tests/test_chain.py` meant `backend/tests/test_qwen_judge.py`
+        # ran in NO workflow at all: 42 assertions covering the agentic judge,
+        # the three-provider fold and the worker's empty-verdict guard, any of
+        # which could be deleted with every gate still green. A guard nothing
+        # runs is not a guard.
+        #
+        # `--ignore` leaves the Postgres tier to the integration job below, where
+        # the service container lives. Everything directly under backend/tests is
+        # stdlib + pytest: no database, no network.
+        #
+        # ⚠ `working-directory: backend` IS LOAD-BEARING, not tidiness. pytest
+        # puts a test file's first non-package parent on sys.path, so invoked
+        # from the repo root this resolves `backend/tests` and `from app import
+        # ...` raises ModuleNotFoundError — which is a COLLECTION error, and a
+        # collection error takes the whole step down rather than one test. That
+        # is register #298 exactly: a missing import made 661 sale-page tests
+        # dark while the gate stayed green. The integration job below has always
+        # set this for the same reason. Verified by running both forms.
+        working-directory: backend
+        run: pytest tests --ignore=tests/integration -q
       - name: Verifier tests (the second, independent implementation)
         # These never ran in CI. The verifier is a hand-written second copy of the
         # chain recipe and of the commitment recipe, and the two drifting apart IS

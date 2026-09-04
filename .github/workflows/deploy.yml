@@ -98,8 +98,15 @@ jobs:
           pip install pytest
       - name: SDK tests
         run: pytest sdk/tests -q
-      - name: Hash-chain regression test
-        run: pytest backend/tests/test_chain.py -q
+      - name: Backend hermetic tests (hash chain, judges)
+        # Widened with ci.yml's step of the same name — the directory, not one
+        # file from it. ⚠ THIS WORKFLOW REMAINS FROZEN and must not be run (see
+        # the freeze block in `on:` above); the path is corrected now so it is
+        # already right whenever the Alibaba Cloud deployment replaces the VM
+        # job, rather than carrying the hole forward into it.
+        # `working-directory` is load-bearing — see ci.yml's step of this name.
+        working-directory: backend
+        run: pytest tests --ignore=tests/integration -q
 
   # 🐳 4️⃣ Build the backend image and scan it. The VM rebuilds from source on
   # deploy (no registry), so this build exists purely to gate on image CVEs.
