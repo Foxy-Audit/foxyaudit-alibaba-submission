@@ -1,6 +1,29 @@
-# Qwen Agentic Judge — Track 4 hackathon feature
+# Qwen Agentic Judge — the tool-calling judge provider
 
-**Plan of record** · written 2026-09-04 @ `12a9ade` · **revised 2026-09-04 @ `d4c3dde`**.
+**Plan of record for Q1–Q4** · written 2026-09-04 @ `12a9ade` · **revised 2026-09-04 @ `d4c3dde`** · **status corrected 2026-09-05 @ `ebe284b`**.
+
+> ## ⚠ READ FIRST — two corrections made 2026-09-05
+>
+> **1 · ALL FOUR PHASES SHIPPED.** §6's State column below was never updated past
+> `09b4f71` and still shows Q2b/Q3/Q4 as pending. Git says otherwise:
+> Q2a `9a40181`+`44ce495` · Q2b `04ae280`+`a050718` · Q3 `7fa7f30`+`d9e2faa` ·
+> Q4 `c9d5ba5`+`1de4dd1`. The feature is complete and `main` is green.
+>
+> **2 · "TRACK 4" IN THIS FILE'S TITLE AND §1 WAS WRONG.** The title said *"Track 4
+> hackathon feature"* and §1/§3 say *"Track 4: Agentic Applications"*, sourced from
+> undated owner documentation. That matches **neither** live event:
+>
+> * the **global** *Qwen Cloud Global AI Hackathon Series* (Devpost) has Track 4 =
+>   **Autopilot Agent** — and **it ended 2026-07-20**, winners already announced;
+> * the event actually being entered is the **Alibaba Cloud AI Hackathon Pakistan
+>   2026** (deadline **2026-09-07 23:59 PKT**), whose six tracks are Smart
+>   Agriculture · Financial Inclusion · Urdu & Regional Language Tech · Healthcare
+>   · Education · **Open Innovation** — the owner's declared track.
+>
+> **Do not carry "Track 4" or "Agentic Applications" into any submission artefact.**
+>
+> **Successor plan: `docs/plans/alibaba-pakistan-agentic.md`** — it builds the
+> destination this plan's §3.5 said the escalation must have and never got.
 
 > **Revision note.** The first draft was written from the owner's Qwen
 > documentation and a read of the judge path. Re-verified against the tree at
@@ -495,10 +518,10 @@ the drift the boundary comment exists to prevent.
 | Phase | Branch | Scope | State |
 |---|---|---|---|
 | **Q1** | `feat/qwen-judge-routing` | Migration 0071 · per-provider default mapping · `config.py` · `models.py` · `judge_routing.py` · `policies.py` · `account.py` withheld fields · `admin_data.py` staff denylist | ✅ **shipped** — `779b8ed` + `32f2152` |
-| **Q2a** | `feat/judge-human-review-vocab` | the `human_review` value, backend only: `schemas.py` · `judge.py` (`validate`, the `combine` ladder) · `logs.py` **verdict filter + clean-rate** · `passport.py` | ✅ **unblocked** — the owner chose B on 2026-09-04 |
-| **Q2b** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests — the tool-calling provider | needs Q2a |
-| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way fold + prefix fix · **`logs.py` stats `judge_model`** (§3.10) | needs Q2b |
-| **Q4** | `feat/qwen-judge-surfaces` | **one UI phase, both vocabularies** — the provider selector *and* the `human_review` verdict: `desktop/policy_data.py` · `desktop/policy_page.py` + `judge_view()` (§3.10) · `desktop/ledger_data.py` · the dashboard's provider `<select>`, verdict `<select>` and pill mapping | needs Q2a for the verdict half; the provider half is ready now |
+| **Q2a** | `feat/judge-human-review-vocab` | the `human_review` value, backend only: `schemas.py` · `judge.py` (`validate`, the `combine` ladder) · `logs.py` **verdict filter + clean-rate** · `passport.py` | ✅ **shipped** — `9a40181` + `44ce495` |
+| **Q2b** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests — the tool-calling provider | ✅ **shipped** — `04ae280` + `a050718` |
+| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way fold + prefix fix · **`logs.py` stats `judge_model`** (§3.10) | ✅ **shipped** — `7fa7f30` + `d9e2faa` |
+| **Q4** | `feat/qwen-judge-surfaces` | **one UI phase, both vocabularies** — the provider selector *and* the `human_review` verdict: `desktop/policy_data.py` · `desktop/policy_page.py` + `judge_view()` (§3.10) · `desktop/ledger_data.py` · the dashboard's provider `<select>`, verdict `<select>` and pill mapping | ✅ **shipped** — `c9d5ba5` + `1de4dd1`. **The Qwen judge is complete.** |
 
 ⚠ **Q2 SPLIT INTO Q2a AND Q2b BECAUSE OF THE B DECISION.** The provider module
 cannot return a verdict the schema rejects, so the vocabulary lands first, on its
@@ -517,9 +540,14 @@ untouched — but that also means **no UI can select a Qwen combination yet**. T
 feature is API-only until Q4 lands. That is a deliberate ordering, not an
 oversight, and it is the honest description of what shipped.
 
-**After each merge:** update §10 with the SHA, append a devlog entry to
-`G:\My Drive\Life\03 Projects\Foxy Audit\Alibaba Submission Changes\Devlogs\`,
-and re-stamp `Alibaba Submission Changes/CLAUDE.md`.
+**After each merge:** update §10 with the SHA and append a devlog entry to
+`G:\My Drive\Life\03 Projects\Foxy Audit\Devlogs\`.
+
+⚠ **PATH CORRECTED 2026-09-05.** This line used to name
+`…\Alibaba Submission Changes\Devlogs\` and a hub note in the same folder. **That
+folder was removed on 2026-09-05** — its devlog moved to `Devlogs\2026-09-04.md`
+and the still-true facts from its `CLAUDE.md` were carried into
+`Devlogs\2026-09-05.md`. There is no hub note to re-stamp any more.
 
 ---
 
@@ -837,9 +865,8 @@ credential column and touches the DSAR credential manifest.
 
 | What | Where |
 |---|---|
-| Devlog | `G:\My Drive\Life\03 Projects\Foxy Audit\Alibaba Submission Changes\Devlogs\YYYY-MM-DD.md` (append `## Q<N>`) |
+| Devlog | `G:\My Drive\Life\03 Projects\Foxy Audit\Devlogs\YYYY-MM-DD.md` (append `## Q<N>`) — **path corrected 2026-09-05, see §6** |
 | Plan update | **this file**, §13 |
-| Hub note | `Alibaba Submission Changes/CLAUDE.md` — bump `verified-against:` |
 | Area note | `Backend/CLAUDE.md` — re-stamp, add the Qwen section |
 | Anything noticed and not fixed | `Worth Noting — Issues`, with its normal number |
 
