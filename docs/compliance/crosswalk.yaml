@@ -485,14 +485,16 @@ surface_claims:
 
   - claim: "Any interaction tagged pci, sox, hipaa, gdpr or eu_ai_act is risk-scored 60 or higher unless it is clearly compliant."
     where: >-
-      foxy-dashboard/foxy-audit-premium.html:2391 (Regulated data mode — HIPAA /
-      financial). ⚠ MOVED from :2360 by C3b (ac7b2f0), which added the
-      verification-bundle export option above it. The sentence itself is
-      unchanged, and so is the `qualify` verdict.
+      foxy-dashboard/foxy-audit-premium.html:2405 (Regulated data mode — HIPAA /
+      financial). ⚠ MOVED TWICE, and both times by an <option> added above it:
+      :2360 → :2391 by C3b (ac7b2f0, the verification-bundle export), then
+      :2391 → :2405 by Q4 (c9d5ba5, the Qwen provider and human_review verdict
+      options). The sentence itself is unchanged both times, and so is the
+      `qualify` verdict — this is a line-number fix, not a re-decision.
     pins:
       # The claim is the THRESHOLD and the tag vocabulary it applies to. The
       # surrounding row markup is not part of it.
-      - at: "foxy-dashboard/foxy-audit-premium.html:2391"
+      - at: "foxy-dashboard/foxy-audit-premium.html:2405"
         text: "eu_ai_act is risk-scored 60 or higher"
     verdict: qualify
     why: >-
