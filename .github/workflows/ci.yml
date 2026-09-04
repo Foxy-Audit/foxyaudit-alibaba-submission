@@ -113,6 +113,9 @@ jobs:
           # where a missing runner dependency silently turned four guards into
           # four skips and hid a genuine failure.
           pip install pytest pyyaml
+          # For backend/tests/test_qwen_judge.py, which imports app.schemas and
+          # app.config. test_chain.py needs neither — it loads chain.py by path.
+          pip install pydantic==2.13.4 pydantic-settings==2.14.2
       - name: SDK tests
         run: pytest sdk/tests -q
       # The compliance testbed ships in the same wheel but is a SEPARATE package
@@ -174,16 +177,29 @@ jobs:
         # the service container lives. Everything directly under backend/tests is
         # stdlib + pytest: no database, no network.
         #
-        # ⚠ `working-directory: backend` IS LOAD-BEARING, not tidiness. pytest
-        # puts a test file's first non-package parent on sys.path, so invoked
-        # from the repo root this resolves `backend/tests` and `from app import
-        # ...` raises ModuleNotFoundError — which is a COLLECTION error, and a
-        # collection error takes the whole step down rather than one test. That
-        # is register #298 exactly: a missing import made 661 sale-page tests
-        # dark while the gate stayed green. The integration job below has always
-        # set this for the same reason. Verified by running both forms.
+        # ⚠ TWO THINGS HERE ARE LOAD-BEARING, AND THE FIRST CUT GOT BOTH WRONG.
+        #
+        # 1. `python -m pytest`, NOT bare `pytest`. Only the `-m` form prepends
+        #    the cwd to sys.path; the console script does not. Under bare pytest
+        #    `from app import ...` raises ModuleNotFoundError at COLLECTION,
+        #    which takes the whole step down — including the hash-chain test that
+        #    used to pass here. That is register #298: a missing import made 661
+        #    sale-page tests dark while the gate merely looked red.
+        #    The integration job below survives on bare pytest only because
+        #    tests/integration/conftest.py inserts the path itself, and `--ignore`
+        #    excludes that conftest from this step.
+        #
+        # 2. pydantic and pydantic-settings must be INSTALLED. This job installs
+        #    the SDK, pytest and pyyaml. test_chain.py needs none of that — it
+        #    loads app/chain.py by path — but test_qwen_judge.py imports
+        #    app.schemas and app.config, which import both. Measured from those
+        #    modules' import lines, not assumed.
+        #
+        # The earlier version of this comment claimed "verified by running both
+        # forms". It was not: both runs used `python -m pytest`, so the failing
+        # form was never exercised. Reproduced properly before this rewrite.
         working-directory: backend
-        run: pytest tests --ignore=tests/integration -q
+        run: python -m pytest tests --ignore=tests/integration -q
       - name: Verifier tests (the second, independent implementation)
         # These never ran in CI. The verifier is a hand-written second copy of the
         # chain recipe and of the commitment recipe, and the two drifting apart IS

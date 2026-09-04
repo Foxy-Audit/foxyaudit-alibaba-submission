@@ -96,6 +96,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ./sdk
           pip install pytest
+          # backend/tests/test_qwen_judge.py imports app.schemas / app.config.
+          pip install pydantic==2.13.4 pydantic-settings==2.14.2
       - name: SDK tests
         run: pytest sdk/tests -q
       - name: Backend hermetic tests (hash chain, judges)
@@ -104,9 +106,10 @@ jobs:
         # the freeze block in `on:` above); the path is corrected now so it is
         # already right whenever the Alibaba Cloud deployment replaces the VM
         # job, rather than carrying the hole forward into it.
-        # `working-directory` is load-bearing — see ci.yml's step of this name.
+        # `python -m` and the pydantic install above are both load-bearing —
+        # see ci.yml's step of this name for why neither is optional.
         working-directory: backend
-        run: pytest tests --ignore=tests/integration -q
+        run: python -m pytest tests --ignore=tests/integration -q
 
   # 🐳 4️⃣ Build the backend image and scan it. The VM rebuilds from source on
   # deploy (no registry), so this build exists purely to gate on image CVEs.
