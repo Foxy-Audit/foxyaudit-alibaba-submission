@@ -245,6 +245,45 @@ in a stored audit reason. Cosmetic, but it is evidence text a customer exports.
 **Decision: strip a leading `multi_judge_*` prefix when re-merging**, in
 `combine`, so the prefix appears exactly once regardless of provider count.
 
+### 3.9 🔴 A SECOND credential registry — found by code-review at the Q1 gate
+
+`routers/admin_data.py` `_NEVER_EXPOSE` is a denylist **by name**, sitting in
+front of a `_serialize` that emits every column it does not name. `org_policies`
+is a registered table. So `qwen_key_enc` would have been served to any staff
+member browsing that table in the admin console — a `*_key_enc` value on the
+wire, which the hard rules forbid outright.
+
+⚠ **§3.3 found one credential registry and stopped there.** That is the same
+error §3's own framing warns about: finding an instance and filing it as the
+instance rather than as the predicate. The predicate is *"a new `*_key_enc`
+column has to be declared everywhere credentials are declared"*, and there were
+two places, not one.
+
+Fixed in Q1 by matching the SHAPE — `_never_exposed(name)` tests the `*_key_enc`
+suffix as well as the list — so the staff registry and the DSAR registry now go
+stale the same way, which is to say they do not.
+
+### 3.10 🟠 Three more instances of the two-provider shape
+
+Also from the gate review, all verified. None is wrong *yet*, because nothing
+grades with Qwen until Q3 — which is exactly why they are written down now
+rather than discovered later:
+
+| Where | The shape | Phase |
+|---|---|---|
+| `routers/logs.py`, `GET /v1/stats` | `judge_model` is joined from `settings.gemini_api_key` / `settings.openai_api_key` only, so a Qwen-only deployment reports **`"local-policy"`** to the customer while Qwen grades | **Q3** — it becomes false the moment Qwen can grade |
+| `desktop/policy_page.py` `pol_key_rows` | hard-codes gemini/openai key rows, and `judge_view()` emits no `qwen_key_set` | **Q4** — §10's `key_field()` fix alone is unreachable without these |
+| `routers/policies.py` audit detail | named only two providers | **fixed in Q1** |
+
+And two that Q1 already handles, listed so nobody re-files them: the
+`provider in ("gemini", "both")` decrypt guards in `resolve_judge_routing` (now
+`"gemini" in selected`), and `JudgeRouting.key_for` (now a lookup).
+
+⚠ **The generalisable move, and it is worth more than any single row above:**
+Q3 and Q4 each open with a grep for two-provider literals —
+`grep -rnE '"(gemini|openai)"' backend/app desktop foxy-dashboard` — rather than
+trusting that this list is complete. Three sweeps have each found more.
+
 ### 3.8 🟡 A hardcoded system prompt would ignore the tenant's policy
 
 The draft's Q2 sketch: `_SYSTEM_PROMPT = "You are a strict AI-compliance evaluator..."  # same as gemini`.
@@ -294,17 +333,46 @@ different work:
 
 | | Shape | Cost | Honest? |
 |---|---|---|---|
-| **A (recommended)** | `Verdict` gains `human_review_requested: bool` + `human_review_reason`; `decision` stays `clean`/`breach`. The escalation rides the **existing** breach-notification path (`org_notifications`) | small — one schema field, one notifier branch | Yes. The "queue" is the notification surface that already exists, and we say so |
-| **B** | Widen the `decision` enum to include `human_review` | wide — `validate()`, `combine()`, and every reader of `decision`: dashboard, desktop, passport, exports, verifier docs | Risky. `decision` is evidence vocabulary; `local_verdict` is hashed (V4 `verdict_hash`) |
+| **A** | `Verdict` gains `human_review_requested: bool` + `human_review_reason`; `decision` stays `clean`/`breach`. The escalation rides the **existing** breach-notification path (`org_notifications`) | small — one schema field, one notifier branch | Yes. The "queue" is the notification surface that already exists, and we say so |
+| **B** | Widen the `decision` enum to include `human_review` | wide — `validate()`, `combine()`, and every reader of `decision`: dashboard, desktop, passport, exports, verifier docs | Risky. `decision` is evidence vocabulary |
 | **C** | Build a real review queue — table, migration, endpoints, dashboard page | large — its own two or three phases | Yes, and it is what "queue" actually means |
 
-**Recommendation: A.** It satisfies Track 4 — the model calls a tool and the
-tool changes what the system does — without putting a new value into the
-vocabulary the chain and four surfaces read, and without claiming a queue that
-does not exist. C is the right eventual answer if human review becomes a
-product feature; it is not a hackathon-week phase.
+⚠ **CORRECTION, 2026-09-04 — A's stated advantage was overstated, and the
+correction cuts against A.** This revision claimed A avoids "the vocabulary the
+chain reads". It does not. `routers/logs.py` calls `policy_engine.evaluate(...)`,
+takes `.model_dump()`, and passes that dict to `chain.verdict_hash_hex` — so
+**`Verdict` IS the hashed `local_verdict`**, and a new field on it changes the
+canonical JSON every NEW row hashes.
 
-⚠ Q1 does not depend on this. Q2 does not start until it is answered.
+Two things follow, and they point in opposite directions:
+
+* **Nothing breaks.** `verdict_hash` is derived per row from that row's own
+  `local_verdict`, and a verifier re-derives it the same way from the export.
+  Old rows keep their bytes and their digest; new rows are self-consistent. No
+  chain version is needed — the same reasoning #228 used for `graded_by`.
+* **But the field lands on every verdict**, including `policy_engine`'s rules
+  verdicts and host-enforcement verdicts, which have no judge and no tool-call.
+  A permanently-null key in hashed evidence, on every row, to carry a fact about
+  one provider's optional behaviour, is a real cost — and it is exactly the
+  objection this plan raised against B.
+
+So A and B differ less than stated. The honest comparison is now: A widens the
+hashed verdict *shape* for all rows; B widens the `decision` *vocabulary* that
+four surfaces read; C touches neither and costs the most.
+
+**Recommendation, unchanged but for a different reason: A** — it satisfies
+Track 4 (the model calls a tool and the tool changes what the system does),
+it is the only option whose blast radius is one schema plus one notifier, and
+its hashed-shape cost is a single nullable key rather than a new value the
+dashboard, desktop, passport and exports must each learn. If the owner would
+rather keep hashed evidence untouched, C is the answer and Q2 waits. Not that
+this plan should keep guessing; it needs the decision, not a third argument.
+
+C is the right eventual answer if human review becomes a product feature. It is
+not a hackathon-week phase.
+
+⚠ Q1 does not depend on this, and Q1 has shipped. Q2 does not start until it is
+answered.
 
 ---
 
@@ -336,12 +404,18 @@ the drift the boundary comment exists to prevent.
 
 ## 6 · Phases
 
-| Phase | Branch | Scope | Blocked on |
+| Phase | Branch | Scope | State |
 |---|---|---|---|
-| **Q1** | `feat/qwen-judge-routing` | Migration 0071 · per-provider default mapping · `config.py` · `models.py` · `judge_routing.py` · `policies.py` · **`account.py` withheld fields** | — |
-| **Q2** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests | **the §4 open decision** |
-| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way combine + prefix fix | Q1, Q2 |
-| **Q4** | `feat/qwen-judge-surfaces` | `desktop/policy_data.py` + dashboard provider `<select>` | Q1 |
+| **Q1** | `feat/qwen-judge-routing` | Migration 0071 · per-provider default mapping · `config.py` · `models.py` · `judge_routing.py` · `policies.py` · `account.py` withheld fields · `admin_data.py` staff denylist | ✅ **shipped** — `779b8ed` + `32f2152` |
+| **Q2** | `feat/qwen-judge-provider` | `qwen_judge.py` + tests | ⛔ **blocked on the §4 open decision** |
+| **Q3** | `feat/qwen-judge-worker` | `worker.py` dispatch · `judge.py` N-way combine + prefix fix · **`logs.py` stats `judge_model`** (§3.10) | needs Q2 |
+| **Q4** | `feat/qwen-judge-surfaces` | `desktop/policy_data.py` · **`desktop/policy_page.py` + `judge_view()`** (§3.10) · dashboard provider `<select>` | ready — needs the three frontend skills |
+
+⚠ **Q4 is not optional and it is not cosmetic.** Q1 deliberately leaves
+`judge_provider` stored and returned verbatim, so today's clients keep working
+untouched — but that also means **no UI can select a Qwen combination yet**. The
+feature is API-only until Q4 lands. That is a deliberate ordering, not an
+oversight, and it is the honest description of what shipped.
 
 **After each merge:** update §10 with the SHA, append a devlog entry to
 `G:\My Drive\Life\03 Projects\Foxy Audit\Alibaba Submission Changes\Devlogs\`,
@@ -475,6 +549,37 @@ revert `default_model` to the old ternary and confirm 3 goes red; drop `"both"`
 from the Literal and confirm 7 goes red; remove `"qwen_key_enc"` from the tuple
 and confirm 8 goes red.
 
+**What was actually run, 2026-09-04.** 17 checks, then **six** mutants — the two
+above plus the read-path normalisation, the `*_key_enc` suffix rule, and
+`key_for`'s fallback. All six went red; every file restored byte-identical under
+a SHA round-trip. The harness read each verdict from `subprocess.returncode`,
+asserted anchor uniqueness before applying, and demanded a green unmutated
+baseline first.
+
+⚠ **ONE MUTANT CAME BACK AS A SKIP AND THE HARNESS WAS THE CAUSE**, not the
+guard: a multi-line anchor had its `\n` normalised to the file's CRLF twice, so
+it matched zero times — which reads exactly like a missing anchor. Diagnosed and
+re-aimed rather than dropped, per `START HERE` §7. The one-normalisation rule is
+in the harness comment now.
+
+⚠ **THE 17 CHECKS ARE NOT IN THE REPO, AND THAT IS A REAL GAP.** They ran from
+the scratchpad against the shipped source, never against a copy — but they are
+not committed, so nothing re-runs them. Q1 kept to the planned file scope rather
+than adding a test file that CI would run and this machine cannot execute
+(no PostgreSQL, no backend venv until one was built for these checks). What
+this leaves guarded and unguarded:
+
+| Regression | Guarded in the repo by |
+|---|---|
+| §3.3 the DSAR credential claim | ✅ `test_account_export_scope.test_every_credential_we_hold_is_named_in_the_manifest` — walks the model registry, runs in CI |
+| §3.9 the staff denylist | ⚠ partly — `test_admin_data.py` exists; whether it asserts the `*_key_enc` shape is **unverified** |
+| §3.1 the provider ternary | ❌ nothing |
+| §3.2 the Literal / the round-trip downgrade | ❌ nothing |
+
+**Q2 or Q3 should land these as real tests** — they need no database and would
+run in CI. Filed so it is a decision rather than a thing that quietly never
+happened.
+
 ---
 
 ## 8 · Phase Q2 — the provider module ⛔ blocked on the §4 decision
@@ -570,4 +675,6 @@ credential column and touches the DSAR credential manifest.
 | Date | SHA | What |
 |---|---|---|
 | 2026-09-04 | `d4c3dde` | Plan written at `12a9ade`. Three phases, owner decisions captured |
-| 2026-09-04 | *(this revision)* | Re-verified every premise at `d4c3dde`. Eight findings (§3): the provider ternary that resolves Qwen to the OpenAI default · the Literal that 500s the policy read · the DSAR credential claim · `decision="human_review"` rejected by the schema in three places · no human-review queue exists · both shipped clients silently reset the provider · pairwise `combine` · a static system prompt. Phases go 3 → 4 (Q4: the clients). Q2 now blocked on an open owner decision about the escalation's shape |
+| 2026-09-04 | `779b8ed` | **Q1 built.** Six files + migration 0071. 15 behavioural checks; four re-broken by hand and all four went red |
+| 2026-09-04 | `32f2152` | **Q1 gate.** `code-review` found a second credential registry (§3.9 — `admin_data._NEVER_EXPOSE` would have served `qwen_key_enc` to staff) and a downgrade the Q1 commit had introduced by normalising `judge_provider` on the read and write paths. Both fixed; checks 15 → 17, mutants 4 → 6, all killed. §3 gains 3.9 and 3.10; §4's Option A recommendation corrected — `Verdict` **is** the hashed `local_verdict` |
+| 2026-09-04 | *(the revision below)* | Re-verified every premise at `d4c3dde`. Eight findings (§3): the provider ternary that resolves Qwen to the OpenAI default · the Literal that 500s the policy read · the DSAR credential claim · `decision="human_review"` rejected by the schema in three places · no human-review queue exists · both shipped clients silently reset the provider · pairwise `combine` · a static system prompt. Phases go 3 → 4 (Q4: the clients). Q2 now blocked on an open owner decision about the escalation's shape |
