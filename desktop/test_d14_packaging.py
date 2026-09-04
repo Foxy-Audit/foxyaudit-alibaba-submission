@@ -130,11 +130,35 @@ def test_exactly_one_workflow_builds_the_desktop_app():
 
 def test_the_release_workflow_never_runs_on_a_plain_commit():
     """Three PyInstaller runners per push would swamp the queue the real gate
-    depends on."""
+    depends on.
+
+    ⚠ ASSERTS THE PROPERTY, NOT ONE SPELLING OF IT — and that is the fix for
+    #320. This read `triggers["push"]["tags"] == ["v*"]` unconditionally, which
+    is one way to satisfy the rule and not the only one. The freeze removed the
+    `push:` key outright (`afcf31c`, 2026-08-23; again for the Alibaba
+    submission at `12a9ade`), so the test raised `KeyError: 'push'` and the
+    desktop suite could not go green for twelve days — long enough that nobody
+    could tell a NEW failure from this one.
+
+    No trigger at all satisfies "never runs on a plain commit" more completely
+    than a tag filter does. Both shapes are accepted here, and the tag shape is
+    still checked exactly as before when it is present, so this keeps working
+    unchanged when the trigger is restored at merge-back.
+    """
     triggers = _workflow()[True]          # PyYAML parses bare `on:` as True
     assert set(triggers) <= {"push", "workflow_dispatch"}
-    assert list(triggers["push"]) == ["tags"]
-    assert triggers["push"]["tags"] == ["v*"]
+
+    push = triggers.get("push")
+    if push is None:
+        return          # frozen: nothing can fire it but a manual dispatch
+
+    # Restored (or never frozen): tags ONLY. A `branches:` key here is the
+    # actual defect this test exists to prevent — that is what "a plain commit"
+    # means — so it must not merely be absent from the expected list, it must be
+    # absent from the workflow.
+    assert list(push) == ["tags"], (
+        f"release.yml fires on {sorted(push)}; only a tag may build a release")
+    assert push["tags"] == ["v*"]
 
 
 def test_all_three_platforms_are_built():
