@@ -63,7 +63,10 @@ KEY_MODES = ("own", "platform")
 #   * the alias has to survive anyway. Two shipped clients (the desktop and the
 #     dashboard) still SEND "both", and will until Q4 updates them.
 #
-# So it stays an accepted input forever, normalised on write and at resolve time.
+# So it stays an accepted input forever, and is resolved HERE — at grading time —
+# and nowhere else. ⚠ Deliberately NOT on the policy API's read or write path:
+# handing a client a word it does not recognise makes it post "gemini" back, so
+# converting the spelling would destroy the very setting it tidied.
 PROVIDER_ALIASES = {"both": "gemini+openai"}
 
 # Which judges each vocabulary word actually selects. ONE mapping, so a

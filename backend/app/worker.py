@@ -210,6 +210,23 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
                                     model=routing.openai_model)
             if routing.can_call("openai")
             else openai_judge._fallback(routing.problems.get("openai", "no_api_key")))
+    if not verdicts:
+        # ⚠ NEVER reach `verdicts[0]` on an empty list.
+        #
+        # Q1 opened the policy API to `qwen` and to the combination words before
+        # this dispatch learned them (Q3), so an org CAN store a routing word
+        # that selects no branch above. `verdicts[0]` would then raise
+        # IndexError — and the cost is not one org's grade. `_grade_one` counts
+        # the row as a failure, and a batch that fails with zero successes trips
+        # the breaker in `_loop`, which is PROCESS-WIDE: one tenant's
+        # configuration would pause grading for every tenant.
+        #
+        # `_fallback` names no provider and stamps graded_by="none", so this
+        # records an honest "nothing graded this row" instead of claiming gemini
+        # ran. Read at gemini.py::_fallback rather than assumed.
+        log.warning("no dispatchable judge for routing %r; the deterministic "
+                    "engine will grade this row", routing.provider)
+        return gemini._fallback(f"no_dispatchable_judge:{routing.provider}")
     if len(verdicts) == 2:
         return judge.combine(verdicts[0], verdicts[1])
     return verdicts[0]

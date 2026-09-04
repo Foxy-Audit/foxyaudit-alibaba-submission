@@ -435,9 +435,10 @@ class OrgPolicy(Base):
     #    provider key must never reach the chain. ──
     # gemini | openai | qwen | gemini+openai | gemini+qwen | openai+qwen | all
     # ⚠ AND `both`, which is what every two-judge org stored before qwen existed
-    # (0071). It is NOT migrated: it is an accepted alias, normalised on write
-    # and mapped at resolve time by judge_routing.normalise_provider. See that
-    # function for why the row is left alone.
+    # (0071). It is NOT migrated and NOT rewritten on save: an accepted alias,
+    # stored verbatim, mapped only at grading time by
+    # judge_routing.normalise_provider. See that function for why the row is
+    # left exactly as the customer left it.
     #
     # ⚠ String(16) IS THE CONSTRAINT ON THE VOCABULARY, not a formality.
     # "gemini+openai" is 13 characters; the three-provider value is spelled

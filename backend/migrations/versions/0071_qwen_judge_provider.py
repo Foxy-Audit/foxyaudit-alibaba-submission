@@ -12,11 +12,13 @@ version nobody chose and make the deployment default unmovable.
 
 NO DATA MIGRATION, AND `judge_provider` IS NOT REWRITTEN. Every org that chose
 two judges before this migration holds the string "both", which has always meant
-gemini+openai. It stays exactly as the customer left it: `judge_routing`
-normalises it on read and on write, so a row converts itself the next time
-someone saves that policy, and until then it routes the way it always did. A
-migration that rewrote the column would be this table recording a choice its
-owner never made — on the one table whose job is recording what they did choose.
+gemini+openai. It stays exactly as the customer left it, permanently:
+`judge_routing.normalise_provider` resolves the alias at GRADING TIME and the
+row is never rewritten — not by this migration, not on save. A migration that
+rewrote the column would be this table recording a choice its owner never made,
+on the one table whose job is recording what they did choose; converting it on
+save would be worse, because both shipped clients coerce a word they do not
+recognise back to "gemini" and would then store THAT.
 Two shipped clients (desktop, dashboard) also still SEND "both" until Q4, so the
 alias has to survive in the code regardless of what the rows say.
 

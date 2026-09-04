@@ -65,8 +65,14 @@ class PolicyConfig(BaseModel):
     # builds it from the stored column. Every org that chose two judges before
     # 0071 has "both" in the database, so removing it here does not deprecate the
     # value: it raises ValidationError on the READ path and 500s the policy page
-    # for exactly those orgs. It is normalised to "gemini+openai" on the way out
-    # and on the way in, so a client that sends it converts the row on save.
+    # for exactly those orgs.
+    #
+    # ⚠ AND IT IS NOT NORMALISED IN EITHER DIRECTION. An earlier cut converted it
+    # to "gemini+openai" on read and on write; that silently downgraded every
+    # such org, because both shipped clients coerce a word they do not recognise
+    # back to "gemini" and save it. The value is stored and returned VERBATIM and
+    # resolved only at grading time, in judge_routing. See the read path in
+    # `_to_config` and the write path in the PUT handler.
     judge_provider: Literal["gemini", "openai", "qwen",
                             "gemini+openai", "gemini+qwen", "openai+qwen", "all",
                             "both"] = "gemini"
