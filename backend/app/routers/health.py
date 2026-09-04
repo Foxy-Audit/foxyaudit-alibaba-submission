@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from .. import judge_routing
 from ..auth import require_org
 from ..models import AuditLog, Organization
 from ..db import get_db
@@ -25,13 +26,36 @@ START_TIME = time.time()
 
 
 def _evaluator_status(settings) -> dict:
-    """Expose configuration state without pretending it is provider health."""
-    configured = bool(settings.gemini_api_key.strip())
+    """Expose configuration state without pretending it is provider health.
+
+    ⚠ THIS ANSWERED "gemini" UNCONDITIONALLY UNTIL Q3, AND IT WAS A FALSE REPORT
+    ABOUT A LIVE SYSTEM. `configured` read gemini's key alone, so a deployment
+    running only OpenAI — or, since Q2b, only Qwen — reported
+    ``status: "unavailable"`` while its judge was grading every event. A health
+    endpoint that under-reports a working evaluator is the same defect as one
+    that over-reports a broken one; it is just the direction nobody complains
+    about.
+
+    `provider` and `model` are kept for anything reading the old shape, but they
+    now name a provider this deployment actually holds a key for. With no key at
+    all they fall back to the routing default AND `configured` is False — so the
+    pair is explicitly not a claim rather than a quiet one.
+    """
+    keyed = {
+        name: bool((getattr(settings, f"{name}_api_key", "") or "").strip())
+        for name in judge_routing.JUDGE_PROVIDERS
+    }
+    available = [name for name, on in keyed.items() if on]
+    primary = available[0] if available else judge_routing.DEFAULT_PROVIDER
     return {
-        "provider": "gemini",
-        "model": settings.gemini_model,
-        "status": "configured" if configured else "unavailable",
-        "configured": configured,
+        # The truth, per provider — additive, so the two legacy keys below keep
+        # working for anything that reads them.
+        "providers": keyed,
+        "models": {name: getattr(settings, f"{name}_model") for name in available},
+        "provider": primary,
+        "model": getattr(settings, f"{primary}_model"),
+        "status": "configured" if available else "unavailable",
+        "configured": bool(available),
         "verdicts_advisory": True,
     }
 
@@ -49,9 +73,14 @@ def health(
     return {
         "status": "ok",
         "org": org.name,
+        # Legacy per-provider keys. `evaluator.models` above is the one that
+        # cannot go stale; these are kept because they predate it, and qwen is
+        # added so the body does not report two of three judges.
         "gemini_model": settings.gemini_model if getattr(settings, "gemini_api_key", "") else None,
         "openai_model": (settings.openai_model
                          if getattr(settings, "openai_api_key", "") else None),
+        "qwen_model": (settings.qwen_model
+                       if getattr(settings, "qwen_api_key", "") else None),
         "evaluator": _evaluator_status(settings),
         "chain_height": chain_height,
         "uptime_seconds": uptime_seconds

@@ -22,7 +22,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_202_ACCEPTED
 
-from .. import billing_state, export_bundle, policy_engine
+from .. import billing_state, export_bundle, judge_routing, policy_engine
 from ..anchor import latest_anchor
 from ..auth import require_org, resolve_org
 from ..chain import (
@@ -1070,11 +1070,17 @@ def stats(
         .where(AuditLog.org_id == org.id, AuditLog.grading_status == "graded")
     ).one()
     settings = get_settings()
-    judge_models = []
-    if settings.gemini_api_key:
-        judge_models.append(settings.gemini_model)
-    if settings.openai_api_key:
-        judge_models.append(settings.openai_model)
+    # ⚠ DERIVED FROM THE PROVIDER LIST, not from two hand-written branches. The
+    # `if gemini / if openai` pair here was written when those were the only two
+    # judges, and it reported **"local-policy"** on a Qwen-only deployment — i.e.
+    # told the customer no model graded their events while Qwen was grading them.
+    # Iterating JUDGE_PROVIDERS means a fourth provider is reported the day it is
+    # added to that tuple, rather than the day somebody remembers this line.
+    judge_models = [
+        getattr(settings, f"{name}_model")
+        for name in judge_routing.JUDGE_PROVIDERS
+        if (getattr(settings, f"{name}_api_key", "") or "").strip()
+    ]
     judge_model = " + ".join(judge_models) or "local-policy"
     return StatsResponse(
         total_logged=total, breaches=breaches, clean_rate=clean_rate,

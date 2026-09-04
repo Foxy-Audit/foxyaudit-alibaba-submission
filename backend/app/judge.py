@@ -42,6 +42,26 @@ _MERGE_PREFIX = {
     "human_review": "multi_judge_human_review",
     "breach": "multi_judge_breach",
 }
+
+
+def _unprefixed(reason: str) -> str:
+    """A reason with one merge prefix stripped, if it carries one.
+
+    ⚠ NEEDED BECAUSE THE WORKER FOLDS. Three providers are merged as
+    ``combine(combine(a, b), c)``, so the second call receives a reason that the
+    first already labelled — and without this, a three-judge grade would be
+    stored reading ``multi_judge_clean: multi_judge_clean: ...``. That string is
+    audit evidence a customer exports, not a log line.
+
+    Strips ONE prefix, not all of them: the labels are added one merge at a time,
+    so one is exactly what a re-merge has to remove, and looping would eat a
+    prefix that a provider legitimately returned inside its own reason text.
+    """
+    for prefix in _MERGE_PREFIX.values():
+        head = f"{prefix}: "
+        if reason.startswith(head):
+            return reason[len(head):]
+    return reason
 # A usable reason must carry at least this much signal; a blank/near-blank reason
 # from an affirmative judge is low-confidence noise, not audit evidence.
 _MIN_REASON_LEN = 3
@@ -201,7 +221,7 @@ def combine(first: Verdict, second: Verdict) -> Verdict:
         for rule in verdict.rules:
             if rule not in rules:
                 rules.append(rule)
-    reasons = [verdict.reason for verdict, _ in known if verdict.reason]
+    reasons = [_unprefixed(verdict.reason) for verdict, _ in known if verdict.reason]
     prefix = _MERGE_PREFIX[decision]
     return Verdict(
         # ⚠ TRACKS `decision`, so it is False for a human_review merge. A

@@ -282,6 +282,114 @@ def test_an_escalation_survives_a_merge_with_a_clean_judge(monkeypatch):
     assert merged.policy_breach is False
 
 
+# ── Q3 · folding three judges ─────────────────────────────────────────────────
+
+def _v(decision, breach=False, reason="a sufficient reason", score=0,
+       provider="p", model="m"):
+    return Verdict(decision=decision, policy_breach=breach, reason=reason,
+                   risk_score=score, judge_provider=provider, judge_model=model,
+                   graded_by="ai")
+
+
+def _fold(*verdicts):
+    """Exactly what worker._judge_verdict does with three providers."""
+    result = verdicts[0]
+    for verdict in verdicts[1:]:
+        result = judge.combine(result, verdict)
+    return result
+
+
+def test_a_three_judge_fold_keeps_the_strongest_outcome():
+    """`if len(verdicts) == 2` returned verdicts[0] for three, discarding two —
+    one of which could be the breach."""
+    out = _fold(_v("clean"), _v("clean"), _v("breach", breach=True))
+    assert out.decision == "breach" and out.policy_breach is True
+    out = _fold(_v("clean"), _v("human_review"), _v("clean"))
+    assert out.decision == "human_review"
+
+
+def test_the_fold_is_order_independent():
+    """combine is associative over the ladder, so dispatch order cannot change a
+    grade. If this ever fails, the worker's provider order became evidence."""
+    import itertools
+    trio = [_v("clean"), _v("human_review"), _v("breach", breach=True)]
+    outcomes = {_fold(*order).decision for order in itertools.permutations(trio)}
+    assert outcomes == {"breach"}, outcomes
+
+
+def test_a_folded_reason_carries_its_prefix_exactly_once():
+    """The nested merge would otherwise store
+    `multi_judge_clean: multi_judge_clean: ...` as audit evidence."""
+    out = _fold(_v("clean", reason="first"), _v("clean", reason="second"),
+                _v("clean", reason="third"))
+    assert out.reason.count("multi_judge_") == 1, out.reason
+    assert out.reason.startswith("multi_judge_clean: ")
+    for part in ("first", "second", "third"):
+        assert part in out.reason, f"{part} was lost in the fold"
+
+
+def test_only_one_prefix_is_stripped_per_merge():
+    """A provider that legitimately writes a merge-looking phrase into its own
+    reason keeps it; only the one label this module added comes off.
+
+    ⚠ COUNTS, rather than asserting a substring. The first version of this test
+    checked that `"multi_judge_clean: the model said this itself"` appeared in
+    the result — and a mutant that stripped EVERY prefix in a loop survived it,
+    because `combine` re-adds one and the substring reappears either way. The
+    two behaviours differ only in how many labels remain, so counting is the
+    only assertion that can tell them apart.
+    """
+    quoted = "multi_judge_clean: multi_judge_clean: the model said this itself"
+    out = judge.combine(_v("clean", reason=quoted), _v("clean", reason="other"))
+    # two in, one stripped, one re-added by this merge => two.
+    assert out.reason.count("multi_judge_clean") == 2, out.reason
+    assert "the model said this itself" in out.reason
+
+
+def test_every_judge_that_answered_is_named_after_a_fold():
+    out = _fold(_v("clean", provider="gemini", model="g"),
+                _v("clean", provider="openai", model="o"),
+                _v("human_review", provider="qwen", model="q"))
+    assert set((out.judge_provider or "").split(",")) == {"gemini", "openai", "qwen"}
+    assert out.graded_by == "ai"
+
+
+def test_the_worker_folds_rather_than_testing_a_length():
+    """Structural, for the same reason as the guard test below: app.worker needs
+    a database driver to import. Pins that the `len(verdicts) == 2` special case
+    is gone, which is what silently discarded two grades for `all`."""
+    import ast
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "app" / "worker.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_judge_verdict")
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Call):
+            func_name = getattr(node.left.func, "id", None)
+            literals = [c.value for c in node.comparators if isinstance(c, ast.Constant)]
+            assert not (func_name == "len" and 2 in literals), (
+                "_judge_verdict still special-cases exactly two verdicts; three "
+                "providers would fall through and two grades would be discarded")
+    assert any(isinstance(n, ast.For) for n in ast.walk(fn)), (
+        "no fold loop in _judge_verdict")
+
+
+def test_the_worker_dispatches_all_three_providers():
+    """Structural. Pins that a `uses_qwen` branch exists beside the other two."""
+    import ast
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "app" / "worker.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_judge_verdict")
+    attrs = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+    for provider in ("uses_gemini", "uses_openai", "uses_qwen"):
+        assert provider in attrs, f"_judge_verdict never checks {provider}"
+
+
 # ── the worker's empty-verdict guard ──────────────────────────────────────────
 
 def test_the_worker_guards_an_empty_verdict_list_before_indexing_it():

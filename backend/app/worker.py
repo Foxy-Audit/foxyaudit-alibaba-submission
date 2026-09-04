@@ -38,6 +38,7 @@ from . import judge_routing
 from . import org_notifications
 from . import openai_judge
 from . import policy_engine
+from . import qwen_judge
 from . import user_notifications
 from . import webhook_delivery
 from .anchor import (_ANCHOR_ALERT_STATE, alert_on_anchor_problems, anchor_admin,
@@ -210,6 +211,13 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
                                     model=routing.openai_model)
             if routing.can_call("openai")
             else openai_judge._fallback(routing.problems.get("openai", "no_api_key")))
+    if routing.uses_qwen:
+        verdicts.append(
+            qwen_judge.evaluate(meta, policy_config, history=history,
+                                api_key=routing.qwen_key,
+                                model=routing.qwen_model)
+            if routing.can_call("qwen")
+            else qwen_judge._fallback(routing.problems.get("qwen", "no_api_key")))
     if not verdicts:
         # ⚠ NEVER reach `verdicts[0]` on an empty list.
         #
@@ -227,8 +235,17 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
         log.warning("no dispatchable judge for routing %r; the deterministic "
                     "engine will grade this row", routing.provider)
         return gemini._fallback(f"no_dispatchable_judge:{routing.provider}")
-    if len(verdicts) == 2:
-        return judge.combine(verdicts[0], verdicts[1])
+    # A LEFT FOLD, not a length test. `if len(verdicts) == 2` was correct while
+    # two providers existed and silently wrong the moment a third could be
+    # selected: `"all"` produces three verdicts, missed both branches, and fell
+    # through to `return verdicts[0]` — discarding two grades, one of which
+    # could be the breach. `judge.combine` is associative over its ladder
+    # (breach > human_review > clean), so folding gives the same answer in any
+    # order, and it stays correct for a fourth provider without editing here.
+    result = verdicts[0]
+    for verdict in verdicts[1:]:
+        result = judge.combine(result, verdict)
+    return result
     return verdicts[0]
 
 
