@@ -164,6 +164,40 @@ longer true:*
 
 ---
 
+## 3.5 · Status — the only place this plan records what shipped
+
+⚠ **This table is the plan's State column, and it exists because its predecessor
+did not have one.** `qwen-judge.md` §6 recorded Q1 as shipped and then stopped;
+Q2b, Q3 and Q4 all landed while the file went on saying they were pending, and
+nobody noticed until a session read git instead of the plan. **Update this on
+every merge, or it becomes the same lie.** Written 2026-09-05, verified against
+`git log ebe284b..HEAD`.
+
+| Phase | State | SHAs / evidence |
+|---|---|---|
+| **A0** — prove Qwen is real | ✅ **done** | No commit. Key tested live 2026-09-05: real call, `graded_by="ai"`, `judge_provider="qwen"`, `judge_model="qwen-plus"`. Portal facts read — §3.1 |
+| **A1** — the review queue | ✅ **merged** | `7f56f3a` `28ff79e` `8078a2a` `10f7d44` `24b26ee` · migrations **0072**, **0073** · 4 review rounds, 17 findings |
+| *(unplanned)* escalation criteria | ✅ **merged** | `9f9bacc`. **Not in the original plan.** Found by A0: `qwen-plus` AND `qwen-max` graded every input and never called the tool, so the escalation feature — the whole point of the provider — was unreachable live |
+| **A2** — the reviewer surface | ✅ **merged** | `7b0deb3` `e32a669` `31bb6a7` `d7343ff` `d588949` `138fad0` · migration **0074** · follow-ups §5.1 |
+| *(aftermath)* the moved claim pin | ✅ **merged** | `bf91e60`. `main` was red on `foxy-sale-page` from `138fad0`: A2 moved a pinned claim to `:2522` and six pins still said `:2405` |
+| **A3** — the demo that is also the video | 🔴 **NOT BUILT** | — |
+| **A4** — submission artefacts | ✅ **merged** | `72e1390` `e861e4f` `ec0b68d` · `README.md` + `docs/architecture.svg` · 7 findings in review |
+| **A5** — a second tool | ⏸ **not started** | Deliberate. Only after A1–A4, and A3 outranks it |
+
+**Alembic head 0074.** Suites at `ec0b68d`: backend hermetic **43** · backend
+integration **1586** (3 skipped) · dashboard **597** · sale-page **665**.
+
+### What remains, in order
+
+1. 🔴 **A3** — the only unbuilt phase, and the one that gets filmed.
+2. **ECS deploy config** — owner buys the box; that config is the submission's
+   required "Alibaba Cloud services" proof.
+3. **Port** — fast-forward devtool → `foxyaudit-alibaba-submission` (§3.1).
+4. **Record** the video.
+5. **Publish** the Alibaba repo, then check its Actions tab (issue #315).
+
+---
+
 ## 4 · Phase A1 — the review queue *(branch `feat/human-review-queue`, backend only)*
 
 ### 4.1 The design constraint that makes this safe
