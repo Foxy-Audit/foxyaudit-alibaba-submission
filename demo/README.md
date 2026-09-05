@@ -144,6 +144,32 @@ Artifacts (the export, the tampered copy, a `summary.json`) land in
 `e2e/run_e2e.py`'s stack plumbing and its `pip install ./sdk` venv rather than
 growing a second copy of either.
 
+### If the judge says it is unavailable but the key is fine
+
+The script tells you which of the two it is. When it reports that the worker
+could not open a verified TLS connection, something on the machine is
+intercepting HTTPS and re-signing it with a root the **container** has never
+heard of. The host is unaffected — Windows trusts it — so this shows up only
+inside Docker. It is the same condition that makes `up --build` die on
+`CERTIFICATE_VERIFY_FAILED` from PyPI; see
+[../e2e/README.md](../e2e/README.md) for the image-build half of it.
+
+Drop the interceptor's root CA, appended to a normal `certifi` bundle, at
+`e2e/.artifacts/agentic/ca-bundle.pem`. If that file exists the demo mounts it
+into the backend and the worker as their `SSL_CERT_FILE`. The path is gitignored
+and nothing machine-specific reaches the repo.
+
+⚠ **That will not rescue every interceptor.** The backend image runs Python
+3.13, which turns on `VERIFY_X509_STRICT` by default, so a root that violates
+RFC 5280 is refused however you supply it. Norton's "Web/Mail Shield" root is
+one of these — its `basicConstraints` extension is not marked critical, and
+`openssl s_client -CAfile` accepts it while Python 3.13 does not. On a machine
+running that, the only way to reach a live provider is to turn the product's
+HTTPS scanning off for the run.
+
+The script never pretends otherwise: with the provider unreachable it says so,
+skips beats 3–6, and runs 1, 2, 7 and 8 for real.
+
 ## What to show a judge
 
 1. Run `offline_demo.py` and show all four PASS checks.
