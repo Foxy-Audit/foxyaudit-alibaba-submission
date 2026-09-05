@@ -79,6 +79,71 @@ it as the customer's provider, while Foxy receives only commitments and bounded
 metadata. See [../docs/OPENAI_BUILD_WEEK_SUBMISSION.md](../docs/OPENAI_BUILD_WEEK_SUBMISSION.md)
 for the complete judge runbook.
 
+## The agentic loop, end to end (`agentic_demo.py`)
+
+One runnable script that produces the whole narrative **in order**, so a demo
+video is a screen recording of a real run rather than a slideshow. It drives the
+real SDK against a real local stack, a real hash chain, the real worker and a
+real Qwen judge. **Nothing in it is simulated.**
+
+```powershell
+# From the repository root. Needs Docker, and QWEN_API_KEY in backend/.env.
+python demo/agentic_demo.py
+```
+
+Eight beats, each with its own on-screen boundary so they can be cut apart in
+editing:
+
+| # | Beat | What you watch happen |
+|---|---|---|
+| 1 | **GUARD** | PHI under `hipaa`, `mode="block"` — the SDK stops it **before** the model call, and the model function runs zero times. The event that went on the wire is printed verbatim: no prompt, no response, just commitments and bounded metadata. |
+| 2 | **CLEAN** | An ordinary prompt. Allowed, and graded `clean` by the AI judge. |
+| 3 | **ESCALATE** | The ambiguous case — a `phi_restricted` tag with **empty** `pii_signals`. Qwen calls `flag_for_human_review` and returns `decision="human_review"`. |
+| 4 | **QUEUE** | It appears in `GET /v1/reviews`; the pending count goes 0 → 1. |
+| 5 | **HUMAN** | A person resolves it `cleared`. The chained row's `chain_hash` is **byte-identical** before and after — the decision is appended, never written over. |
+| 6 | **THE LOOP CLOSES** | The same shape again. Qwen calls `check_prior_reviews`, sees that a human cleared this tag, and grades `clean` **instead of** escalating. The agent escalated, a human ruled, the agent learned. |
+| 7 | **VERIFY** | Export the ledger and recompute it with `verifier/foxy_verify.py` — stdlib only, zero Foxy imports, intact from genesis. |
+| 8 | **TAMPER** | Change one hex character of one `prompt_hash`, re-verify, and watch it fail at exactly that sequence. |
+
+### Re-recording one beat
+
+```powershell
+python demo/agentic_demo.py --beats 6          # just the finale
+python demo/agentic_demo.py --beats 3-6        # the loop, without the setup
+python demo/agentic_demo.py --beats 1,2 --pause
+```
+
+`--beats` implies `--reuse-stack`: a partial run acts on state the earlier beats
+left behind, so it must not begin by wiping the database. `--pause` waits for
+Enter between beats, which is what you want with a recorder running. `--fresh`
+forces the wipe anyway, `--no-build` skips the image rebuild, and `--down` tears
+the stack down at the end (by default it is left up, because the dashboard is
+usually still wanted).
+
+Beat 6 is the second half of beat 5 and **cannot stand alone**: if no human has
+cleared a `phi_restricted` escalation yet, it says so and fails rather than
+quietly showing a different story. Likewise, if you re-record beat 3 on a stack
+that already has cleared reviews, the script warns that it is no longer a clean
+slate — `check_prior_reviews` may legitimately stop the very escalation that beat
+is there to show.
+
+### The key
+
+`QWEN_API_KEY` is read from `backend/.env` (gitignored) or the environment, and
+is stored through `PUT /v1/policies` as an ordinary BYOK key, encrypted at rest
+exactly as a customer's would be. It is never printed and never written to an
+artifact.
+
+**With no key, the script says so and runs beats 1, 2, 7 and 8 anyway.** Beats
+3–6 need a live model, and they are **skipped, never simulated** — there is no
+canned Qwen response in that file and there must never be one. The product's
+whole thesis is that you can check the evidence instead of trusting the vendor.
+
+Artifacts (the export, the tampered copy, a `summary.json`) land in
+`e2e/.artifacts/agentic/run-<id>/`, which is gitignored. The script shares
+`e2e/run_e2e.py`'s stack plumbing and its `pip install ./sdk` venv rather than
+growing a second copy of either.
+
 ## What to show a judge
 
 1. Run `offline_demo.py` and show all four PASS checks.

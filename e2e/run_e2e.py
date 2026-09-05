@@ -148,9 +148,13 @@ def venv_python() -> str:
         else os.path.join(VENV, "bin", "python")
 
 
-def bootstrap_and_reexec(argv: list[str]) -> None:
+def bootstrap_and_reexec(argv: list[str], script: str | None = None) -> None:
     """Build the SDK from THIS checkout and install it into a throwaway venv,
-    then re-exec this script inside it.
+    then re-exec ``script`` (this file by default) inside it.
+
+    ``script`` exists so a SECOND driver can share this venv and this build
+    rather than growing its own — ``demo/agentic_demo.py`` passes its own path.
+    Defaulting to ``__file__`` keeps every existing caller byte-identical.
 
     Deliberately not `import` from `sdk/src`, and deliberately not whatever the
     developer happens to have installed: `pip install ./sdk` is what a customer
@@ -168,7 +172,7 @@ def bootstrap_and_reexec(argv: list[str]) -> None:
              os.path.join(REPO, "sdk")], timeout=900)
     shown = run_cmd([py, "-c", "import foxy_audit;print(foxy_audit.__version__)"]).stdout
     print(f"  installed foxy-audit {shown.strip()} from ./sdk into {VENV}", flush=True)
-    sys.exit(subprocess.call([py, os.path.abspath(__file__)] + argv[1:],
+    sys.exit(subprocess.call([py, script or os.path.abspath(__file__)] + argv[1:],
                              env=dict(os.environ, FOXY_E2E_BOOTSTRAPPED="1")))
 
 
