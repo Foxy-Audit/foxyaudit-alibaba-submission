@@ -1806,6 +1806,89 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
 .gby{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .gby .gwhy{color:var(--muted);}
 
+/* ════════ A2 · THE REVIEW QUEUE ════════
+   The page an escalation is finally read on. It spends ONE colour and it is the
+   colour Q4 already chose: --c-6, slot 6 of the categorical palette, which
+   `.ltag.human_review` and `.pill.human_review` already carry. Violet here means
+   "no determination yet, a person is needed" — and the moment a person makes one
+   the outcome joins the verdict vocabulary this surface already ships
+   (.pill.breach / .pill.safe / .pill.warn). A resolved escalation is an ordinary
+   verdict; only an undecided one is its own thing. That is why there is no
+   second escalation colour and no fourth status fill.
+
+   ⚠ MEASURED AS A FILL, NOT ONLY AS INK. The trap this file has already shipped
+   once is a chip whose text cleared 4.5:1 while the pill itself sat at 1.01:1
+   against its own card and dissolved. So both sides, both themes:
+     the FILL  --c-6 against --bg (the rail)   6.71 dark · 5.26 light
+               --c-6 against --surf (the card) 6.28 dark · 5.70 light
+     the INK   #160a2e on #9b8cff              6.79 dark
+               #fff    on #6b42c8              6.48 light
+   Those inks are the pair `.ltag.human_review` already ships, for the same
+   reason the light theme deepens the fill under them. Same two values in one
+   more place, not a third answer for one hue. */
+.dock-pip.review{background:var(--c-6);color:#160a2e;}
+html[data-theme="light"] .dock-pip.review{color:#fff;}
+/* ⚠ AND AGAINST THE TILE IT SITS ON, WHICH IS NOT ALWAYS THE RAIL. Measured
+   against --bg the violet clears 6.71 / 5.26 — but a `.dock-item.active` is
+   filled with --fox, and violet on orange is 1.06:1 dark and 1.87:1 light. The
+   DIGIT stays legible (its ink is measured against the pip's own fill, 6.79 /
+   6.48); what disappears is the disc, so on the page you are actually on the
+   badge stops looking like a badge. That is the failure this surface has
+   already shipped once, in the form the second measurement catches and the
+   first does not.
+   A 2px ring in the page ground fixes it without touching the fill or the box:
+   on an inactive tile the ring IS the rail and shows nothing, on the active one
+   it is a dark outline between violet and orange. `box-shadow` rather than
+   `border` because the pip is 15px with `box-sizing:border-box` and an 8px
+   numeral inside it — a 2px border would eat the fill the numeral needs.
+   ⚠ `.dock-pip` HAS THE SAME PROPERTY AND IS DELIBERATELY LEFT ALONE: its
+   --breach-bg red measures 1.26:1 on the same orange. Recording that is this
+   phase's job; restyling the Threats and Alerts badges from inside a change
+   about the review queue is not. */
+.dock-pip.review{box-shadow:0 0 0 2px var(--bg);}
+
+/* ⚠ ONE CARD PER ESCALATION, NOT A TABLE ROW, and the reason is the reason.
+   The judge's sentence is the CONTENT of this page — the reviewer decides on it
+   and on nothing else — and a table cell truncates it, a tooltip hides it from
+   the keyboard, and a "view" link makes reading the only thing on the page into
+   a second click. The metadata is what gets compressed here, not the sentence.
+   Separated by the same 2px dashed rule the ledger's own extracts use. */
+.rvw{border-top:2px dashed var(--line);padding:15px 0;}
+.rvw:first-child{border-top:none;padding-top:0;}
+.rvw:last-child{padding-bottom:0;}
+.rvw-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px;}
+/* The mark, and the page's one piece of colour while a decision is outstanding.
+   Same construction as .pill, which is deliberate: it is the same vocabulary at
+   the same size, so a queue entry and a ledger row read as one product. */
+.rvw-risk{
+  display:inline-flex;align-items:center;gap:5px;border-radius:20px;
+  padding:4px 11px;font-family:var(--mono);font-size:10px;font-weight:800;
+  letter-spacing:.3px;text-transform:uppercase;border:var(--border-sm);
+  background:var(--c-6);color:#160a2e;font-variant-numeric:tabular-nums;
+}
+html[data-theme="light"] .rvw-risk{color:#fff;}
+.rvw-meta{font-family:var(--mono);font-size:9.5px;color:var(--muted);min-width:0;}
+.rvw-meta b{color:var(--ink2);font-weight:700;}
+/* Set to be READ: the body face at reading size, and a measure that stops it
+   running the full width of a wide card. Everything else on this card is mono
+   metadata at 9.5px, so the one sentence that matters is the one that looks
+   like prose. */
+.rvw-why{font-size:13px;line-height:1.55;color:var(--ink);max-width:72ch;margin:0;}
+/* ⚠ THREE EQUAL BUTTONS, AND NONE OF THEM IS `danger`. Painting "Confirmed
+   breach" red would colour the outcome before the reviewer has chosen it, which
+   is a nudge inside a governance decision that is written once and cannot be
+   corrected by deciding again. The record takes its colour AFTER the person
+   does; the choice does not. */
+.rvw-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+.rvw-acts .btn{margin-top:0;}
+.rvw-out{font-family:var(--mono);font-size:9.5px;color:var(--muted);
+  margin-top:9px;line-height:1.7;}
+/* The one field a human wrote, marked as quoted rather than as a status. A
+   hairline in --line, because a coloured bar would make customer prose look
+   like a verdict this product issued. */
+.rvw-note{font-size:11.5px;line-height:1.6;color:var(--ink2);margin-top:9px;
+  padding-left:11px;border-left:1px solid var(--line);max-width:72ch;}
+
 /* ════════ G9 · #154 · Windows High Contrast (forced-colors: active) ═════════
    MEASURED, NOT PORTED. The admin console's block was read for its principle —
    "give every control that draws its own edge an edge that survives" — and for
@@ -1948,6 +2031,16 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
       <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.2v6c0 4.6-3.4 8.2-8 10-4.6-1.8-8-5.4-8-10v-6z"/><path d="M12 8.4v4.2"/><path d="M12 15.8h.01"/></svg></span>
       <span>Threats</span>
       <span class="dock-pip" id="threatPip" style="display:none;">3</span>
+    </div>
+    <!-- A2 · beside Threats rather than after Ledger: these are the two
+         surfaces that are about something WAITING on you, and Ledger is the
+         record you go looking in. The pip takes the escalation colour instead
+         of .dock-pip's --breach-bg — this product spends a great deal of effort
+         on "an escalation is not a finding", and a red badge would spend it. -->
+    <div class="dock-item" data-page="review" onclick="go('review',this)" style="position:relative;">
+      <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8.1" r="3.6"/><path d="M3.3 20.3a6.2 6.2 0 0 1 12.4 0"/><path d="M16.3 11.7l1.9 1.9 3.4-3.8"/></svg></span>
+      <span>Review</span>
+      <span class="dock-pip review" id="reviewPip" style="display:none;">0</span>
     </div>
     <div class="dock-item" data-page="ledger" onclick="go('ledger',this)">
       <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3.5" width="16" height="17" rx="2.5"/><path d="M8 8.4h8M8 12h8M8 15.6h5"/></svg></span>
@@ -2277,6 +2370,30 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
             </table>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ═════════════ REVIEW (A2) ═════════════ -->
+    <div class="page" id="page-review">
+      <div class="pg-head"><span class="pg-wm" aria-hidden="true">REVIEW</span>
+        <div></div>
+        <button class="btn ghost sm" type="button" onclick="foxReviews.reload()">↻ refresh</button>
+      </div>
+      <div class="clay pad">
+        <div class="stitle">
+          <div class="stitle-l"><div class="txt" style="font-size:12px;">Escalations</div></div>
+          <div class="seg" id="rvwFilter" role="group" aria-label="Which escalations to show">
+            <button type="button" data-rvwfilter="pending" aria-pressed="true" onclick="foxReviews.filter('pending')">Waiting</button>
+            <button type="button" data-rvwfilter="resolved" aria-pressed="false" onclick="foxReviews.filter('resolved')">Decided</button>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--muted);line-height:1.7;margin:0 0 14px;max-width:72ch;">
+          The AI judge escalates when it will not decide on its own: it records why, and waits for a person.
+          What you decide here is appended to your audit record as its own hashed event — it never rewrites the
+          interaction it is about, so the chain still verifies exactly as it did before.
+        </p>
+        <div id="rvwList" aria-live="polite"><div class="skel-row"><div class="skel circ"></div><div class="grow"><div class="skel h" style="width:38%"></div><div class="skel line" style="width:74%;margin-top:6px"></div></div></div></div>
+        <div id="rvwMore"></div>
       </div>
     </div>
 
@@ -3372,6 +3489,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
 <nav class="mobnav" id="mobNav">
   <div class="mnbtn active" data-page="dashboard" onclick="go('dashboard',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.4L12 3l9 7.4"/><path d="M5.6 9.4V21h12.8V9.4"/><path d="M9.8 21v-6.2h4.4V21"/></svg></span>Home</div>
   <div class="mnbtn" data-page="analytics" onclick="go('analytics',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3.2v6c0 4.6-3.4 8.2-8 10-4.6-1.8-8-5.4-8-10v-6z"/><path d="M12 8.4v4.2"/><path d="M12 15.8h.01"/></svg></span>Threats</div>
+  <div class="mnbtn" data-page="review" onclick="go('review',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8.1" r="3.6"/><path d="M3.3 20.3a6.2 6.2 0 0 1 12.4 0"/><path d="M16.3 11.7l1.9 1.9 3.4-3.8"/></svg></span>Review</div>
   <div class="mnbtn" data-page="ledger" onclick="go('ledger',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3.5" width="16" height="17" rx="2.5"/><path d="M8 8.4h8M8 12h8M8 15.6h5"/></svg></span>Ledger</div>
   <div class="mnbtn" data-page="verify" onclick="go('verify',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M8.4 12.2l2.6 2.6 4.8-5.4"/></svg></span>Verify</div>
   <div class="mnbtn" data-page="policy" onclick="go('policy',this)"><span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.6 4.1v9.8L12 21l-7.6-4.1V7.1z"/><circle cx="12" cy="12" r="2.7"/></svg></span>Policy</div>
@@ -3594,7 +3712,7 @@ html[data-theme="light"] .pg-wm{opacity:.06;}
 <script>
 /* CSRF double-submit: echo the foxy_csrf cookie in X-CSRF-Token on every non-GET request */
 (function(){const _f=window.fetch;const tok=()=>{const m=document.cookie.match('(^|;)\\s*foxy_csrf\\s*=\\s*([^;]+)');return m?decodeURIComponent(m[2]):'';};window.fetch=function(input,init){try{const method=((init&&init.method)||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD'){const t=tok();if(t){init=init||{};const h=new Headers(init.headers||{});if(!h.has('X-CSRF-Token'))h.set('X-CSRF-Token',t);init.headers=h;}}}catch(e){}return _f.call(this,input,init);};})();
-const PAGE_TITLE={dashboard:'Home',analytics:'Threats',ledger:'Ledger',verify:'Verify',
+const PAGE_TITLE={dashboard:'Home',analytics:'Threats',review:'Review',ledger:'Ledger',verify:'Verify',
   policy:'Policy',systems:'Systems',export:'Export',keys:'Access',billing:'Billing',settings:'Settings',
   notifications:'Notifications',upgrade:'Upgrade'};
 function go(page,navEl){
@@ -6590,6 +6708,10 @@ async function loadLoginHistory(scope){
   var CTX={
     dashboard:['Overview','Home'], analytics:['Threat analytics','Threats'], ledger:['Audit ledger','Ledger'],
     verify:['Verify a record','Verify'], policy:['Policy ruleset','Policy'],
+    /* Two words, and the first one is the identifying one: the topbar
+       truncates this at narrow widths and 'Human review queue' showed as
+       'HUMAN…', which names nothing. */
+    review:['Review queue','Review'],
     systems:['Declared AI systems','Systems'], export:['Compliance passport','Export'],
     keys:['API keys & SDK','Access'], billing:['Usage & billing','Billing'], settings:['Settings','Settings']
   };
@@ -8634,6 +8756,214 @@ async function loadLoginHistory(scope){
       (inputs[0]||yes).focus();
     });
   };
+})();
+</script>
+<script>
+/* ═══ A2 · the reviewer surface — the queue A1 filled, read by a person ═══
+   `GET /v1/reviews` and `POST /v1/reviews/{id}/resolve` both take a HUMAN
+   SESSION and refuse the SDK key by design: the response carries `note`, the
+   one free-text field a reviewer writes, which the product documents as able to
+   carry raw prompt content. So this lives on the dashboard and nowhere else,
+   and nothing here works around that. */
+(function(){
+  var $=function(id){ return document.getElementById(id); };
+  var api=function(p,o){ return fetch(p,Object.assign({credentials:'same-origin'},o||{})); };
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function rel(s){ if(!s)return '';
+    try{ var d=(Date.now()-new Date(s).getTime())/1000;
+      if(d<60)return 'just now';
+      if(d<3600)return Math.floor(d/60)+'m ago';
+      if(d<86400)return Math.floor(d/3600)+'h ago';
+      return Math.floor(d/86400)+'d ago';
+    }catch(e){ return ''; } }
+
+  /* The three the endpoint accepts, spelled once. `resolution` is a
+     regex-constrained string on the wire, not an enum, so a word invented here
+     would be a 422 the reviewer cannot read — these are the server's words. */
+  var OUTCOME=[
+    {key:'confirmed_breach', label:'Confirmed breach', pill:'breach',
+     say:'This interaction did break the policy.'},
+    {key:'cleared',          label:'Cleared',          pill:'safe',
+     say:'This interaction did not break the policy.'},
+    {key:'policy_gap',       label:'Policy gap',       pill:'warn',
+     say:'The policy is what needs to change, not this interaction.'}
+  ];
+  function outcome(key){
+    for(var i=0;i<OUTCOME.length;i++)if(OUTCOME[i].key===key)return OUTCOME[i];
+    return null;
+  }
+
+  var _status='pending', _next=0, _rows=[], _busy=false;
+
+  var SKEL='<div class="skel-row"><div class="skel circ"></div><div class="grow"><div class="skel h" style="width:38%"></div><div class="skel line" style="width:74%;margin-top:6px"></div></div></div>';
+
+  var ICON_OK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M8.4 12.2l2.6 2.6 4.8-5.4"/></svg>';
+  var ICON_WHO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8.1" r="3.6"/><path d="M3.3 20.3a6.2 6.2 0 0 1 12.4 0"/><path d="M16.3 11.7l1.9 1.9 3.4-3.8"/></svg>';
+
+  function empty(icon,title,detail){
+    return '<div class="empty"><div class="empty-ic">'+icon+'</div>'
+      +'<div class="empty-t">'+esc(title)+'</div>'
+      +'<div class="empty-d">'+esc(detail)+'</div></div>';
+  }
+
+  function card(r){
+    var done=(r.status==='resolved'), o=done?outcome(r.resolution):null;
+    /* The mark. Pending carries the risk the judge scored it at, in the
+       escalation colour; resolved carries the decision, in the verdict
+       vocabulary the ledger already uses. */
+    var mark=done
+      ? '<span class="pill '+esc(o?o.pill:'warn')+'"><i></i>'
+        +esc(o?o.label:(r.resolution||'resolved'))+'</span>'
+      : '<span class="rvw-risk">risk '+esc(r.risk_score)+'</span>';
+    var bits=['<b>#'+esc(r.seq)+'</b>', esc(r.policy_tag||'untagged')];
+    if(r.agent)bits.push(esc(r.agent));
+    var when=rel(r.event_created_at); if(when)bits.push(esc(when));
+    var out='';
+    if(done){
+      out='<div class="rvw-out">'+esc(o?o.say:'')
+        +' Recorded by '+esc(r.resolved_by||'your workspace')
+        +(rel(r.resolved_at)?' '+esc(rel(r.resolved_at)):'')+'.</div>';
+    }
+    /* ⚠ THE NOTE IS ESCAPED AND LABELLED AS SOMEBODY'S WRITING. It is the one
+       field on this page a human typed rather than the product recorded, it is
+       never hashed and never exported as evidence, and it can contain anything
+       — including text a reviewer should not have pasted. It is shown because
+       it is the workspace's own data, and it is shown as a quotation. */
+    var note=(done&&r.note)?'<div class="rvw-note">'+esc(r.note)+'</div>':'';
+    var acts=done?'':'<div class="rvw-acts">'+OUTCOME.map(function(o){
+      return '<button type="button" class="btn ghost sm" '
+        +'onclick="foxReviews.resolve(\''+esc(r.id)+'\',\''+o.key+'\')">'
+        +esc(o.label)+'</button>';
+    }).join('')+'</div>';
+    return '<div class="rvw">'
+      +'<div class="rvw-top">'+mark+'<span class="rvw-meta">'+bits.join(' · ')+'</span></div>'
+      +'<p class="rvw-why">'+esc(r.reason||'')+'</p>'
+      +out+note+acts+'</div>';
+  }
+
+  function render(){
+    var box=$('rvwList'), more=$('rvwMore');
+    if(!box)return;
+    if(!_rows.length){
+      /* ⚠ ZERO PENDING IS THE GOOD STATE AND HAS TO READ AS ONE. Not an error,
+         not "nothing to show", and above all not a sample row: an invented
+         escalation on the page whose subject is a real human decision would be
+         the worst place in this product to put fake data. */
+      box.innerHTML=(_status==='pending')
+        ? empty(ICON_OK,'No reviews waiting',
+            'The judge decided every graded interaction on its own. One appears '
+            +'here when it asks for a person instead.')
+        : empty(ICON_WHO,'No decisions recorded yet',
+            'Escalations you decide are appended to your audit record and listed here.');
+    } else {
+      box.innerHTML=_rows.map(card).join('');
+    }
+    if(more){
+      more.innerHTML=_next
+        ? '<div style="margin-top:14px;"><button type="button" class="btn ghost sm" '
+          +'onclick="foxReviews.more()">Load more</button></div>'
+        : '';
+    }
+  }
+
+  async function load(append){
+    var box=$('rvwList'); if(!box)return;
+    if(!append){ _next=0; _rows=[]; box.innerHTML=SKEL; if($('rvwMore'))$('rvwMore').innerHTML=''; }
+    var q='/v1/reviews?status='+encodeURIComponent(_status)+'&limit=50'
+      +(append&&_next?'&after_seq='+encodeURIComponent(_next):'');
+    var r=null, d=null;
+    try{ r=await api(q); if(r.ok)d=await r.json(); }catch(e){}
+    if(!d){
+      /* Two different failures, told apart, because the recovery is different:
+         one is "sign in again", the other is "try again". */
+      box.innerHTML=(r&&r.status===401)
+        ? empty(ICON_WHO,'Sign in to open the queue',
+            'This page needs a signed-in person — an API key cannot read it.')
+        : empty(ICON_WHO,'Could not reach the server',
+            'Your escalations are still there. This is a connection problem, not a missing record.');
+      if($('rvwMore'))$('rvwMore').innerHTML='';
+      return;
+    }
+    _rows=append?_rows.concat(d.items||[]):(d.items||[]);
+    _next=(d.page&&d.page.next_after_seq)||0;
+    render();
+  }
+
+  /* The rail badge. `limit=10` rather than a page: the pip only has to tell
+     0..9 from "more than that", and asking for 200 rows to render one number
+     would be a page load for a badge. */
+  async function pip(){
+    var el=$('reviewPip'); if(!el)return;
+    var d=null;
+    try{ var r=await api('/v1/reviews?status=pending&limit=10'); if(r.ok)d=await r.json(); }catch(e){}
+    var n=(d&&Array.isArray(d.items))?d.items.length:0;
+    if(!n){ el.style.display='none'; el.textContent='0'; return; }
+    el.textContent=n>9?'9+':String(n);
+    el.style.display='';
+  }
+
+  window.foxReviews={
+    filter:function(status){
+      _status=(status==='resolved')?'resolved':'pending';
+      Array.prototype.forEach.call(document.querySelectorAll('[data-rvwfilter]'),function(b){
+        b.setAttribute('aria-pressed', b.getAttribute('data-rvwfilter')===_status?'true':'false');
+      });
+      load(false);
+    },
+    reload:function(){ load(false); pip(); },
+    more:function(){ if(_next)load(true); },
+
+    /* ⚠ A CONFIRM STEP, AND IT IS EARNED. `POST /v1/reviews/{id}/resolve` is
+       FIRST-WRITE-WINS: the evidence event is append-only, so a decision cannot
+       be corrected by deciding again — a second resolve returns the standing one
+       and appends nothing. An irreversible governance write is exactly the case
+       a modal exists for, and the note is collected in the same step so the
+       reviewer writes it while the reason is still on screen behind them. */
+    resolve:async function(id,key){
+      var o=outcome(key); if(!o||_busy)return;
+      var answer=await window.foxConfirm({
+        title:'Record: '+o.label,
+        body:o.say+'\n\nThis is written once. Your decision is appended to the '
+          +'audit record and hashed, and it cannot be changed by deciding again.'
+          +'\n\nA note is optional. It stays with the queue entry, is never '
+          +'hashed and is never exported as evidence — so keep prompt and '
+          +'response text out of it.',
+        confirm:'Record decision',
+        cancel:'Back',
+        fields:[{name:'note', label:'Note (optional)', maxlength:2000,
+                 placeholder:'What you based this on'}]
+      });
+      if(!answer)return;                       // cancelled, escaped, or dismissed
+      var note=(answer.note||'').trim();
+      _busy=true;
+      try{
+        var r=await api('/v1/reviews/'+encodeURIComponent(id)+'/resolve',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({resolution:key, note:note||null})});
+        if(!r.ok){
+          showToast(r.status===401?'Sign in again to record a decision'
+                                  :'Could not record the decision');
+          return;
+        }
+        showToast('Recorded — '+o.label.toLowerCase());
+        load(false); pip();
+      }catch(e){ showToast('Could not reach the server'); }
+      finally{ _busy=false; }
+    }
+  };
+
+  function init(){
+    /* The badge loads for everyone, not only for whoever opens the page: a
+       queue you have to visit to discover is the same defect A1 closed. The
+       LIST loads on arrival, following the notifications page — `go()` does not
+       carry a per-page loader, so each page that has one wraps it. */
+    pip();
+    var g=window.go;
+    if(typeof g==='function')window.go=function(pg,el){ g(pg,el); if(pg==='review')load(false); };
+  }
+  if(document.readyState!=='loading')init();
+  else document.addEventListener('DOMContentLoaded',init);
 })();
 </script>
 
