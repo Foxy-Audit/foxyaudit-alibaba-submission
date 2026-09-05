@@ -314,6 +314,7 @@ def prior_reviews(ctx: dict) -> dict:
         return {"escalations": 0, "cleared": 0}
     mine = [i for i in r.json().get("items", []) if i.get("policy_tag") == POLICY_TAG]
     return {"escalations": len(mine),
+            "pending": len([i for i in mine if i.get("status") == "pending"]),
             "cleared": len([i for i in mine if i.get("resolution") == "cleared"])}
 
 
@@ -544,8 +545,12 @@ def beat_4(ctx: dict) -> None:
     mine = [i for i in items if i.get("policy_tag") == POLICY_TAG]
 
     if before is not None:
+        # ⚠ BOTH NUMBERS ARE PENDING COUNTS. `before` also knows the total and the
+        # cleared tally, and reading the total here would put a count of
+        # everything beside a count of the queue — a beat whose whole content is
+        # "0 becomes 1" cannot have its two numbers mean different things.
         say(f"pending escalations of `{POLICY_TAG}` before beat 3: "
-            f"{before['escalations']}")
+            f"{before['pending']}")
         say(f"pending escalations of `{POLICY_TAG}` now:             {len(mine)}")
     else:
         note("beat 3 did not run in this session, so there is no before-count to "
