@@ -59,6 +59,17 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      # ⚠ QWEN IS THE AGENTIC JUDGE, AND THIS BLOCK IS AN ALLOWLIST. `23cddea`
+      # added these four to BOTH files under deploy/ and missed this one, so the
+      # local stack — the one the README tells a judge to run, and the one
+      # demo/agentic_demo.py drives — could not pass the key to the container at
+      # all. A filled-in backend/.env reached nothing and the judge returned
+      # `evaluator_unavailable` forever, honestly and invisibly: exactly the
+      # failure that commit's own message describes, in the file it skipped.
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       - SESSION_SECRET=${SESSION_SECRET:-foxy_demo_session_secret}
       - API_KEY_PEPPER=${API_KEY_PEPPER:-foxy_demo_pepper}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
@@ -100,6 +111,17 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      # ⚠ QWEN IS THE AGENTIC JUDGE, AND THIS BLOCK IS AN ALLOWLIST. `23cddea`
+      # added these four to BOTH files under deploy/ and missed this one, so the
+      # local stack — the one the README tells a judge to run, and the one
+      # demo/agentic_demo.py drives — could not pass the key to the container at
+      # all. A filled-in backend/.env reached nothing and the judge returned
+      # `evaluator_unavailable` forever, honestly and invisibly: exactly the
+      # failure that commit's own message describes, in the file it skipped.
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
       # usage_daily rollups + traffic partition create/drop run in this worker.
       - USAGE_ROLLUP_INTERVAL=${USAGE_ROLLUP_INTERVAL:-300}
       - TRAFFIC_RETENTION_DAYS=${TRAFFIC_RETENTION_DAYS:-90}
