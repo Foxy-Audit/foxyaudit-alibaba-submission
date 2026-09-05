@@ -261,6 +261,7 @@ _QUEUE_REVIEW_SQL = text(
     INSERT INTO human_reviews (id, org_id, audit_log_id, status, reason, risk_score)
     VALUES (:id, :org_id, :audit_log_id, 'pending', :reason, :risk_score)
     ON CONFLICT (audit_log_id) DO NOTHING
+    RETURNING id
     """
 )
 
@@ -268,15 +269,34 @@ _QUEUE_REVIEW_SQL = text(
 def _queue_human_review(db: Session, row, verdict) -> bool:
     """Put an escalated verdict in front of a person. Best-effort, never raises.
 
-    ⚠ RETURNS WHETHER THE QUEUE ROW EXISTS, and the caller gates the notice on it.
-    Announcing an escalation whose insert failed would email "a review is waiting"
-    about a worklist entry that is never going to appear — and §4.6 records that
-    nothing reconciles a dropped insert, so that entry stays missing. A
-    notification pointing at nothing is worse than silence: it costs the customer
-    a search for a row that does not exist, in a product whose claim is that the
-    record is complete. True also covers the `ON CONFLICT DO NOTHING` no-op, which
-    is correct — the row is there, this attempt simply was not the one that put it
-    there, and the notice for it went out on the attempt that did.
+    ⚠ RETURNS "DID *THIS* ATTEMPT FILE IT", NOT "DOES THE ROW EXIST", and the
+    caller gates the escalation notice on that. `RETURNING id` is what makes the
+    difference expressible: `ON CONFLICT DO NOTHING` returns NO ROW when it
+    conflicts, so the three outcomes this function can have stop being two.
+
+      a row came back    we inserted it        → True  → notify
+      no row, no error   somebody else already → False → do NOT notify
+                         inserted it                     (the attempt that filed
+                                                          it sent the notice)
+      exception          nothing was inserted  → False → do not notify
+
+    ⚠ THE MIDDLE CASE IS THE COMMON ONE, AND COLLAPSING IT INTO THE FIRST SENDS
+    DUPLICATE EMAIL. `_grade_one` is re-entered for the same row every time
+    `_handle_failure` puts it back to 'pending' — a provider timeout, a dropped
+    connection, a restart mid-batch — so a row that is retried three times reaches
+    this function three times. The unique constraint keeps the QUEUE at one entry;
+    it does nothing about the notice, and `drain_breach_notices` dedupes nothing.
+    Returning True on the conflict therefore meant one escalation, one worklist
+    row, and N "A review is waiting" emails plus N `type: "human_review"` webhook
+    POSTs — a docstring promising idempotence over code that did not deliver it.
+
+    ⚠ AND THE LAST CASE IS NOT FIXED BY UN-GATING. Announcing an escalation whose
+    insert FAILED would email about a worklist entry that is never going to appear,
+    and §4.6(a) records that nothing reconciles a dropped insert — so the entry
+    stays missing and the customer searches for it. A notice pointing at nothing is
+    worse than silence in a product whose claim is that the record is complete. The
+    fix for that path is the reconciliation sweep in §4.6(a), which would file the
+    row AND, filing it, notify.
 
     ⚠ THE GRADE IS ALREADY COMMITTED WHEN THIS RUNS, and that ordering is the
     contract: exactly like the breach notifier above it, a failure here must cost
@@ -299,7 +319,7 @@ def _queue_human_review(db: Session, row, verdict) -> bool:
     try:
         db.execute(text("SELECT set_config('app.current_org', :oid, true)"),
                    {"oid": str(row["org_id"])})
-        db.execute(_QUEUE_REVIEW_SQL,
+        filed = db.execute(_QUEUE_REVIEW_SQL,
                    {"id": uuid.uuid4(), "org_id": row["org_id"],
                     "audit_log_id": row["id"],
                     # ⚠ THE SLICE IS FOR THE MERGED CASE, NOT THE TOOL CALL, AND
@@ -318,9 +338,11 @@ def _queue_human_review(db: Session, row, verdict) -> bool:
                     # ledger row's `gemini_verdict` either way, so nothing is
                     # lost from the record, only from the worklist's preview.
                     "reason": verdict.reason[:300],
-                    "risk_score": verdict.risk_score})
+                    "risk_score": verdict.risk_score}).scalar_one_or_none()
         db.commit()
-        return True
+        # None = ON CONFLICT DO NOTHING fired: the row is there, an earlier
+        # attempt filed it, and that attempt already sent the notice.
+        return filed is not None
     except Exception as exc:                                  # noqa: BLE001
         db.rollback()
         log.warning("queueing human review for %s failed (%s)",

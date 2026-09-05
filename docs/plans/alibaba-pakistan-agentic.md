@@ -274,8 +274,17 @@ because it is a migration on the largest table in the product, and because the
 reader was hardened instead: the DSAR bundle looks the hash up through a
 correlated scalar subquery rather than a `LEFT JOIN`, so a duplicate — if one
 ever appeared — cannot fan one review into two apparent governance decisions in
-the file whose subject is completeness. Writer-side enforcement is still the
-right end state.
+the file whose subject is completeness.
+
+⚠ **And the reader cannot pick the right one, only a stable one.** That subquery
+orders by `created_at`, which is `server_default=func.now()` and therefore
+TRANSACTION START time — so among two overlapping resolves the earliest
+`created_at` is the transaction that started first, i.e. the one that would have
+*lost*. No column in `audit_events` expresses write order: no sequence, no commit
+timestamp. The ORDER BY buys determinism across repeated exports and nothing
+else, which is enough only because the lock means the duplicate does not occur.
+That is the second reason writer-side enforcement is the right end state: it is
+the only end state where a reader does not have to reason about this at all.
 
 ---
 

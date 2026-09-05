@@ -808,12 +808,22 @@ def account_export(
     # legitimately appends a second `verdict` event for the same row. Under a join
     # a duplicate would fan ONE review into TWO entries here: two apparent
     # governance decisions about one determination, inside the artefact whose
-    # subject is completeness. The endpoint's row lock is what stops the duplicate
-    # being written, and this is what stops a duplicate being AMPLIFIED if one ever
-    # is — a defence in the reader as well as the writer, because this reader is
-    # the one a regulator holds. `LIMIT 1` on `created_at` picks the FIRST event,
-    # matching the first-write-wins rule the resolve endpoint enforces. Recorded
-    # as an A1 follow-up in plan §4.6, with the partial index that would end it.
+    # subject is completeness. `resolve_review`'s row lock is what stops the
+    # duplicate being WRITTEN; this stops it being AMPLIFIED if one ever is.
+    #
+    # ⚠ AND `ORDER BY created_at LIMIT 1` IS ONLY A DETERMINISM TIEBREAK. It does
+    # NOT pick "the first decision", and an earlier version of this comment said
+    # it did. `audit_events.created_at` is `server_default=func.now()`, which
+    # Postgres evaluates as TRANSACTION START time — so in the one scenario that
+    # could produce a duplicate, two overlapping resolves, the row with the
+    # earliest `created_at` belongs to the transaction that STARTED first, which
+    # is the one that would have lost and been overwritten. There is no column
+    # here that can express write order: no sequence, no commit timestamp. So this
+    # ORDER BY buys a stable answer across repeated exports and nothing more,
+    # which is all it needs to buy, BECAUSE the duplicate cannot occur — the lock
+    # is the guarantee and this is defence in depth behind it. Plan §4.6(d)
+    # records the partial unique index that would move the guarantee into the
+    # schema, where a reader would not have to reason about any of this.
     _resolution_hash = (
         select(AuditEvent.event_hash)
         .where(AuditEvent.org_id == admin.org_id,

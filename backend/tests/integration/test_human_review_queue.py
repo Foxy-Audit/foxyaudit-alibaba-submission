@@ -520,3 +520,131 @@ def test_a_clean_verdict_notifies_nobody(make_org, client, monkeypatch):
 
     sent, posted = _grade_and_drain(monkeypatch)
     assert sent == [] and posted == []
+
+
+# ══ 10 · the DSAR bundle carries the human decision, and says so truthfully ══
+
+def _audit_events(org_id, event_type) -> list[dict]:
+    with engine.begin() as conn:
+        return [dict(r) for r in conn.execute(text(
+            "SELECT event_hash, payload FROM audit_events "
+            " WHERE org_id = :o AND event_type = :t ORDER BY created_at"),
+            {"o": str(org_id), "t": event_type}).mappings().all()]
+
+
+def test_the_dsar_bundle_carries_the_resolved_review_in_full(escalated, login):
+    """`EXPORT_EXCLUSIONS["audit_events"]` makes a COMPLETENESS CLAIM, and this is
+    what holds it to it.
+
+    That entry tells a customer their `human_review_resolved` rows are left out of
+    the `audit_events` section because they are "carried in full under
+    human_reviews instead: the resolution, who made it and when, the judge's
+    reason for escalating, and that event's own event_hash". In a DSAR answer that
+    is a legal statement, exactly as #252's two earlier wordings were — and it was
+    the only claim in this phase with nothing asserting it. The `event_hash` in
+    particular reached the bundle through a hand-written correlated subquery that
+    no test executed.
+
+    Asserted field by field rather than on a shape, and the hash is compared to
+    the `audit_events` row it claims to reproduce — a projection that carries a
+    DIFFERENT digest is worse than one that omits it, because the customer would
+    hand an auditor a number that verifies nothing.
+    """
+    review, = _reviews(escalated["org_id"])
+    reviewer = login(escalated["admin_email"], escalated["admin_password"])
+    resolved = reviewer.post(f"/v1/reviews/{review['id']}/resolve",
+                             json={"resolution": "policy_gap",
+                                   "note": "the policy does not cover this tag"})
+    assert resolved.status_code == 200, resolved.text
+
+    bundle = reviewer.get("/v1/account/export")
+    assert bundle.status_code == 200, bundle.text
+    body = bundle.json()
+
+    # The manifest claims the table, and the section exists to back the claim.
+    assert "human_reviews" in body["export_scope"]["included_tables"]
+    entries = body["human_reviews"]
+    assert len(entries) == 1, (
+        f"one resolved review produced {len(entries)} bundle entries — the "
+        f"subquery fanned out")
+    entry, = entries
+
+    event, = _audit_events(escalated["org_id"], "human_review_resolved")
+    assert entry["id"] == event["payload"]["review_id"]
+    assert entry["seq"] == 1
+    assert entry["status"] == "resolved"
+    assert entry["resolution"] == "policy_gap"
+    assert entry["resolved_by"] == escalated["admin_email"]
+    assert entry["resolved_at"] is not None
+    assert "clinical tag" in entry["reason"]
+    assert entry["risk_score"] == 55
+    assert entry["resolution_event_hash"] == event["event_hash"], (
+        "the bundle's digest does not match the event it claims to carry")
+
+    # And the note — customer-authored text, excluded from every EVIDENCE surface
+    # and included HERE, which is the subject asking for their own words back.
+    assert entry["note"] == "the policy does not cover this tag"
+    assert entry["note"] not in json.dumps(event["payload"]), (
+        "free text a reviewer typed reached the append-only evidence event")
+
+
+def test_a_pending_review_is_in_the_bundle_with_no_resolution_hash(escalated, login):
+    """The other half of the outer lookup. An escalation nobody has decided yet is
+    still the workspace's data and still belongs in a DSAR answer — it just has no
+    evidence event to point at, and must say so with a null rather than by
+    vanishing from the section.
+    """
+    reviewer = login(escalated["admin_email"], escalated["admin_password"])
+    entry, = reviewer.get("/v1/account/export").json()["human_reviews"]
+
+    assert entry["status"] == "pending"
+    assert entry["resolution"] is None
+    assert entry["resolved_by"] is None
+    assert entry["resolution_event_hash"] is None
+    assert _audit_events(escalated["org_id"], "human_review_resolved") == []
+
+
+# ══ 11 · announced once, however many times the row is graded ═══════════════
+
+def test_a_regrade_does_not_announce_the_same_escalation_twice(
+        make_org, client, monkeypatch):
+    """THE UNIQUE CONSTRAINT BOUNDS THE QUEUE; IT DOES NOT BOUND THE NOTICE.
+
+    `_grade_one` is re-entered for the same row every time `_handle_failure` puts
+    it back to 'pending' — a provider timeout, a dropped connection, a restart
+    mid-batch — and test 2 above proves the worklist still holds exactly one
+    entry. Nothing about that constrains `org_notifications`: its queue dedupes
+    nothing, so an escalation on a row that is retried three times could send
+    three "A review is waiting" emails and three `type: "human_review"` webhook
+    POSTs for one determination. The customer would open the queue, find a single
+    entry, and have no way to tell whether the other two notices were about
+    something they had missed.
+
+    ⚠ WHICH IS WHY `_queue_human_review` ANSWERS "DID *THIS* ATTEMPT FILE IT"
+    RATHER THAN "DOES THE ROW EXIST". `ON CONFLICT DO NOTHING RETURNING id`
+    returns no row when it conflicts, which is what separates "we filed it, so
+    announce it" from "somebody already filed it, and announced it then". A plain
+    bool that was True in both cases — the first version of this gate — reads as
+    idempotent and is not.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test",
+               notify_webhook_url="https://corp.test/hook")
+    _ingest(client, org)
+
+    sent, posted = _grade_and_drain(monkeypatch)
+    assert [message["to"] for message in sent] == ["reviews@corp.test"]
+    assert [payload["type"] for payload in posted] == ["human_review"]
+
+    # Exactly what the retry path does, and then grading runs again.
+    _requeue_for_retry(org["org_id"])
+    resent, reposted = _grade_and_drain(monkeypatch)
+
+    assert resent == [], (
+        f"a regrade emailed the same escalation again: {resent}")
+    assert reposted == [], (
+        f"a regrade re-POSTed the same escalation: {reposted}")
+    assert len(_reviews(org["org_id"])) == 1
