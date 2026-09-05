@@ -82,11 +82,76 @@ submission artefact, and do not treat it as evidence of the brief.
 | Question | Decision | Consequence |
 |---|---|---|
 | Track | **Open Innovation** declared; the demo covers **healthcare (PHI)** and **financial** scenarios | Both domain claims are demonstrated, not asserted. Revisit only if the portal's list differs (A0.3) |
-| Repo | **`foxyaudit-devtool`, stays PRIVATE** | No visibility change, no history secret-scan project. `fatimaatta-09/Foxy-Audit` is excluded by the 2026-09-18 merge freeze |
+| Repo | ⚠ **REVERSED 2026-09-05 pm — see §3.1** | Submission repo is **`foxyaudit-alibaba-submission`, made PUBLIC**. `foxyaudit-devtool` is the BUILD environment and stays private |
 | Qwen key | Owner obtains **2026-09-05** | A0 is the gate; A3 degrades honestly if it slips |
 | Vault | Move the 2026-09-04 devlog into the main `Devlogs\`, then remove `Alibaba Submission Changes` | See §7 — three lines in `qwen-judge.md` point at the folder being deleted |
 
-### Explicitly out of scope
+### 3.1 · ⚠ THE REPO AND SCOPE DECISION WAS REVERSED — 2026-09-05, evening
+
+**The owner read the submission portal. Three TBDs came back, and two of them
+reopened scope this plan had excluded.**
+
+| Portal question | Answer |
+|---|---|
+| Public repo required? | ✅ **YES** |
+| Alibaba Cloud deployment proof required? | ✅ **YES** |
+| Architecture diagram required? | ✅ **YES** |
+| Video length | **3 min limit.** The demo itself will be 30–50 s — **record every beat, cut in editing** |
+| Track | **Open Innovation**, owner-confirmed |
+
+**The two repos now have different jobs:**
+
+| Repo | Job |
+|---|---|
+| **`foxyaudit-devtool`** (private) | **The build and test environment, and the single source of truth for code.** Already deployed to the dev2 stack (`app2`/`admin2`/`checkout2`) — the only place this work can actually be exercised today |
+| **`foxyaudit-alibaba-submission`** | **The submission.** Goes **PUBLIC**, carries the README and diagram, and is what the Alibaba Cloud deployment is made from |
+| `fatimaatta-09/Foxy-Audit` | Untouched. Frozen for judging, and separately frozen until 2026-09-18 |
+
+**Why build here and not there:** the Alibaba repo is deployed nowhere, so a change
+made in it cannot be seen or tested. Hosting is bought the night of 2026-09-05.
+
+**The port is a FAST-FORWARD — verified 2026-09-05:** the Alibaba repo is at
+`23cddea`, **8 commits behind** devtool, and **zero commits exist there that are not
+here** (`git merge-base --is-ancestor` confirms containment). The port is a push,
+not a merge: no cherry-picking, no conflicts, no divergence.
+
+⚠ **So make every change HERE.** Anything committed to devtool reaches the
+submission repo via the port. Two copies that must agree is how they stop agreeing.
+
+**Sequencing — owner's decision:** port **and** publish happen **at the end**, once
+the build phases are done. Not incrementally.
+
+⚠ **Watch [[#315]] right after the flip.** GitHub Actions has **never** run in
+`foxyaudit-alibaba-submission` — zero runs, ever. The likely cause was private-repo
+billing, and **public repos get unlimited Actions minutes, so publishing may fix it
+for free.** A submission repo whose CI has never run is a bad look if a judge opens
+the Actions tab.
+
+**On publishing 764 commits:** devtool's CI runs gitleaks **blocking, `fetch-depth:
+0`, on every push**, and the Alibaba repo's history is fully contained in devtool's
+— so every commit that would become public has already been scanned. That is
+evidence, not proof. Look deliberately before flipping.
+
+### Now IN scope, having been excluded
+
+- **Alibaba Cloud deployment — ECS + docker compose.** Owner's choice, and the low
+  risk one: `deploy/docker-compose.prod.yml` already targets a plain Linux VM, so
+  this is a re-point rather than a new deploy path. The submission's required "code
+  file demonstrating Alibaba Cloud services usage" **is** that deploy config.
+- **Making the submission repo public.** MIT `LICENSE` is already committed in both.
+
+### Still out of scope
+
+- ⛔ **Touching `deploy.yml` / `release.yml` triggers.** They stay frozen. The
+  Alibaba deployment gets its **own** compose file and runbook, and must never reuse
+  the workflow that SSHes to `34.18.4.58` and resets a *different* repo's clone.
+- **A second judge tool** — A5, and only after A1–A4 merge.
+- **Any retroactive change to the compliance rate** — §4.4.
+
+### Superseded
+
+*The 2026-09-05 morning scope, kept for the record — the first bullet is no
+longer true:*
 
 - **Alibaba Cloud deployment.** `deploy/` contains zero Alibaba infra; the only
   `aliyuncs.com` string in the repo is the Qwen *API* endpoint, which is a judge
