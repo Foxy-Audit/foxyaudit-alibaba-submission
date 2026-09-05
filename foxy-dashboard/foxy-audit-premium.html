@@ -8875,6 +8875,12 @@ async function loadLoginHistory(scope){
     var r=null, d=null;
     try{ r=await api(q); if(r.ok)d=await r.json(); }catch(e){}
     if(!d){
+      /* ⚠ A FAILED "LOAD MORE" MUST NOT EAT THE PAGE ALREADY ON SCREEN. The
+         rows below are real and were already fetched; replacing them with an
+         error panel would lose a worklist somebody is part-way through reading
+         because the NEXT page did not arrive. */
+      if(append){ showToast('Could not load the next page');
+                  if($('rvwMore'))$('rvwMore').innerHTML=''; return; }
       /* Two different failures, told apart, because the recovery is different:
          one is "sign in again", the other is "try again". */
       box.innerHTML=(r&&r.status===401)
