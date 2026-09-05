@@ -335,7 +335,14 @@ def prior_reviews(ctx: dict) -> dict:
     r = requests.get(f"{BASE_URL}/v1/reviews?limit=200",
                      cookies=ctx["session"].cookies, timeout=30)
     if r.status_code != 200:
-        return {"escalations": 0, "cleared": 0}
+        # ⚠ THE SAME KEYS ON BOTH PATHS. This returned a two-key dict on failure
+        # and a three-key dict on success, so a single non-200 here took out
+        # `before['pending']` in beat 4 with a KeyError — which, before beats got
+        # their own isolation, aborted the whole run including 7 and 8. A
+        # degraded read must degrade the VALUES, never the shape.
+        say(f"! could not read the review queue ({r.status_code}); "
+            f"treating the prior-review history as unknown")
+        return {"escalations": 0, "pending": 0, "cleared": 0}
     mine = [i for i in r.json().get("items", []) if i.get("policy_tag") == POLICY_TAG]
     return {"escalations": len(mine),
             "pending": len([i for i in mine if i.get("status") == "pending"]),
@@ -610,19 +617,51 @@ def beat_3(ctx: dict) -> None:
              "actually returned. Beats 4-6 need an escalation to act on.")
 
 
-def beat_4(ctx: dict) -> None:
-    banner(4, "QUEUE", "it lands in front of a person — GET /v1/reviews")
-    import requests
+#: How long beat 4 will wait for the escalation to reach the queue.
+#:
+#: ⚠ IT IS A RACE, AND IT IS THE WORKER'S, NOT THIS SCRIPT'S. `worker.py:605`
+#: COMMITS `grading_status='graded'` and only then, at `worker.py:646`, inserts
+#: the `human_reviews` row. So `wait_for_grade` can legitimately return before
+#: the queue row exists, and a single un-retried GET here would be flaky in
+#: exactly the place a flaky beat is most expensive: mid-recording. Every other
+#: wait in this file is a bounded poll; this one had been the exception.
+QUEUE_TIMEOUT = 30.0
 
-    before = ctx.get("pending_before")
+
+def pending_reviews(ctx: dict) -> tuple[int, list]:
+    """(status_code, this tag's pending reviews) — one read, no retry."""
+    import requests
     r = requests.get(f"{BASE_URL}/v1/reviews?status=pending&limit=200",
                      cookies=ctx["session"].cookies, timeout=30)
-    ctx["ck"].check("QUEUE: GET /v1/reviews -> 200", r.status_code == 200,
-                    r.text[:300])
     if r.status_code != 200:
+        return r.status_code, []
+    return 200, [i for i in r.json().get("items", [])
+                 if i.get("policy_tag") == POLICY_TAG]
+
+
+def beat_4(ctx: dict) -> None:
+    banner(4, "QUEUE", "it lands in front of a person — GET /v1/reviews")
+
+    before = ctx.get("pending_before")
+    want = ctx["seqs"].get("escalate")
+    t0 = time.time()
+    code, mine = 0, []
+    while time.time() - t0 < QUEUE_TIMEOUT:
+        code, mine = pending_reviews(ctx)
+        if code != 200:
+            break
+        # When beat 3 ran, wait for ITS row specifically — "some row is pending"
+        # would go green on a leftover from an earlier take.
+        if (want is None and mine) or any(i["seq"] == want for i in mine):
+            break
+        waiting(f"waiting for the escalation to reach the queue… "
+                f"{time.time() - t0:4.1f}s")
+        time.sleep(0.5)
+    waiting_done()
+
+    ctx["ck"].check("QUEUE: GET /v1/reviews -> 200", code == 200, f"HTTP {code}")
+    if code != 200:
         return
-    items = r.json()["items"]
-    mine = [i for i in items if i.get("policy_tag") == POLICY_TAG]
 
     if before is not None:
         # ⚠ BOTH NUMBERS ARE PENDING COUNTS. `before` also knows the total and the
@@ -643,9 +682,29 @@ def beat_4(ctx: dict) -> None:
     if not mine:
         return
 
-    # The one this run produced if beat 3 ran, else the newest waiting.
-    want = ctx["seqs"].get("escalate")
-    item = next((i for i in mine if i["seq"] == want), mine[-1])
+    # The one THIS run produced when beat 3 ran, and the newest waiting only when
+    # it did not.
+    #
+    # ⚠ A TIMED-OUT WAIT MUST NOT FALL BACK TO SOMEBODY ELSE'S ROW. If beat 3 ran
+    # and its seq never reached the queue, `mine` can still hold a pending
+    # escalation left over from an earlier take — and quietly resolving that one
+    # in beat 5 would show a real queue entry, a real human decision and a real
+    # appended event, all about an interaction nobody just watched being
+    # escalated. That is the "different story under the same name" this file
+    # refuses everywhere else.
+    item = next((i for i in mine if i["seq"] == want), None)
+    if item is None:
+        if want is not None:
+            ctx["ck"].check(
+                f"QUEUE: beat 3's own escalation (seq {want}) reached the queue",
+                False,
+                f"it did not within {QUEUE_TIMEOUT:.0f}s. {len(mine)} other "
+                f"pending review(s) of this tag exist and are deliberately NOT "
+                f"used — resolving one of those in beat 5 would tell a story "
+                f"about a different interaction.")
+            return
+        item = mine[-1]                       # /v1/reviews is oldest-first
+
     ctx["review"] = item
     field("review id", item["id"])
     field("ledger seq", item["seq"])
@@ -880,9 +939,14 @@ def beat_8(ctx: dict) -> None:
                         False, f"{len(logs)} row(s)")
         return
 
-    # A row in the middle, so the failure is visibly NOT the last one — a chain
-    # that only catches the final row would catch nothing worth catching.
-    target = logs[len(logs) // 2]
+    # ⚠ NEVER THE LAST ROW, and `len(logs) // 2` alone is not that guarantee: on
+    # a two-row export — which is exactly what the no-key path produces, and the
+    # path that has actually been recorded — it picks index 1, the final row. A
+    # chain that only catches the final row catches nothing worth catching,
+    # because the tampered row's own hash is the head and nothing after it has to
+    # agree. The clamp keeps the middle where there is one and steps back to a
+    # genuinely interior row where there is not.
+    target = logs[min(len(logs) // 2, len(logs) - 2)]
     seq = target["seq"]
     original = target["prompt_hash"]
     # One hex character. Not a rewritten row, not a deleted one: the smallest
@@ -966,8 +1030,31 @@ def main() -> int:
     # begin by deleting it. This is the flag that saves the recording session.
     reuse = args.reuse_stack or (bool(args.beats) and not args.fresh)
 
+    # ⚠ STRIP EVERY `FOXY_*` BEFORE THE SDK CAN READ ONE. `run_e2e.py` hands its
+    # SDK a scrubbed environment through `child_env()` because a stray
+    # FOXY_MODE or FOXY_SPOOL_PATH in a developer's shell would silently change
+    # the decision under test. This script runs the SDK IN-PROCESS, so it gets no
+    # such boundary for free — and it matters more here than there, because this
+    # script's output IS the claim: an exported FOXY_RESPONSE_SCAN or
+    # FOXY_ORG_POLICY would change what a viewer is watching, on camera, with
+    # nothing on screen saying so.
+    #
+    # Done before the re-exec so the child inherits the clean environment too,
+    # and the harness flag is kept because it is what tells the child it is the
+    # child. "No reliance on local state" has to mean the state nobody remembers
+    # exporting.
+    bootstrapped = bool(os.environ.get("FOXY_E2E_BOOTSTRAPPED"))
+    stripped = sorted(k for k in list(os.environ)
+                      if k.startswith("FOXY_") and k != "FOXY_E2E_BOOTSTRAPPED")
+    for key in stripped:
+        del os.environ[key]
+    if stripped:
+        print(f"  ! ignoring {len(stripped)} FOXY_* variable(s) from this shell "
+              f"so they cannot change the decisions on display: "
+              f"{', '.join(stripped)}", flush=True)
+
     os.makedirs(ART, exist_ok=True)
-    if not os.environ.get("FOXY_E2E_BOOTSTRAPPED"):
+    if not bootstrapped:
         # The SAME venv run_e2e.py builds, and the SAME `pip install ./sdk` — a
         # demo of the SDK has to be a demo of the wheel a customer installs.
         e2e.bootstrap_and_reexec(sys.argv, script=os.path.abspath(__file__))
@@ -1020,6 +1107,40 @@ def main() -> int:
         ck.check("the seeded reviewer can sign in", lr.status_code == 200,
                  f"{lr.status_code} {lr.text[:200]}")
         ctx["session"] = sess
+        if lr.status_code != 200:
+            # ⚠ FATAL WHERE IT HAPPENS. As a bare check this let the run carry on
+            # unauthenticated, and the first thing to actually break was the
+            # policy PUT — reported as a missing PROVIDER_KEY_ENCRYPTION_KEY,
+            # which is a confident diagnosis of the wrong problem three steps
+            # downstream. A failure should be named where it occurs.
+            raise e2e.Fatal(f"the seeded reviewer could not sign in "
+                            f"({lr.status_code}): {lr.text[:200]}. Every human "
+                            f"surface in this demo — the queue, the resolve, the "
+                            f"policy write — needs that session.")
+
+        # ⚠ ONE WORKSPACE, TWO CREDENTIALS, AND THEY HAVE TO AGREE. `up` re-runs
+        # the one-shot seeder and `seed_org.py` does not dedupe by name, so a
+        # stack brought up twice holds several "Demo Corp" orgs with the same
+        # admin email. `scrape_api_key` deliberately takes the NEWEST printed key
+        # while the password login resolves to whichever row bcrypt matches
+        # first — and `seq` is per-org, so beat 5 would compare the chain hash of
+        # one workspace's row with a same-numbered row in another and call it
+        # unchanged. MeResponse carries no org_id, so the chain head is the
+        # identifier; this is the check `run_e2e.py` step 6 already makes.
+        bv = requests.get(f"{BASE_URL}/v1/verify", headers=ctx["headers"],
+                          timeout=60).json()
+        cv = sess.get(f"{BASE_URL}/v1/verify", timeout=60).json()
+        same_org = (bv.get("count") == cv.get("count")
+                    and bv.get("ok") == cv.get("ok"))
+        ck.check("the SDK key and the reviewer session are the SAME workspace",
+                 same_org,
+                 f"bearer count={bv.get('count')}  cookie count={cv.get('count')}")
+        if not same_org:
+            raise e2e.Fatal(
+                "the API key and the reviewer session resolved to DIFFERENT "
+                "workspaces — this stack has been seeded more than once. Beat 5 "
+                "would compare unrelated rows that happen to share a seq. Re-run "
+                "WITHOUT --reuse-stack to get one clean org.")
 
         # ── the judge ────────────────────────────────────────────────────────
         e2e.step("the judge: is there a live model, or is there not?")
@@ -1062,7 +1183,19 @@ def main() -> int:
                 "response in this file,")
             say("  and there must never be one.")
         else:
-            cur = sess.get(f"{BASE_URL}/v1/policies", timeout=30).json()
+            # ⚠ CHECKED, because the next line turns this body into a WRITE.
+            # An error payload here is still a dict, so an unchecked `.json()`
+            # produced a PUT carrying `{"detail": ...}` and nothing else — which
+            # is precisely the silent reset to defaults that the
+            # build-by-subtraction comment on POLICY_READ_ONLY exists to prevent.
+            cr = sess.get(f"{BASE_URL}/v1/policies", timeout=30)
+            if cr.status_code != 200:
+                raise e2e.Fatal(
+                    f"could not read the current policy ({cr.status_code}): "
+                    f"{cr.text[:200]}. Refusing to PUT a body built from an "
+                    f"error payload — it would reset every writable policy "
+                    f"field to its default.")
+            cur = cr.json()
             body = {k: v for k, v in cur.items() if k not in POLICY_READ_ONLY}
             body["judge_provider"] = "qwen"
             body["judge_key_mode"] = "own"
@@ -1101,6 +1234,16 @@ def main() -> int:
             f"{os.path.dirname(os.path.abspath(foxy_audit.__file__))}")
 
         # ── the beats ────────────────────────────────────────────────────────
+        #
+        # ⚠ EACH BEAT IS ISOLATED, AND THAT IS A CONTRACT, NOT TIDINESS. This
+        # file's header promises that when the judge cannot be reached "beats 1,
+        # 2, 7 and 8 still run, for real". A `Fatal` inside beat 3 — a grading
+        # timeout, a breaker that opened, a provider that went away mid-run —
+        # used to unwind straight past 7 and 8 and break exactly that promise, in
+        # exactly the circumstance the promise was written for. A beat that fails
+        # is recorded as a failed check and the run continues to the next one.
+        # The setup above is deliberately NOT isolated: if the stack never came
+        # up there is nothing for any beat to be honest about.
         first = True
         for n in beats:
             # ⚠ CHECKED HERE, not against a list decided before the run started.
@@ -1117,7 +1260,22 @@ def main() -> int:
                 except EOFError:
                     pass
             first = False
-            BEATS[n](ctx)
+            try:
+                BEATS[n](ctx)
+            except e2e.Fatal as exc:
+                waiting_done()
+                ck.check(f"beat {n} ran to completion", False, str(exc)[:400])
+                note(f"beat {n} stopped: {exc}")
+                note("The remaining beats still run — this one's failure is "
+                     "recorded, not hidden, and not allowed to take them with it.")
+            except Exception:                                    # noqa: BLE001
+                import traceback
+                waiting_done()
+                detail = traceback.format_exc()
+                ck.check(f"beat {n} ran to completion", False, detail[-400:])
+                print(detail, flush=True)
+                note(f"beat {n} raised unexpectedly — recorded, and the "
+                     f"remaining beats still run.")
 
         if skipped:
             bar = "═" * 74
