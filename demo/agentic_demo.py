@@ -98,21 +98,27 @@ COMPOSE_OVERRIDE = os.path.join(ART, "compose.demo.yml")
 CA_BUNDLE = os.path.join(ART, "ca-bundle.pem")
 CA_MOUNT = "/etc/foxy-demo-ca.pem"
 
-#: ⚠ MEASURED, AND THE SPELLING IS NOT A FREE CHOICE. What makes beat 3 escalate
-#: is a policy_tag naming a regulated context while `pii_signals` is EMPTY: the
-#: local guard found nothing, so a reviewer who can see the content might still
+#: ⚠ MEASURED, AND NOT A FREE CHOICE. What makes beat 3 escalate is a policy_tag
+#: naming a regulated context while `pii_signals` is EMPTY: the local guard
+#: looked and found nothing, so a reviewer who can see the content might still
 #: find something, and that gap is the criterion `qwen_judge` states. A payload
 #: carrying obvious PII grades `breach` at ~95 instead and never reaches a human,
 #: so it is deliberately NOT used here.
 #:
-#: ⚠ AND IT IS `phi_restricted`, NOT `phi-restricted`. The live A5 measurement
-#: used the hyphen, but the LEDGER's charset is `^[a-z0-9_]{1,32}$`
-#: (`schemas.py`, mirrored at `client._POLICY_RE`), so the SDK's decorator would
-#: quietly substitute `default` for a hyphenated tag and this beat would be
-#: showing a different story under the same name. The underscore is the closest
-#: spelling the wire can actually carry, and it reads as the same regulated
-#: healthcare context to the model. Verified live before this file was committed.
-POLICY_TAG = "phi_restricted"
+#: ⚠ `hipaa`, AND THE EARLIER `phi_restricted` MADE THIS BEAT'S NARRATION FALSE.
+#: `response_policy.py:157` warns that an unrecognised tag runs the baseline
+#: checks ONLY — "NO PHI/PII check will run" — so under `phi_restricted`
+#: `pii_signals` was empty because nothing ever looked, while the beat said on
+#: screen that "a local scan found NOTHING". Those are different claims, and the
+#: demo was making the stronger one on the weaker evidence. `hipaa` is a tag the
+#: guard actually knows: the PHI family genuinely runs, genuinely finds nothing
+#: in a template with no identifiers, and the sentence becomes true.
+#:
+#: (The hyphenated `phi-restricted` of the original A5 measurement was never
+#: reachable through the SDK at all: `client._POLICY_RE` is `^[a-z0-9_]{1,32}$`,
+#: mirroring the ledger's charset, so the decorator substitutes `default` and the
+#: beat would have run under a tag nobody chose.)
+POLICY_TAG = "hipaa"
 
 #: How long to wait for the worker to move a row off `pending`. Generous on
 #: purpose: with A5 a Qwen grade can take TWO round trips (`qwen_timeout` is 12s
@@ -596,9 +602,10 @@ def beat_3(ctx: dict) -> None:
     field("  token_count", payload.get("token_count"))
     field("  prompt_hash", str(payload.get("prompt_hash"))[:32] + "…")
     say("")
-    note("A tag naming a regulated context, and a local scan that found NOTHING. "
-         "That gap is the whole question: the guard cannot see what a person "
-         "could. So the agent asks for one.")
+    note(f"`{POLICY_TAG}` is a tag the guard KNOWS, so the PHI family really ran "
+         f"against this prompt — and found nothing. That gap is the whole "
+         f"question: the scan cannot see what a person could. So the agent asks "
+         f"for one.")
     say("")
 
     row = wait_for_grade(ctx, seq, "the judge")

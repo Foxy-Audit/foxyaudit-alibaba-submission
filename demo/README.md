@@ -98,7 +98,7 @@ editing:
 |---|---|---|
 | 1 | **GUARD** | PHI under `hipaa`, `mode="block"` — the SDK stops it **before** the model call, and the model function runs zero times. The event that went on the wire is printed verbatim: no prompt, no response, just commitments and bounded metadata. |
 | 2 | **CLEAN** | An ordinary prompt. Allowed, and graded `clean` by the AI judge. |
-| 3 | **ESCALATE** | The ambiguous case — a `phi_restricted` tag with **empty** `pii_signals`. Qwen calls `flag_for_human_review` and returns `decision="human_review"`. |
+| 3 | **ESCALATE** | The ambiguous case — a `hipaa` tag whose PHI scan genuinely ran and found **nothing**. Qwen calls `flag_for_human_review` and returns `decision="human_review"`. |
 | 4 | **QUEUE** | It appears in `GET /v1/reviews`; the pending count goes 0 → 1. |
 | 5 | **HUMAN** | A person resolves it `cleared`. The chained row's `chain_hash` is **byte-identical** before and after — the decision is appended, never written over. |
 | 6 | **THE LOOP CLOSES** | The same shape again. Qwen calls `check_prior_reviews`, sees that a human cleared this tag, and grades `clean` **instead of** escalating. The agent escalated, a human ruled, the agent learned. |
@@ -121,7 +121,7 @@ the stack down at the end (by default it is left up, because the dashboard is
 usually still wanted).
 
 Beat 6 is the second half of beat 5 and **cannot stand alone**: if no human has
-cleared a `phi_restricted` escalation yet, it says so and fails rather than
+cleared a `hipaa` escalation yet, it says so and fails rather than
 quietly showing a different story. Likewise, if you re-record beat 3 on a stack
 that already has cleared reviews, the script warns that it is no longer a clean
 slate — `check_prior_reviews` may legitimately stop the very escalation that beat
