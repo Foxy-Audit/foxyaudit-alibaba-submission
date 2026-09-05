@@ -794,23 +794,37 @@ def account_export(
     # past the ledger page would have silently exported a null sequence — an
     # escalation the bundle could not tie to an interaction.
     #
-    # ⚠ AND OUTER-JOINED TO THE RESOLUTION EVENT FOR ITS `event_hash`. That digest
-    # is the ONLY part of a `human_review_resolved` row not otherwise in this
-    # bundle, and `EXPORT_EXCLUSIONS["audit_events"]` above now states that the
-    # row is carried here in full. Dropping it would make that sentence false, in
-    # the file whose whole subject is what it does and does not contain. Null
-    # while a review is still pending — there is no event to hash yet.
-    _resolution_event = (
-        select(AuditEvent.audit_log_id, AuditEvent.event_hash)
+    # ⚠ AND IT CARRIES THE RESOLUTION EVENT'S `event_hash`. That digest is the ONLY
+    # part of a `human_review_resolved` row not otherwise in this bundle, and
+    # `EXPORT_EXCLUSIONS["audit_events"]` above now states that the row is carried
+    # here in full. Dropping it would make that sentence false, in the file whose
+    # whole subject is what it does and does not contain. Null while a review is
+    # still pending — there is no event to hash yet.
+    #
+    # ⚠ A CORRELATED SCALAR SUBQUERY, NOT A LEFT JOIN, AND THE SHAPE IS THE POINT.
+    # A join assumes at most one `human_review_resolved` per `audit_log_id`, and
+    # NOTHING IN THE SCHEMA ENFORCES THAT — `audit_events` carries no unique
+    # constraint, and it cannot carry a blanket one, because the retry path
+    # legitimately appends a second `verdict` event for the same row. Under a join
+    # a duplicate would fan ONE review into TWO entries here: two apparent
+    # governance decisions about one determination, inside the artefact whose
+    # subject is completeness. The endpoint's row lock is what stops the duplicate
+    # being written, and this is what stops a duplicate being AMPLIFIED if one ever
+    # is — a defence in the reader as well as the writer, because this reader is
+    # the one a regulator holds. `LIMIT 1` on `created_at` picks the FIRST event,
+    # matching the first-write-wins rule the resolve endpoint enforces. Recorded
+    # as an A1 follow-up in plan §4.6, with the partial index that would end it.
+    _resolution_hash = (
+        select(AuditEvent.event_hash)
         .where(AuditEvent.org_id == admin.org_id,
+               AuditEvent.audit_log_id == HumanReview.audit_log_id,
                AuditEvent.event_type == "human_review_resolved")
-        .subquery())
+        .order_by(AuditEvent.created_at.asc())
+        .limit(1)
+        .scalar_subquery())
     reviews = db.execute(
-        select(HumanReview, AuditLog.seq, _resolution_event.c.event_hash)
+        select(HumanReview, AuditLog.seq, _resolution_hash)
         .join(AuditLog, AuditLog.id == HumanReview.audit_log_id)
-        .join(_resolution_event,
-              _resolution_event.c.audit_log_id == HumanReview.audit_log_id,
-              isouter=True)
         .where(HumanReview.org_id == admin.org_id, AuditLog.org_id == admin.org_id)
         .order_by(HumanReview.created_at.asc())
     ).all()

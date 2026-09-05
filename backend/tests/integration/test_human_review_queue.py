@@ -314,26 +314,40 @@ def test_the_queue_pages_on_the_same_seq_cursor_the_export_uses(
 
 # ══ 7 · two reviewers, one determination ════════════════════════════════════
 
-def _blocked_backends() -> int:
-    """How many sessions on this database are waiting on a lock."""
+def _is_blocked_by(holder_pid: int) -> bool:
+    """Is any backend waiting specifically on `holder_pid`'s locks?
+
+    ⚠ `pg_blocking_pids(pid)`, NOT a count of waiters. The first version of this
+    helper counted every backend on the database with `wait_event_type = 'Lock'`,
+    which is satisfied by ANY unrelated waiter — the `_clean_db` TRUNCATE this
+    repo documents as deadlock-prone, another connection in the pool, anything.
+    A stray waiter released the poll before the request under test had reached
+    the row at all, the test silently degraded to the sequential case, and it
+    then PASSED with `.with_for_update()` removed: a concurrency test that cannot
+    fail, guarding the one guarantee this phase exists to make. Asking Postgres
+    who is blocked BY OUR HOLDER answers the question actually being asked, and
+    is unaffected by whatever else the suite is doing to the database.
+    """
     with engine.begin() as conn:
-        return conn.execute(text(
-            "SELECT COUNT(*) FROM pg_stat_activity "
-            " WHERE datname = current_database() AND wait_event_type = 'Lock'")
-        ).scalar_one()
+        return bool(conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+            "                WHERE :holder = ANY(pg_blocking_pids(pid)))"),
+            {"holder": holder_pid}).scalar_one())
 
 
-def _wait_until_blocked(timeout=20.0) -> bool:
-    """Block until the in-flight request has actually reached the locked row.
+def _wait_until_blocked_by(holder_pid: int, timeout=30.0) -> bool:
+    """Block until the in-flight request is genuinely waiting on `holder_pid`.
 
-    Polling the server beats sleeping a guessed interval: it is what makes this
-    test deterministic rather than timing-dependent, and it works whether the
-    request stops at the SELECT (with the lock) or at the UPDATE (without it) —
-    all it establishes is that the request got there.
+    Polling the server beats sleeping a guessed interval — it is what makes this
+    test deterministic rather than timing-dependent — and it works whether the
+    request stops at the SELECT (with the lock) or at the UPDATE (without it).
+    All it establishes is that the two transactions really do overlap on this
+    row, which is the precondition without which the assertions below prove
+    nothing.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _blocked_backends():
+        if _is_blocked_by(holder_pid):
             return True
         time.sleep(0.05)
     return False
@@ -373,6 +387,7 @@ def test_a_resolve_that_loses_the_race_appends_no_evidence_event(escalated, logi
 
     winner = engine.connect()
     held = winner.begin()
+    holder_pid = winner.execute(text("SELECT pg_backend_pid()")).scalar_one()
     winner.execute(text("SELECT id FROM human_reviews WHERE id = :i FOR UPDATE"),
                    {"i": review["id"]})
 
@@ -385,9 +400,9 @@ def test_a_resolve_that_loses_the_race_appends_no_evidence_event(escalated, logi
     loser = threading.Thread(target=_resolve)
     loser.start()
     try:
-        assert _wait_until_blocked(), (
-            "the resolve request never reached the locked row — this test proves "
-            "nothing about concurrency unless the two genuinely overlap")
+        assert _wait_until_blocked_by(holder_pid), (
+            "the resolve request never blocked on this transaction — this test "
+            "proves nothing about concurrency unless the two genuinely overlap")
         # The other reviewer decides first, and commits.
         winner.execute(text(
             "UPDATE human_reviews SET status = 'resolved', "

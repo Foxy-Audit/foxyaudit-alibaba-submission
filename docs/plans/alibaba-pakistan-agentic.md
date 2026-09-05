@@ -260,6 +260,23 @@ means a migration, the policy API, and both shipped clients' settings UI, which
 is not a backend-only phase. Revisit with A2, where the reviewer surface makes
 the preference visible anyway.
 
+**(d) Nothing in the schema stops a duplicate `human_review_resolved` event.**
+`audit_events` has no unique constraint, and it cannot take a blanket one on
+`(audit_log_id, event_type)`: the retry path legitimately appends a second
+`verdict` event for the same ledger row. So "one resolution event per review" is
+enforced only by the endpoint's row lock — application logic guarding an
+append-only record.
+
+The durable fix is a **partial** unique index,
+`CREATE UNIQUE INDEX … ON audit_events (audit_log_id) WHERE event_type =
+'human_review_resolved'`, which leaves the `verdict` rows alone. Not added in A1
+because it is a migration on the largest table in the product, and because the
+reader was hardened instead: the DSAR bundle looks the hash up through a
+correlated scalar subquery rather than a `LEFT JOIN`, so a duplicate — if one
+ever appeared — cannot fan one review into two apparent governance decisions in
+the file whose subject is completeness. Writer-side enforcement is still the
+right end state.
+
 ---
 
 ## 5 · Phase A2 — the reviewer surface *(branch `feat/human-review-ui`)*

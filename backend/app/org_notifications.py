@@ -197,8 +197,18 @@ def send_escalation_notice(db: Session, item: dict) -> bool:
                     f"asked for a person to decide (risk {risk}). This is not a "
                     f"breach — it is a determination the model declined to make."),
                 et.callout(reason, tone="warn"),
-                et.muted("Open your dashboard to resolve it. Only hashes are "
-                         "stored — never the prompt or response."),
+                # ⚠ THE LEDGER FILTER, NOT A RESOLVE BUTTON. Q4 shipped
+                # `human review` as a verdict option on the dashboard's ledger
+                # (`foxy-audit-premium.html`), so this sentence is true at THIS
+                # commit; the reviewer page that resolves an escalation is A2 and
+                # does not exist yet. "Open your dashboard to resolve it" was the
+                # first draft and pointed at a page nobody can open — a promise
+                # in a customer email is a claim like any other, and this product
+                # does not get to make one it cannot keep. Reword this when A2
+                # lands, not before.
+                et.muted("Filter your ledger by ‘human review’ to find "
+                         "it. Only hashes are stored — never the prompt or "
+                         "response."),
             ],
             surface="customer",
         )

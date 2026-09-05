@@ -265,8 +265,18 @@ _QUEUE_REVIEW_SQL = text(
 )
 
 
-def _queue_human_review(db: Session, row, verdict) -> None:
+def _queue_human_review(db: Session, row, verdict) -> bool:
     """Put an escalated verdict in front of a person. Best-effort, never raises.
+
+    ⚠ RETURNS WHETHER THE QUEUE ROW EXISTS, and the caller gates the notice on it.
+    Announcing an escalation whose insert failed would email "a review is waiting"
+    about a worklist entry that is never going to appear — and §4.6 records that
+    nothing reconciles a dropped insert, so that entry stays missing. A
+    notification pointing at nothing is worse than silence: it costs the customer
+    a search for a row that does not exist, in a product whose claim is that the
+    record is complete. True also covers the `ON CONFLICT DO NOTHING` no-op, which
+    is correct — the row is there, this attempt simply was not the one that put it
+    there, and the notice for it went out on the attempt that did.
 
     ⚠ THE GRADE IS ALREADY COMMITTED WHEN THIS RUNS, and that ordering is the
     contract: exactly like the breach notifier above it, a failure here must cost
@@ -310,10 +320,12 @@ def _queue_human_review(db: Session, row, verdict) -> None:
                     "reason": verdict.reason[:300],
                     "risk_score": verdict.risk_score})
         db.commit()
+        return True
     except Exception as exc:                                  # noqa: BLE001
         db.rollback()
         log.warning("queueing human review for %s failed (%s)",
                     row["id"], type(exc).__name__)
+        return False
 
 
 def _claim_batch(db: Session, batch: int, stuck: int) -> list:
@@ -418,13 +430,17 @@ def _grade_one(db: Session, row) -> None:
     # decides whether an escalation SURVIVED the merge. A qwen escalation beside
     # a gemini breach is a breach, and must not also queue a review.
     if verdict.decision == "human_review":
-        _queue_human_review(db, row, verdict)
-        # ⚠ AND THE ESCALATION IS ANNOUNCED, not merely filed. A worklist row
-        # nobody is told about is the same defect A1 exists to close wearing a
-        # different hat, and until the A2 reviewer page ships this notice is the
-        # only way an escalation reaches a person. Queued, never sent here —
-        # the same contract as the breach notices above.
-        org_notifications.enqueue_escalation_notice(row, verdict)
+        # ⚠ AND THE ESCALATION IS ANNOUNCED, not merely filed — but ONLY IF IT WAS
+        # FILED. A worklist row nobody is told about is the same defect A1 exists
+        # to close wearing a different hat, and until the A2 reviewer page ships
+        # this notice is the only way an escalation reaches a person. The insert
+        # above is best-effort by design, though, so the notice is gated on its
+        # result: nothing reconciles a dropped insert (plan §4.6), and an email
+        # about a queue row that will never exist sends the customer looking for
+        # something that is not there. Queued, never sent here — the same contract
+        # as the breach notices above.
+        if _queue_human_review(db, row, verdict):
+            org_notifications.enqueue_escalation_notice(row, verdict)
     # Outbound webhook subscriptions (P3 §F): a signed 'graded' (and 'breach')
     # event per matching subscription. QUEUED, not delivered here — this fires
     # on EVERY graded row, and one synchronous POST per subscription inside the
