@@ -414,6 +414,50 @@ style. `node --check` every inline `<script>` touched — it is on the merge gat
 
 ---
 
+### 5.1 A2 follow-ups — merged knowingly, 2026-09-05
+
+Found in the fourth review round of A2 and **not fixed before merge.** That is a
+deliberate scope call by MAIN under the 2026-09-07 deadline, recorded here so it
+is a decision rather than an oversight.
+
+**Why they did not block.** All three are **display-layer accuracy on a race
+between two reviewers resolving the same escalation at the same moment.** The
+server is correct in every one of them: `resolve_review` takes
+`with_for_update()`, is first-write-wins, appends exactly one
+`human_review_resolved` event, and returns the standing decision. **No evidence
+is wrong; a message about it can be.** Meanwhile A3 — the demo that gets filmed —
+did not exist yet. Polishing a two-reviewer race while the centrepiece was unbuilt
+would have been optimising the wrong thing.
+
+**(a) The identity comparison is inert for any session that started signed-out.**
+`window.__foxUser` is set only by `foxAvatar()` at DOMContentLoaded, and none of
+the four sign-in paths repopulate it or reload. So a user who lands signed-out,
+signs in, and works in that same page has `mine === ''`, the
+`by && mine && by !== mine` clause can never fire, and the surface falls back to
+the word-only comparison the commit exists to replace. **It degrades to the
+previously-accepted behaviour rather than regressing** — but the fix is only
+effective for sessions that were already authenticated at page load, which may be
+the minority. Fix: repopulate `__foxUser` on each sign-in path.
+
+**(b) No test can go red on (a).** `test_a2_review_ui.py`'s `/v1/auth/me` stub
+answers 200 at boot — the one session shape where the guard works. The same line
+also flipped the driven probe from a signed-out boot to a signed-in one, so every
+other assertion in that file now runs against a different starting state than it
+did before. Worth a look when (a) is fixed: some of those tests may be covering
+less, or something else, than their names claim.
+
+**(c) The dialog branches on whether `by` exists, not on `by === mine`.** A
+reviewer who already resolved the same review in another tab is told their **own**
+email "resolved this before your decision reached the record". Cosmetic, and a
+genuine edge, but it is the surface telling someone a confusing thing about
+themselves.
+
+⚠ **None of this appears in the demo.** The mismatch dialog only renders when two
+reviewers race, and the recording shows one reviewer. So these do not gate A3 —
+but they should be fixed before this reaches a real second seat.
+
+---
+
 ## 6 · Phase A3 — the demo that is also the video *(branch `feat/agentic-demo`)*
 
 One runnable script producing the whole narrative, so the video is a recording of a
