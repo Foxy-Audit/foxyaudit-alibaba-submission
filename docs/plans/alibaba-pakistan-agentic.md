@@ -180,9 +180,9 @@ every merge, or it becomes the same lie.** Written 2026-09-05, verified against
 | *(unplanned)* escalation criteria | ✅ **merged** | `9f9bacc`. **Not in the original plan.** Found by A0: `qwen-plus` AND `qwen-max` graded every input and never called the tool, so the escalation feature — the whole point of the provider — was unreachable live |
 | **A2** — the reviewer surface | ✅ **merged** | `7b0deb3` `e32a669` `31bb6a7` `d7343ff` `d588949` `138fad0` · migration **0074** · follow-ups §5.1 |
 | *(aftermath)* the moved claim pin | ✅ **merged** | `bf91e60`. `main` was red on `foxy-sale-page` from `138fad0`: A2 moved a pinned claim to `:2522` and six pins still said `:2405` |
-| **A3** — the demo that is also the video | 🔴 **NOT BUILT** | — |
+| **A3** — the demo that is also the video | 🔨 **in progress** | `feat/agentic-demo`. The last unbuilt phase and the one that gets filmed. Beat 6 is A5's loop closing |
 | **A4** — submission artefacts | ✅ **merged** | `72e1390` `e861e4f` `ec0b68d` · `README.md` + `docs/architecture.svg` · 7 findings in review |
-| **A5** — a second tool | ⏸ **not started** | Deliberate. Only after A1–A4, and A3 outranks it |
+| **A5** — a second tool | ✅ **merged** | `d9fec84` `059d28c` · `check_prior_reviews`, no migration · **verified LIVE 2026-09-05**: the model called it and changed its verdict because of the answer — the same payload that escalates at risk 85 without it grades `clean` at 15 with it, citing "prior reviews of this phi-restricted tag were all cleared by humans". A1's loop closes |
 
 **Alembic head 0074.** Suites at `ec0b68d`: backend hermetic **43** · backend
 integration **1586** (3 skipped) · dashboard **597** · sale-page **665**.
