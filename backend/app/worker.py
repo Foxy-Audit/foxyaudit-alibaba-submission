@@ -181,7 +181,12 @@ def _org_history(db: Session, org_id) -> dict:
 #: PRIMARY KEY through `audit_log_id`, once per candidate row. The candidate set
 #: is one org's escalations in 30 days, small by construction — only rows a
 #: judge escalated are in this table at all. No new index, and no migration.
-_PRIOR_REVIEW_WINDOW_DAYS = 30
+#:
+#: ⚠ THE WINDOW IS `qwen_judge.PRIOR_REVIEW_WINDOW_DAYS`, NOT A NUMBER OF THIS
+#: MODULE'S OWN. That module has to state the bound to the model in the tool
+#: description, so a second constant here would be a promise and a WHERE
+#: clause free to drift apart — and the drift would be invisible, because
+#: both halves would still work. One constant, read by the half that queries.
 
 _PRIOR_REVIEWS_SQL = text(
     """
@@ -215,9 +220,9 @@ def _prior_reviews(db: Session, org_id, policy_tag) -> dict:
     with db.begin_nested():
         row = db.execute(_PRIOR_REVIEWS_SQL, {
             "oid": oid, "tag": policy_tag,
-            "days": _PRIOR_REVIEW_WINDOW_DAYS}).mappings().first()
+            "days": qwen_judge.PRIOR_REVIEW_WINDOW_DAYS}).mappings().first()
     return {
-        "window_days": _PRIOR_REVIEW_WINDOW_DAYS,
+        "window_days": qwen_judge.PRIOR_REVIEW_WINDOW_DAYS,
         "escalations": int(row["escalations"]),
         "cleared": int(row["cleared"]),
         "confirmed_breach": int(row["confirmed_breach"]),

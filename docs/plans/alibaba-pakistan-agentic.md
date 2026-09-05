@@ -558,6 +558,38 @@ The agent has one tool and one turn. A second tool that changes what the system 
 difference between "calls a function" and "acts". **Do not start it until A1–A4 are
 merged.** A second tool without a destination repeats §3.5's mistake exactly.
 
+**Built as `check_prior_reviews`** on branch `feat/qwen-prior-reviews-tool` — the
+judge may ask what humans already decided about escalations on this org's
+`policy_tag`, and grade or escalate with that in hand. **Verified live 2026-09-05:**
+with a lookup returning 4 escalations / 4 cleared the model called the tool and
+returned `clean`, risk 15, *"No PII signals detected; prior reviews of this
+phi-restricted tag were all cleared by humans"* — where the identical payload
+without the lookup escalates at risk 85. The loop A1 opened is closed.
+
+### 8.1 A5 follow-ups — recorded here so they are not lost
+
+**(a) 🟡 `/health/ready`'s `stale_after` has never known about Qwen, and A5 doubles
+what it is under-sized against.** `routers/health.py:111` computes
+
+```python
+stale_after = s.grading_poll_interval * 5 + max(s.gemini_timeout, s.openai_timeout) + 10
+```
+
+— `qwen_timeout` is absent, and was absent before A5. At the defaults
+(`grading_poll_interval` 2.0, timeouts 12.0, `grading_batch_size` 16) that is a
+**32 s** staleness budget against a batch whose worst-case Qwen wall time was
+~192 s and, with A5's second round trip, is now **~384 s** between heartbeats. So
+a healthy worker grinding through a batch of slow Qwen rows can be reported
+`not_ready`.
+
+*Pre-existing under-sizing, amplified 2× by A5 — not caused by it.* **Not urgent:**
+the deploy freeze holds (§9), `deploy.yml` is `workflow_dispatch`-only, and nothing
+auto-rollbacks on this today. **But it must be Qwen-aware before anything deploys
+again**, because `/health/ready` is exactly what the deploy smoke test reads.
+
+Found in the A5 review, 2026-09-05. Not fixed there deliberately: it is a health
+endpoint change, not a judge change, and it wants its own scope and its own test.
+
 ---
 
 ## 9 · Merge gate — every phase

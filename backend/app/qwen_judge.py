@@ -148,15 +148,32 @@ _TOOLS = [{
 # ambiguous") was one that qwen-plus and qwen-max never met against the live API.
 # "When you are considering escalation" is a state the model can check against
 # what it is about to do; "when you would find it useful" is not.
+#: How far back the counts reach. It lives HERE, in the module that has to
+#: TELL THE MODEL, and `worker._prior_reviews` reads it back for the query —
+#: the promise and the WHERE clause cannot be two numbers that drift.
+#:
+#: ⚠ AND IT MUST BE STATED, not merely honoured. Found in review,
+#: 2026-09-05: the description said "in this workspace" with no bound, so a
+#: tag humans cleared five times 45 days ago came back all zeros and read as
+#: "nobody has ever escalated this". That is the same all-zeros-shaped-like-
+#: a-right-answer failure the no-arguments decision below refuses to allow
+#: from a hallucinated tag, arriving instead through the window. The payload
+#: carries `window_days` too, but the model chooses whether to ASK before it
+#: sees any payload.
+PRIOR_REVIEW_WINDOW_DAYS = 30
+
 _PRIOR_REVIEWS_TOOL = {
     "type": "function",
     "function": {
         "name": "check_prior_reviews",
         "description": (
             "Look up how human compliance reviewers already ruled on past "
-            "escalations for THIS interaction's policy_tag in this workspace. "
-            "Returns counts only: how many were escalated, and how many a human "
-            "then cleared, confirmed as a breach, or judged a policy gap. It "
+            "escalations for THIS interaction's policy_tag in this workspace, "
+            f"over the last {PRIOR_REVIEW_WINDOW_DAYS} days. Counts of ZERO "
+            "therefore mean nobody escalated this tag IN THAT WINDOW, not that "
+            "it has never been escalated. Returns counts only: how many were "
+            "escalated, and how many a human then cleared, confirmed as a "
+            "breach, or judged a policy gap. It "
             "carries no content, no reviewer notes and no reasons, so it cannot "
             "tell you what any individual interaction contained. Call it when "
             "you are considering flag_for_human_review, or when the metadata "
@@ -381,10 +398,13 @@ def _build_system_prompt(policy_config: dict[str, Any] | None,
         lookup_clause = (
             "BEFORE you choose, you may call the tool check_prior_reviews ONCE. "
             "It returns counts only: how many past interactions carrying THIS "
-            "policy_tag were escalated in this workspace, and how many a human "
-            "reviewer then cleared, confirmed as a breach, or judged a policy "
-            "gap. It carries no content and no reviewer notes, so it cannot tell "
-            "you what any interaction contained. Asking costs you nothing, but "
+            "policy_tag were escalated in this workspace over the last "
+            f"{PRIOR_REVIEW_WINDOW_DAYS} days, and how many a human reviewer "
+            "then cleared, confirmed as a breach, or judged a policy gap. All "
+            "counts zero means nobody escalated this tag inside that window, "
+            "NOT that it has never been escalated. It carries no content and no "
+            "reviewer notes, so it cannot tell you what any interaction "
+            "contained. Asking costs you nothing, but "
             "you may ask ONLY ONCE: after one call the tool is withdrawn and your "
             "next reply must GRADE or ESCALATE. Call it when you are considering "
             "escalation, or when the metadata leaves you between clean and "
@@ -472,6 +492,42 @@ def _escalation(message: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _graded_verdict(message: dict[str, Any], model_id: str) -> Verdict:
+    """The ordinary JSON verdict in an assistant message.
+
+    RAISES rather than returning None when there is no usable verdict, which
+    is what the tail of `evaluate` has always done: the outer handler turns
+    that into `_fallback(type(exc).__name__)`, and the exception TYPE — a
+    JSONDecodeError, a KeyError for absent content — is the reason a customer
+    sees on the row. Callers that only want a verdict IF one is there catch
+    `_JUDGE_ERRORS` around it.
+    """
+    data = json.loads(message["content"])
+    breach = bool(data.get("policy_breach", False))
+    return Verdict(
+        policy_breach=breach,
+        reason=str(data.get("reason", ""))[:300],
+        risk_score=int(data.get("risk_score", 0)),
+        decision=str(data.get("decision", "breach" if breach else "clean")),
+        rules=[str(value)[:80] for value in data.get("rules", [])
+               if isinstance(value, str)],
+        # Stamped only here and on the escalation path — the two places that
+        # know a model answered. A _fallback verdict leaves both None rather
+        # than naming a model that was never called.
+        judge_provider="qwen", judge_model=model_id,
+        graded_by="ai",
+    )
+
+
+#: Everything a malformed response, a dropped socket or an unparseable verdict
+#: can raise on the way to a Verdict. Named because three handlers now share it
+#: — the transport guard, the turn-one capture, and the tail. `ValueError`
+#: covers pydantic's ValidationError, which subclasses it.
+_JUDGE_ERRORS = (urllib_error.URLError, TimeoutError, OSError,
+                 json.JSONDecodeError, AttributeError, KeyError, TypeError,
+                 ValueError, IndexError)
+
+
 def _post(url: str, key: str, body: dict, timeout: float) -> dict[str, Any]:
     """One request/response round trip, returning the assistant message.
 
@@ -537,6 +593,9 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
     # tool result sent without the system prompt, the metadata, and the
     # assistant message it answers is a tool result answering nothing.
     blind = _content_blind_meta(meta)
+    # Bound BEFORE the guard, so the handler can read it however early the
+    # failure lands. None means turn one gave no gradeable answer.
+    turn_one_verdict: Verdict | None = None
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _build_system_prompt(
             policy_config, history, lookup_offered=prior_reviews is not None)},
@@ -586,6 +645,24 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
                 # rebuilding guarantees the tool_call_id on it is the one the
                 # `tool` message below answers, including where the provider
                 # sent no id at all.
+                # ⚠ CAPTURE A VERDICT TURN ONE ALREADY GAVE, BEFORE SPENDING
+                # TURN TWO. A model may ask AND answer in one message — a
+                # `check_prior_reviews` call alongside parseable JSON in
+                # `content` — and that verdict is a real grade by a real model.
+                # Without this it was dropped on the floor, so a second turn
+                # that then failed returned `unknown` and the deterministic
+                # engine substituted: SUPPLYING THE LOOKUP WOULD HAVE TURNED A
+                # GOOD VERDICT INTO AN UNKNOWN, a regression the tool itself
+                # introduced. Found in review, 2026-09-05, by execution.
+                #
+                # It is a FALLBACK, never a preference: if turn two answers,
+                # that answer wins, because it is the one that read the
+                # history. This only decides what happens when turn two
+                # cannot answer at all.
+                try:
+                    turn_one_verdict = _graded_verdict(message, model_id)
+                except _JUDGE_ERRORS:
+                    turn_one_verdict = None
                 messages.append({
                     "role": "assistant", "content": None,
                     "tool_calls": [{
@@ -615,10 +692,9 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
                 # ⚠ AND THE TURN HAPPENS EVEN WHEN THE LOOKUP FAILED. `answer is
                 # None` means the callable raised or answered nonsense, and the
                 # model is told exactly that; it must still get this turn,
-                # because turn one spent itself on a tool call and holds no
-                # verdict to fall back on. Skipping it would turn a database blip
-                # into an ungraded row, which is the degradation this module's
-                # docstring forbids.
+                # because the model may have nothing but a tool call in turn
+                # one. Skipping it would turn a database blip into an ungraded
+                # row, which is the degradation this module's docstring forbids.
                 message = _post(url, key, _request_body(_TOOLS),
                                 settings.qwen_timeout)
                 escalation = _escalation(message)
@@ -640,28 +716,22 @@ def evaluate(meta: dict, policy_config: dict[str, Any] | None = None,
                 graded_by="ai",
             )
 
-        # ── the ordinary path ─────────────────────────────────────────────────
-        data = json.loads(message["content"])
-        breach = bool(data.get("policy_breach", False))
-        return Verdict(
-            policy_breach=breach,
-            reason=str(data.get("reason", ""))[:300],
-            risk_score=int(data.get("risk_score", 0)),
-            decision=str(data.get("decision", "breach" if breach else "clean")),
-            rules=[str(value)[:80] for value in data.get("rules", [])
-                   if isinstance(value, str)],
-            # Stamped only here and on the escalation above — the two lines that
-            # know a model answered. A _fallback verdict leaves both None rather
-            # than naming a model that was never called.
-            judge_provider="qwen", judge_model=model_id,
-            graded_by="ai",
-        )
-    except (urllib_error.URLError, TimeoutError, OSError, json.JSONDecodeError,
-            AttributeError, KeyError, TypeError, ValueError, IndexError) as exc:
+        # ── the ordinary path ─────────────────────────────────────────────
+        return _graded_verdict(message, model_id)
+    except _JUDGE_ERRORS as exc:
         # TYPE only, never the message. The key travels in an Authorization
         # header rather than a URL here, but several of these exception types
         # embed the request in str(exc), and the rule this project applies to
         # gemini's ?key= URL is worth applying uniformly rather than re-deriving
         # per provider.
         log.warning("qwen evaluate failed (%s)", type(exc).__name__)
+        if turn_one_verdict is not None:
+            # ⚠ A LOOKUP MUST NOT COST A VERDICT THE MODEL ALREADY GAVE. This
+            # is reached when turn two failed — a dropped socket, a timeout, a
+            # reply with nothing gradeable in it — and turn one had already
+            # answered. Returning `_fallback` here would be strictly worse
+            # than not offering the tool at all, and 'the second tool made
+            # grading worse' is the one outcome this phase cannot ship.
+            log.warning("qwen second turn failed; keeping the turn-one verdict")
+            return turn_one_verdict
         return _fallback(type(exc).__name__)

@@ -713,6 +713,203 @@ def test_a_call_to_an_unknown_tool_does_not_trigger_the_lookup(monkeypatch):
     assert result.decision == "clean"
 
 
+# ── A5 review ─ the lookup must never make grading worse ───────────
+
+def _asks_and_answers(**verdict):
+    """One message that BOTH requests the lookup and carries a parseable verdict.
+
+    Not a hypothetical shape: it is what the live model produced under review on
+    2026-09-05, and it is the shape
+    `test_a_second_lookup_request_is_refused_rather_than_served` was already
+    building without anyone noticing what it implied for a failed second turn.
+    """
+    return _chat({**_lookup_call(), **_verdict_json(**verdict)})
+
+
+def test_a_verdict_given_alongside_a_lookup_call_survives_a_failed_second_turn(
+        monkeypatch):
+    """⚠ THE REGRESSION THE TOOL ITSELF INTRODUCED, found in review by execution.
+
+    Turn one asked for the history AND graded. The code spent the second round
+    trip and dropped the verdict, so when that second request failed, `evaluate`
+    returned `unknown` and `_grade_one` substituted the deterministic engine.
+
+    The identical response bytes gave `decision="breach", graded_by="ai"` with
+    `prior_reviews=None` and `evaluator_unavailable:URLError, graded_by="none"`
+    with a lookup supplied — so SUPPLYING THE LOOKUP TURNED A GOOD VERDICT INTO
+    AN UNKNOWN. A second tool that makes grading worse is the one outcome this
+    phase cannot ship.
+    """
+    calls = {"n": 0}
+    monkeypatch.setattr(qwen_judge, "get_settings", lambda: _settings())
+
+    def flaky(request, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Response(_asks_and_answers(decision="breach", policy_breach=True,
+                                               risk_score=77,
+                                               reason="token count far above policy"))
+        raise URLError("connection reset before the second turn")
+
+    monkeypatch.setattr(qwen_judge.urllib_request, "urlopen", flaky)
+
+    result = qwen_judge.evaluate({"token_count": 999_999}, prior_reviews=_Lookup())
+
+    assert result.decision == "breach", (
+        "the lookup cost a verdict the model had already given")
+    assert result.graded_by == "ai" and result.judge_provider == "qwen"
+    assert result.risk_score == 77
+    assert result.evaluator_unavailable_reason is None, (
+        "a verdict a model produced must not be labelled as no judge having run")
+
+
+def test_the_same_bytes_grade_the_same_with_and_without_the_lookup(monkeypatch):
+    """The property the finding is really about: offering the tool must not
+    change the outcome for the worse on identical model output.
+
+    Run twice over one flaky transport script — once with a lookup, once without.
+    Without it there is no second turn to fail, so the verdict stands; with it,
+    the second turn fails. Both must land on the same grade.
+    """
+    def run(prior_reviews):
+        calls = {"n": 0}
+        monkeypatch.setattr(qwen_judge, "get_settings", lambda: _settings())
+
+        def flaky(request, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Response(_asks_and_answers(decision="breach",
+                                                   policy_breach=True, risk_score=77))
+            raise URLError("connection reset")
+
+        monkeypatch.setattr(qwen_judge.urllib_request, "urlopen", flaky)
+        return qwen_judge.evaluate({"token_count": 1}, prior_reviews=prior_reviews)
+
+    without, with_lookup = run(None), run(_Lookup())
+    assert without.decision == with_lookup.decision == "breach"
+    assert without.graded_by == with_lookup.graded_by == "ai"
+    assert with_lookup.risk_score == without.risk_score
+
+
+def test_a_turn_two_answer_beats_the_verdict_turn_one_gave(monkeypatch):
+    """The captured verdict is a FALLBACK, never a preference.
+
+    Turn two read the history; turn one had not. If the second answer arrives it
+    wins — otherwise the lookup would be a round trip whose answer is discarded,
+    which is worse than never asking. This is the live behaviour under review:
+    clean at 15 after seeing four clears, where the same payload without the
+    lookup escalated at 85.
+    """
+    sent = []
+    _install_turns(monkeypatch, [
+        _asks_and_answers(decision="breach", policy_breach=True, risk_score=85),
+        _chat(_verdict_json(decision="clean", policy_breach=False, risk_score=15,
+                            reason="prior reviews of this tag were all cleared"))],
+        sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1},
+                                 prior_reviews=_Lookup(_counts(escalations=4,
+                                                              cleared=4,
+                                                              confirmed_breach=0)))
+
+    assert result.decision == "clean" and result.risk_score == 15, (
+        "the stale turn-one verdict beat the one that had read the history")
+    assert "cleared" in result.reason
+    assert len(sent) == 2
+
+
+def test_a_turn_two_reply_with_nothing_gradeable_falls_back_to_turn_one(monkeypatch):
+    """A failed second turn is not only a dropped socket. A reply that parses as
+    HTTP but carries no verdict and no escalation is the same loss."""
+    _install_turns(monkeypatch, [
+        _asks_and_answers(decision="breach", policy_breach=True, risk_score=60),
+        _chat({"content": "I have consulted the history."})])
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+
+    assert result.decision == "breach" and result.risk_score == 60
+    assert result.graded_by == "ai"
+
+
+def test_a_failed_second_turn_with_no_turn_one_verdict_is_still_unknown(monkeypatch):
+    """⚠ THE FALLBACK MUST NOT INVENT A GRADE. Where turn one carried ONLY a tool
+    call, there is nothing to fall back to and the honest answer is the one this
+    module has always given: `unknown`, `graded_by="none"`, for the deterministic
+    engine to replace.
+    """
+    calls = {"n": 0}
+    monkeypatch.setattr(qwen_judge, "get_settings", lambda: _settings())
+
+    def flaky(request, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Response(_chat(_lookup_call()))
+        raise URLError("connection reset")
+
+    monkeypatch.setattr(qwen_judge.urllib_request, "urlopen", flaky)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+    assert result.decision == "unknown"
+    assert result.graded_by == "none"
+    assert result.evaluator_unavailable_reason == "URLError"
+
+
+def test_an_unparseable_first_turn_still_reports_its_own_failure_type(monkeypatch):
+    """The capture is opportunistic and must not swallow the reason a customer
+    sees. With nothing gradeable anywhere, the fallback still names the exception
+    type rather than a generic label."""
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat({"content": "{"})])
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+    assert result.decision == "unknown"
+    assert result.evaluator_unavailable_reason == "JSONDecodeError"
+
+
+def test_the_window_the_counts_cover_is_stated_before_the_model_asks(monkeypatch):
+    """⚠ ALL-ZEROS MUST NOT READ AS "NEVER".
+
+    The query bounds at `PRIOR_REVIEW_WINDOW_DAYS`; the description and the prompt
+    promised counts "in this workspace" with no bound. A tag humans cleared five
+    times 45 days ago comes back all zeros, and an unbounded promise makes that
+    "nobody has ever escalated this" — a wrong answer wearing the shape of a
+    right one, which is the exact failure the no-arguments decision refuses to
+    allow from a hallucinated tag.
+
+    The payload does carry `window_days`, but the model decides whether to ASK
+    before it sees any payload, so the bound has to be in the description too.
+    """
+    window = str(qwen_judge.PRIOR_REVIEW_WINDOW_DAYS)
+    description = qwen_judge._PRIOR_REVIEWS_TOOL["function"]["description"]
+    assert window in description, (
+        "the tool description does not say how far back the counts reach")
+    assert "ZERO" in description and "never" in description, (
+        "the description must say what all-zeros does NOT mean")
+
+    sent = []
+    _install_turns(monkeypatch, [_chat(_verdict_json())], sent=sent)
+    qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+    system = sent[0]["messages"][0]["content"]
+    assert window in system, "the prompt clause states no window either"
+
+
+def test_the_query_and_the_promise_read_one_window_constant():
+    """Structural. The bound the model is PROMISED and the bound the WHERE clause
+    applies must be one number, because a drift between them would be invisible:
+    both halves would go on working, and only the answer would be wrong."""
+    import ast
+
+    source = _worker_source()
+    assert "qwen_judge.PRIOR_REVIEW_WINDOW_DAYS" in source, (
+        "the worker declares its own window; it must read the one the tool "
+        "description promises")
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_prior_reviews")
+    literals = [n.value for n in ast.walk(fn)
+                if isinstance(n, ast.Constant) and isinstance(n.value, int)]
+    assert not literals, (
+        f"_prior_reviews carries a bare integer {literals} where the shared "
+        "window constant belongs")
+
+
 # ── A5 ─ the worker half, read structurally ──────────────────────
 
 def _worker_source():
