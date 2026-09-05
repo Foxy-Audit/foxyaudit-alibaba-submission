@@ -902,6 +902,126 @@ def test_the_prior_review_lookup_counts_only_this_org_and_this_tag(
         "one workspace's escalations were counted for another")
 
 
+# ── the lookup is WITHHELD when it has nothing to say ─────────────────
+
+def _speak_capturing(monkeypatch, message, sent: list) -> None:
+    """`_speak`, but keeping every request body the judge actually sent.
+
+    The assertion these tests need is about the BYTES — which tools the model was
+    offered — so nothing short of the real request will do. Asserting on
+    `_tools_for`'s return value would pass just as happily if the worker stopped
+    passing the lookup through at all.
+    """
+    def fake_urlopen(request, timeout=None):
+        sent.append(json.loads(request.data.decode("utf-8")))
+        return _Response({"choices": [{"message": message}]})
+
+    monkeypatch.setattr(qwen_judge.urllib_request, "urlopen", fake_urlopen)
+
+
+def _offered_tools(body) -> list:
+    return [t.get("function", {}).get("name") for t in (body.get("tools") or [])]
+
+
+def test_a_tag_no_human_has_reviewed_is_not_offered_the_lookup_at_all(
+        make_org, client, monkeypatch):
+    """🔴 THE REGRESSION THIS EXISTS TO HOLD SHUT, and it was measured, not
+    reasoned. Same payload, same tag, same model, one variable:
+
+        lookup WITHHELD             -> human_review, risk 85
+        lookup OFFERED, all zeros   -> clean, risk 5
+
+    A5's tool regressed A1's escalation. All-zero is the state of every tag
+    nobody has reviewed yet — a new workspace, a new tag, a fresh deployment —
+    so a judge that relaxes on an empty history is least cautious exactly where
+    it knows least. `b9cb053` said so in the prompt and the model still graded
+    clean; the fix has to be that the tool is not there.
+
+    ⚠ ASSERTED ON THE REQUEST, not on a helper. `check_prior_reviews` must be
+    absent from the `tools` array the worker actually puts on the wire.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    sent: list = []
+    _speak_capturing(monkeypatch, _graded(), sent)
+    _ingest(client, org)
+    _grade_all()
+
+    assert len(sent) == 1, (
+        f"expected exactly one round trip when the lookup is withheld; the "
+        f"judge made {len(sent)} — an offered-and-asked tool costs a second")
+    assert "check_prior_reviews" not in _offered_tools(sent[0]), (
+        "a workspace with no reviewed escalations was still offered the "
+        "history lookup, so the model can spend a turn learning nothing and "
+        "come back less cautious than if it had never asked")
+    assert "flag_for_human_review" in _offered_tools(sent[0]), (
+        "withholding the history lookup also removed the escalation tool")
+
+
+def test_a_tag_a_human_has_reviewed_is_offered_the_lookup(
+        escalated, client, monkeypatch):
+    """The other half, and without it the test above passes by deleting A5.
+
+    `escalated` leaves one review row for tag `chat` in this workspace, so the
+    lookup now HAS something to say and must be offered.
+    """
+    sent: list = []
+    _speak_capturing(monkeypatch, _graded(), sent)
+    _ingest(client, escalated, seed="b")
+    _grade_all()
+
+    assert sent, "the judge was never called"
+    assert "check_prior_reviews" in _offered_tools(sent[0]), (
+        "a workspace whose humans HAVE ruled on this tag was not offered the "
+        "lookup, so A1's decisions no longer reach the judge at all")
+
+
+def test_the_window_days_field_does_not_count_as_history(monkeypatch):
+    """⚠ THE TRAP IN THE OBVIOUS SPELLING. The payload carries `window_days`
+    beside the four counts, and it is always non-zero — so `any(answer.values())`
+    would offer the tool on every row, silently undoing this change while every
+    test that merely checks "a lookup was passed" stayed green.
+    """
+    monkeypatch.setattr(workermod, "_prior_reviews", lambda *_a: {
+        "window_days": 30, "escalations": 0, "cleared": 0,
+        "confirmed_breach": 0, "policy_gap": 0})
+    assert workermod._prior_reviews_lookup(None, "org", "chat") is None, (
+        "an all-zero history was offered anyway — `window_days` was counted "
+        "as though a human had reviewed something")
+
+
+def test_a_lookup_that_raises_withholds_rather_than_costing_the_grade(
+        monkeypatch):
+    """The query used to run inside `evaluate`, which swallowed its exception.
+    Running it in the caller's frame moves that risk here, so it is caught here —
+    and answered the CAUTIOUS way: the tool is withheld, exactly as an empty
+    history is. A failed read must never leave the judge more relaxed than a
+    successful one would have.
+    """
+    def boom(*_args):
+        raise RuntimeError("relation \"human_reviews\" does not exist")
+
+    monkeypatch.setattr(workermod, "_prior_reviews", boom)
+    assert workermod._prior_reviews_lookup(None, "org", "chat") is None
+
+
+def test_an_informative_lookup_is_served_already_fetched(escalated):
+    """The query runs ONCE. The callable handed to `evaluate` returns the result
+    that was already read, so a model that asks costs no second statement — which
+    is what makes running it up front cheaper than the round trip it replaces.
+    """
+    db = SessionLocal()
+    try:
+        lookup = workermod._prior_reviews_lookup(db, escalated["org_id"], "chat")
+        assert lookup is not None, "an escalated tag was treated as no history"
+        first = lookup()
+        assert first["escalations"] == 1
+        assert lookup() is first, (
+            "the callable re-queried instead of serving the fetched answer")
+    finally:
+        db.close()
+
+
 def test_the_lookup_counts_a_human_resolution_under_its_own_verb(escalated):
     """The counts are the whole point of the tool.
 

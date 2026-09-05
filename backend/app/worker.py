@@ -203,6 +203,19 @@ _PRIOR_REVIEWS_SQL = text(
 )
 
 
+#: The four columns that mean a human ACTUALLY LOOKED at this tag.
+#:
+#: ⚠ NOT `qwen_judge._PRIOR_REVIEW_COUNTS`, and the difference is the whole
+#: fix. That tuple is the WIRE ALLOWLIST — what may be serialised to the model —
+#: and it includes `window_days`, which is always 30. Reusing it here reads as
+#: the obvious de-duplication and offers the lookup on EVERY row, undoing the
+#: withholding completely while looking correct. Written first as exactly that
+#: mistake and caught by
+#: `test_the_window_days_field_does_not_count_as_history`, which is why that
+#: test exists rather than being a restatement of the code.
+_HISTORY_COUNTS = ("escalations", "cleared", "confirmed_breach", "policy_gap")
+
+
 def _prior_reviews(db: Session, org_id, policy_tag) -> dict:
     """How humans ruled on past escalations for this org's `policy_tag`.
 
@@ -228,6 +241,61 @@ def _prior_reviews(db: Session, org_id, policy_tag) -> dict:
         "confirmed_breach": int(row["confirmed_breach"]),
         "policy_gap": int(row["policy_gap"]),
     }
+
+
+def _prior_reviews_lookup(db: Session, org_id, policy_tag):
+    """The lookup to OFFER the agentic judge, or ``None`` when it has nothing
+    to say.
+
+    ⚠ THE QUERY RUNS UP FRONT NOW, AND THE REASON IS A MEASUREMENT, NOT A
+    PREFERENCE. Same payload, same tag, same model, one variable:
+
+        lookup WITHHELD             -> human_review, risk 85
+        lookup OFFERED, all zeros   -> clean, risk 5
+
+    A5 regressed A1's escalation. Offered a history of nothing, the model got
+    LESS cautious — and all-zero is the state of every tag nobody has reviewed
+    yet: a new workspace, a new tag, a fresh deployment. A compliance judge that
+    relaxes because no human has looked has the logic backwards, and it fails
+    hardest on exactly the tenants with no history to lean on.
+
+    `b9cb053` tried to fix this with words — the tool description and the prompt
+    now both say an all-zero result must not change the decision. Re-measured
+    live, the model stopped CITING the zeros and still graded clean. So the
+    suppressor is not the zeros; it is being offered the tool at all. This
+    removes the bias structurally instead of asking the model not to have it.
+
+    ⚠ AND IT IS CHEAPER THAN WHAT IT REPLACES, which is why "run the query
+    eagerly" is not the pessimisation it looks like. Before, the tool was always
+    offered and the model spent a whole extra round trip — network, latency and
+    tokens — to be told nothing. Now one indexed query (`org_id` leading,
+    `ix_human_reviews_org_status_created`) replaces that round trip in the common
+    case, and when the answer IS informative the callable serves the result
+    ALREADY FETCHED, so the second query never happens either. The old lazy
+    callable existed to avoid a query the model might not ask for; the model
+    asked for it more or less always, so laziness bought nothing and cost a turn.
+
+    ⚠ A LOOKUP BLIP STILL MUST NOT COST THE GRADE. `evaluate` swallowed the
+    callable's exception before; running it here moves that risk into the
+    caller's frame, so it is caught here and answered the same way an empty
+    history is — the tool is withheld and the model grades on metadata. That is
+    the cautious direction: a failed read must never be able to make the judge
+    more relaxed than a successful one would have.
+
+    Do NOT "simplify" this back to a lazy callable. It would restore a measured
+    regression in the one direction a compliance product cannot afford.
+    """
+    try:
+        answer = _prior_reviews(db, org_id, policy_tag)
+    except Exception as exc:                     # noqa: BLE001 — type name only
+        # Type name only: a database error message can quote row values, and this
+        # log line is not a place content may surface.
+        log.warning("prior-review lookup failed for org %s (%s); grading without "
+                    "it", org_id, type(exc).__name__)
+        return None
+    if not any(answer[key] for key in _HISTORY_COUNTS):
+        return None
+    return lambda: answer
 
 
 def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
@@ -301,14 +369,20 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
         # caller-controlled free-text one, does not — and must not become the
         # thing this query groups by, or S12's leak would reopen inside a
         # WHERE clause.
-        verdicts.append(
-            qwen_judge.evaluate(meta, policy_config, history=history,
-                                api_key=routing.qwen_key,
-                                model=routing.qwen_model,
-                                prior_reviews=lambda: _prior_reviews(
-                                    db, org_id, meta.get("policy_tag")))
-            if routing.can_call("qwen")
-            else qwen_judge._fallback(routing.problems.get("qwen", "no_api_key")))
+        #
+        # ⚠ RESOLVED BEFORE THE CALL, and only on the branch that can actually
+        # make one: an org with no usable Qwen key must not pay for a query whose
+        # answer nothing will read.
+        if routing.can_call("qwen"):
+            verdicts.append(
+                qwen_judge.evaluate(meta, policy_config, history=history,
+                                    api_key=routing.qwen_key,
+                                    model=routing.qwen_model,
+                                    prior_reviews=_prior_reviews_lookup(
+                                        db, org_id, meta.get("policy_tag"))))
+        else:
+            verdicts.append(
+                qwen_judge._fallback(routing.problems.get("qwen", "no_api_key")))
     if not verdicts:
         # ⚠ NEVER reach `verdicts[0]` on an empty list.
         #
