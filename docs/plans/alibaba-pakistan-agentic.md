@@ -286,9 +286,36 @@ else, which is enough only because the lock means the duplicate does not occur.
 That is the second reason writer-side enforcement is the right end state: it is
 the only end state where a reader does not have to reason about this at all.
 
+**(e) A dropped escalation NOTICE is now unrecoverable — accepted at merge, and
+A2 is the answer.** Found in the final review of `24b26ee` and merged knowingly.
+Gating the notice on "did *this* attempt file it" is correct and it removed an
+accident: while the bool was always `True`, a regrade re-sent the notice, which
+was duplicate spam *and* a de-facto recovery. Now every later regrade conflicts →
+`False` → silence. The notice path has three lossy points and none of them
+requeues — `enqueue_escalation_notice` drops silently on `queue.Full` (bounded
+2000), the queue is in-process memory so a restart loses it, and
+`drain_breach_notices` swallows a send exception. The docstring's middle case
+says "the attempt that filed it sent the notice"; nothing enforces that.
+
+**Why it was merged anyway:** the escalation itself is never lost — it is durable
+in `audit_logs.gemini_verdict`, in the `verdict` `AuditEvent`, and in
+`human_reviews`. Only the *announcement* can be. A1 shipped into a product where
+the email was the only way an escalation reached a person, which is exactly the
+condition **A2 removes**: a reviewer page listing pending escalations is a pull
+surface that does not depend on a notice having been delivered.
+
+**So A2 carries the fix, and it is small there:** a `notified_at` column on
+`human_reviews`, set after a successful enqueue and used as the gate instead of
+"did this attempt insert". A2 already needs a migration-free surface, so this is
+the one migration worth adding to it — and it composes with (a)'s sweep, which
+can then backfill both a missing row and a missing notice.
+
 ---
 
 ## 5 · Phase A2 — the reviewer surface *(branch `feat/human-review-ui`)*
+
+⚠ **A2 also closes §4.6(e)** — the `notified_at` column and the notice gate. See
+that entry; it is the one piece of backend work this phase carries.
 
 ⚠ **Load all three frontend skills, `ui-ux-pro-max` FIRST**, then `impeccable`, then
 `frontend-design`. Query the palette; never invent one.
