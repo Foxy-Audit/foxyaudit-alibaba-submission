@@ -16,6 +16,8 @@
 
 <sub>🏆 An **OpenAI Build Week** submission — category **Developer Tools** · GPT-5.6 (Responses API) judge + Codex-assisted build</sub>
 
+<sub>🏆 Submitted to the **Alibaba Cloud AI Hackathon Pakistan 2026** (Bano Qabil × Alibaba Cloud × Cognix) — track **Open Innovation** · Qwen tool-calling judge</sub>
+
 </div>
 
 <br>
@@ -46,25 +48,77 @@ servers, our database, or our word for anything.
 <br>
 
 > ### 🧑‍⚖️ Judging this? Start here.
-> **[`JUDGES.html`](JUDGES.html)** — or the **[`JUDGES.pdf`](JUDGES.pdf)** version — is a step-by-step guide to test Foxy Audit yourself —
-> install, a 2-minute no-account proof, and a full run against a live account. It includes **five ready
-> evaluation accounts** (log in at [app.foxyaudit.tech](https://app.foxyaudit.tech), 20,000 credits each).
-> Open `JUDGES.html` in any browser.
+> **What it is, in two sentences.** Foxy Audit is a content-blind, tamper-evident audit-evidence
+> platform for AI systems in regulated industries. A Python SDK commits each prompt and response to a
+> keyed hash on the developer's own machine and ships only bounded metadata to a hash-chained ledger —
+> so a hospital, a bank, or an auditor can independently verify that an AI interaction happened and
+> was not altered, without anyone (us included) ever holding what was said.
+>
+> **Three commands to see it work** — no account, no API key, no network:
+> ```bash
+> cd backend && docker compose up --build -d   # the stack; the API key prints in `docker compose logs foxy-seed`
+> python demo/offline_demo.py                  # build a chain, verify it, watch tamper detection fire
+> python verifier/foxy_verify.py logs.json     # recompute the chain yourself, zero dependencies
+> ```
+> Longer paths: [Quickstart](#-quickstart) · [Verifying it actually works](#-verifying-it-actually-works) ·
+> [Architecture](#-architecture).
+>
+> ⚠️ **`JUDGES.html`, `JUDGES.pdf` and `FoxyAudit-How-We-Build.pdf` are not part of this submission.**
+> See [Artefacts from earlier submissions](#-artefacts-from-earlier-submissions) — they describe
+> different events and are kept only as a record.
 
 <br>
 
 ## 📑 Table of contents
 
 - [For judges](#-judging-this-start-here)
+- [Submission — Alibaba Cloud AI Hackathon Pakistan 2026](#-submission--alibaba-cloud-ai-hackathon-pakistan-2026)
 - [How it's different](#-how-its-different)
 - [Architecture](#-architecture)
 - [Quickstart](#-quickstart)
 - [Verifying it actually works](#-verifying-it-actually-works)
 - [How this was built with Codex / GPT-5.6](#-how-this-was-built-with-codex--gpt-56)
+- [What was built with Qwen](#-what-was-built-with-qwen)
+- [Artefacts from earlier submissions](#-artefacts-from-earlier-submissions)
 - [Project status](#-project-status)
 - [Roadmap](#-roadmap)
 - [Security](#-security)
 - [License](#-license)
+
+<br>
+
+## 🇵🇰 Submission — Alibaba Cloud AI Hackathon Pakistan 2026
+
+**Event:** Alibaba Cloud AI Hackathon Pakistan 2026 (Bano Qabil × Alibaba Cloud × Cognix).
+**Track:** **Open Innovation.**
+
+**Why this fits Open Innovation.** Foxy Audit isn't an assistant or a vertical app — it's
+infrastructure for a problem that currently has no good answer. A small AI company selling into a
+hospital or a bank gets asked *"prove your model didn't leak or alter this data"*, and today the only
+replies are "trust us" or a five-figure third-party audit. The interesting constraint is that the
+proof has to be produced **without reading the thing being proved about**: the evidence must be
+strong enough for an auditor and blind enough that no regulated data ever moves. That constraint is
+what shapes every design decision below, including the Qwen integration — an LLM asked to reason
+about an interaction it is deliberately not allowed to see, and given the option to say so.
+
+**Demonstrated, not asserted.** `python demo/mock_llm.py --scenario all` drives the host-side guard
+against a mock LLM — no key, no network — and prints a PASS/FAIL table over the five cases in
+`demo/mock_llm.py`: a benign prompt, **PHI** under `hipaa`, **PII** under `gdpr`, a prompt-injection
+attempt, and a leaked API key. Each blocked case shows the prompt being stopped *before* the model
+call. The SDK ships policy tags for `hipaa`, `gdpr` and `default`; there is no finance-specific
+ruleset today, so the healthcare and general-PII cases are the ones this demo actually proves.
+
+**What the AI judge actually judges.** It grades **metadata** — hashes, counts, lengths, the policy
+tag, the model id, timestamps. It never receives the prompt or response text, in any provider, on any
+code path. That is enforced by an allowlist validator on ingest (`_metadata_is_content_blind` in
+[`backend/app/schemas.py`](backend/app/schemas.py)) and by a shared projection every judge call goes
+through (`content_blind_meta` in [`backend/app/judge.py`](backend/app/judge.py)).
+
+**Deployment.** The intended target for this submission is **Alibaba Cloud ECS running
+`deploy/docker-compose.prod.yml`** — the same plain-Linux-VM compose file the project already uses,
+re-pointed. *That instance is not stood up yet*; nothing in this repo currently runs on Alibaba
+Cloud, and the only `aliyuncs.com` reference in the codebase is the Qwen **API** endpoint used by the
+judge. Everything described in this README runs locally with `docker compose` today.
 
 <br>
 
@@ -83,6 +137,64 @@ proof of what happened, generated without ever holding what was said.
 <br>
 
 ## 🏗 Architecture
+
+The one line that matters is the **content-blindness boundary**: raw prompt and response text is
+committed to a keyed hash inside the customer's own process and discarded there. It never crosses.
+Everything below the boundary — the chain, the AI judge, the escalation queue, the export — operates
+on hashes and bounded metadata alone.
+
+<!-- Standalone copy for the submission form: docs/architecture.svg (it paints its own
+     surface, so it reads identically on GitHub light and dark). -->
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 340}}}%%
+flowchart TB
+  subgraph HOST["1 · CUSTOMER PROCESS — the only place raw text exists"]
+    APP["Your AI app<br/>@foxy.audit(policy, mode, agent)"]
+    GUARD["Local policy check — PHI · PII · secrets · injection<br/>mode=block stops the call before the model sees it"]
+    HASH["HMAC-SHA-256 commitment — prompt_hash · response_hash<br/>raw text is discarded here"]
+    SPOOL["Durable SQLite spool — bounded metadata only"]
+    APP --> GUARD --> HASH --> SPOOL
+  end
+
+  SPOOL ==>|"CONTENT-BLINDNESS BOUNDARY<br/>only hashes, counts, lengths, policy tag, model id and timestamps cross"| INGEST
+
+  subgraph BACKEND["2 · FOXY AUDIT BACKEND — hashes and bounded metadata only"]
+    INGEST["FastAPI ingest — POST /v1/logs/batch<br/>validates content-blindness"]
+    CHAIN["Per-org hash chain — PostgreSQL · row-level security<br/>sequential SHA-256, append-only"]
+    WORKER["Outbox worker — durable, at-least-once"]
+    JUDGE(["AI judge — grades the METADATA, never the content"])
+    GEM["Gemini<br/>grades only"]
+    GPT["GPT-5.6<br/>grades only"]
+    QWEN["Qwen — the only tool-calling judge<br/>may call a tool INSTEAD of grading"]
+    QUEUE["human_reviews — the escalation queue"]
+    PAGE["Reviewer page — a person decides"]
+    RESOLVED["human_review_resolved appended to audit_events<br/>the graded row's chain_hash does not change"]
+    INGEST --> CHAIN --> WORKER --> JUDGE
+    JUDGE --> GEM
+    JUDGE --> GPT
+    JUDGE --> QWEN
+    QWEN -->|"flag_for_human_review()"| QUEUE --> PAGE --> RESOLVED
+  end
+
+  CHAIN --> EXPORT
+
+  subgraph ANYONE["3 · ANYONE — no account, no dependencies"]
+    EXPORT["Export the ledger<br/>GET /v1/logs/export"]
+    VERIFY["verifier/foxy_verify.py<br/>stdlib only"]
+    RESULT["chain intact<br/>or tampered at row N"]
+    EXPORT --> VERIFY --> RESULT
+  end
+```
+
+A standalone, higher-detail version lives at **[`docs/architecture.svg`](docs/architecture.svg)**.
+
+Two components sit alongside the path above rather than on it: the **PyQt6 desktop companion**
+(`desktop/`), which the SDK pings over UDP so a block raises a card on the developer's screen, and
+**`anchor.py`**, optional EVM/Sepolia anchoring of the chain head.
+
+<details>
+<summary>The original ASCII sketch (kept for reference — it predates the Qwen judge and the review queue)</summary>
 
 ```
 +-----------------------+        UDP ping         +------------------------+
@@ -111,6 +223,8 @@ proof of what happened, generated without ever holding what was said.
 |   export                  |      |   trusts nothing from our servers.  |
 +-------------------------+      +----------------------------------+
 ```
+
+</details>
 
 **Three integration points, in order of how most people touch this product:**
 
@@ -237,6 +351,52 @@ propose an approach before generating code, and reviewing every diff before acce
 
 <br>
 
+## 🐉 What was built with Qwen
+
+The section above is true and stays as written — the hashing, chaining and verification core predates
+both submission windows, and the GPT-5.6 judge and host-side guard were built in the earlier one.
+Here is the equivalent list for **this** window (2026-09-04 → 2026-09-05), in the order it was built.
+Everything named is in the repo and runnable.
+
+- **`backend/app/qwen_judge.py` — Qwen as a third judge provider, and the only agentic one.** The
+  other two providers can only score an event. This one is given a tool, `flag_for_human_review`, and
+  may call it *instead of* returning a grade — so the model decides whether it should be the one
+  deciding at all. Transport is stdlib `urllib` against Qwen's OpenAI-compatible `/chat/completions`
+  endpoint, deliberately adding no new dependency. A tool call is optional and cannot break grading:
+  a malformed call degrades to the ordinary JSON path, and only then to the same honest "nothing
+  graded this row" the other providers return. Shipped as Q1–Q4 (`779b8ed`, `9a40181`, `04ae280`,
+  `7fa7f30`, `c9d5ba5`, `1de4dd1`).
+- **The escalation criterion, rewritten after it was measured (`9f9bacc`).** The first version of the
+  tool description said to call it "when the metadata is genuinely ambiguous". Against the live API,
+  both `qwen-plus` and `qwen-max` then graded *everything* and never escalated — an LLM asked whether
+  it feels uncertain will nearly always find a rationale not to be. The escalation path, which is the
+  entire point of the provider, was unreachable in practice. The fix states **checkable** conditions
+  in terms of the fields the model actually receives, and draws the line by capability rather than
+  confidence: escalate where a reviewer who *can* see the content could decide something a
+  content-blind model structurally cannot. A regression test pins that the prompt keeps a checkable
+  trigger.
+- **The escalation queue — migrations `0072`/`0073` (`7f56f3a`).** A `human_reviews` table plus
+  `GET /v1/reviews` and `POST /v1/reviews/{review_id}/resolve`
+  ([`backend/app/routers/reviews.py`](backend/app/routers/reviews.py)). Resolving appends an
+  append-only `AuditEvent(event_type="human_review_resolved")` **beside** the graded row; the
+  `chain_hash` of the row it concerns does not change. A human's word is annotation, not a rewrite —
+  otherwise a reviewer could silently alter evidence, which is the one thing this product exists to
+  prevent.
+- **The reviewer page — migration `0074` (`7b0deb3`).** The escalation queue rendered in the customer
+  dashboard, so an escalation reaches a person whether or not the notification email arrived. `0074`
+  turns the notice gate into a column, which makes a dropped notice recoverable rather than lost.
+
+**One honest distinction from the Codex section above.** There, Codex/GPT-5.6 was the tool that helped
+*write* the code. Here, Qwen is the model *integrated into the product* — the agentic judge — not the
+assistant that authored the diffs. The work above was built with Claude Code, every diff read before
+it was accepted, as the rest of this repo was. Calling this "built with Qwen" in the authorship sense
+would be the wrong claim, and a submission about tamper-evidence is a poor place to make one.
+
+The escalation-criterion bug is the clearest argument for reading the diffs anyway: it looked correct,
+passed its tests, and only failed when it was run against the real API.
+
+<br>
+
 ## 📊 Project status
 
 **Genuinely working, verified directly against the code:**
@@ -268,6 +428,23 @@ propose an approach before generating code, and reviewing every diff before acce
 4. Evidence API so governance platforms can pull our proof directly
 
 *(Zero-knowledge proof extensions are a genuine long-term direction, not a near-term promise.)*
+
+<br>
+
+## 📁 Artefacts from earlier submissions
+
+Three files in this repo were written for **different events** and are **not part of this
+submission**. They are kept rather than deleted because they are an accurate record of what was
+submitted where, and quietly removing them would be the same kind of history-editing this product
+exists to make detectable. Do not read them as describing the Alibaba Cloud AI Hackathon Pakistan
+2026 entry:
+
+| File | Written for | Status |
+|---|---|---|
+| `JUDGES.html` / `JUDGES.pdf` | **OpenAI Build Week** — its judge testing guide, including that event's evaluation accounts | Superseded. For this submission, use [Judging this? Start here](#-judging-this-start-here) above. |
+| `FoxyAudit-How-We-Build.pdf` | **Build with Gemini · XPRIZE** — a narrative "how we build" piece, dated 2026-08-18 | Superseded, and describes the team rather than the product. |
+
+Nothing in this README depends on any of them.
 
 <br>
 

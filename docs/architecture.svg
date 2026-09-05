@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 1242" width="1160" height="1242" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">Foxy Audit architecture: content-blind audit evidence, end to end</title>
+<desc id="dsc">Raw prompt and response text is hashed inside the customer process and never crosses the content-blindness boundary. Only bounded metadata reaches the FastAPI ingest, a per-org SHA-256 hash chain in PostgreSQL, and an outbox worker that grades that metadata with three AI judges. Qwen is the only tool-calling judge and can call flag_for_human_review instead of grading, which creates a row in the human_reviews queue for the dashboard reviewer page; resolving it appends a human_review_resolved audit event. Anyone can export the ledger and recompute the chain with the dependency-free verifier.</desc>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748B"/></marker></defs>
+<rect x="0" y="0" width="1160" height="1242" rx="0" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="2"/>
+<text x="36" y="44" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="21" font-weight="700" fill="#1E293B" text-anchor="start">Foxy Audit — content-blind audit evidence, end to end</text>
+<text x="36" y="68" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#475569" text-anchor="start">Raw text is committed locally and discarded. Only hashes and bounded metadata ever leave the customer process.</text>
+<rect x="32" y="104" width="1096" height="330" rx="14" fill="#FFFFFF" stroke="#DC2626" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="56" y="136" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#2563EB" text-anchor="start" letter-spacing="0.08em">1</text>
+<text x="82" y="136" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#1E293B" text-anchor="start" letter-spacing="0.08em">CUSTOMER PROCESS — YOUR MACHINE, YOUR VPC</text>
+<text x="82" y="153" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">The only place the raw prompt and response exist.</text>
+<rect x="892" y="122" width="151" height="24" rx="12" fill="#EAEFF3"/>
+<text x="967.7" y="138" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" font-size="11.5" font-weight="600" fill="#475569" text-anchor="middle">sdk/src/foxy_audit/</text>
+<rect x="60" y="182" width="300" height="96" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="210.0" y="220.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Your AI app</text>
+<text x="210.0" y="238.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">@foxy.audit(policy, mode, agent)</text>
+<text x="210.0" y="253.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">one decorator, existing code</text>
+<path d="M 366 230.0 L 424 230.0" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="430" y="182" width="300" height="96" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="580.0" y="220.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Local policy check</text>
+<text x="580.0" y="238.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">PHI · PII · secrets · injection</text>
+<text x="580.0" y="253.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">mode=block stops the call first</text>
+<path d="M 736 230.0 L 794 230.0" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="800" y="182" width="300" height="96" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="950.0" y="220.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">HMAC-SHA-256 commitment</text>
+<text x="950.0" y="238.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">prompt_hash · response_hash</text>
+<text x="950.0" y="253.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">customer-keyed, computed locally</text>
+<path d="M 950 278 L 950 322" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="800" y="322" width="300" height="68" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="950.0" y="353.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Durable SQLite spool</text>
+<text x="950.0" y="371.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">bounded metadata only</text>
+<rect x="60" y="322" width="700" height="68" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="80" y="349" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="600" fill="#1E293B" text-anchor="start">The raw prompt and response are hashed here and dropped.</text>
+<text x="80" y="369" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">They are never written to the spool, never sent, never stored server-side.</text>
+<path d="M 32 476 H 1128" stroke="#DC2626" stroke-width="2.5" stroke-dasharray="9 6" fill="none"/>
+<path d="M 950 434 L 950 472" stroke="#2563EB" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<text x="936" y="448" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#2563EB" text-anchor="end">bounded metadata only</text>
+<rect x="274.0" y="457" width="612" height="38" rx="19" fill="#FFFFFF" stroke="#DC2626" stroke-width="2"/>
+<text x="294.0" y="481" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#DC2626" text-anchor="start" letter-spacing="0.06em">CONTENT-BLINDNESS BOUNDARY</text>
+<text x="586.0" y="481" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="500" fill="#1E293B" text-anchor="start">raw prompt / response text never crosses this line</text>
+<text x="1124" y="516" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="end">What crosses:  hashes · counts · lengths · policy name · model id · timestamps</text>
+<rect x="32" y="536" width="1096" height="494" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="56" y="568" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#2563EB" text-anchor="start" letter-spacing="0.08em">2</text>
+<text x="82" y="568" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#1E293B" text-anchor="start" letter-spacing="0.08em">FOXY AUDIT BACKEND</text>
+<text x="82" y="585" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Receives hashes and bounded metadata. It cannot reconstruct what was said.</text>
+<rect x="928" y="554" width="105" height="24" rx="12" fill="#EAEFF3"/>
+<text x="980.6" y="570" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" font-size="11.5" font-weight="600" fill="#475569" text-anchor="middle">backend/app/</text>
+<rect x="60" y="610" width="320" height="84" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="220.0" y="642.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">FastAPI ingest</text>
+<text x="220.0" y="660.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">POST /v1/logs/batch</text>
+<text x="220.0" y="675.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">validates content-blindness</text>
+<path d="M 386 652 L 444 652" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="450" y="610" width="320" height="84" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="610.0" y="642.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Per-org hash chain</text>
+<text x="610.0" y="660.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">PostgreSQL · row-level security</text>
+<text x="610.0" y="675.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">sequential SHA-256, append-only</text>
+<path d="M 776 652 L 834 652" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="840" y="610" width="260" height="84" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="970.0" y="649.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Outbox worker</text>
+<text x="970.0" y="667.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">durable, at-least-once</text>
+<text x="60" y="728" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#1E293B" text-anchor="start">AI judge — grades the METADATA, never the content</text>
+<path d="M 970 694 V 720.0 H 970 V 746" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="60" y="750" width="280" height="76" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="200.0" y="785.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Gemini</text>
+<text x="200.0" y="803.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">grades only</text>
+<rect x="360" y="750" width="280" height="76" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="500.0" y="785.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">GPT-5.6</text>
+<text x="500.0" y="803.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">grades only</text>
+<rect x="660" y="750" width="440" height="76" rx="10" fill="#2563EB" stroke="#2563EB" stroke-width="1.5"/>
+<text x="880.0" y="785.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#FFFFFF" text-anchor="middle">Qwen  ·  the only tool-calling judge</text>
+<text x="880.0" y="803.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#FFFFFF" text-anchor="middle">may call a tool INSTEAD of returning a grade</text>
+<path d="M 880 826 V 841.0 H 149 V 856" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="60" y="860" width="178" height="24" rx="12" fill="#DC2626"/>
+<text x="148.89999999999998" y="876" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" font-size="11.5" font-weight="600" fill="#FFFFFF" text-anchor="middle">flag_for_human_review()</text>
+<path d="M 251.79999999999998 872 L 314 872" stroke="#DC2626" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="320" y="838" width="250" height="76" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="445.0" y="873.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">human_reviews</text>
+<text x="445.0" y="891.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">the escalation queue</text>
+<path d="M 576 876 L 634 876" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="640" y="838" width="250" height="76" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="765.0" y="873.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Reviewer page</text>
+<text x="765.0" y="891.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">dashboard · a person decides</text>
+<path d="M 896 876 L 954 876" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="960" y="838" width="140" height="76" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1030.0" y="873.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">resolved</text>
+<text x="1030.0" y="891.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">by a human</text>
+<rect x="60" y="944" width="1040" height="60" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="80" y="969" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" font-size="13" font-weight="600" fill="#1E293B" text-anchor="start">human_review_resolved  →  appended to audit_events</text>
+<text x="80" y="989" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Append-only, beside the graded row. The chain_hash of the row it concerns does not change — a human&#x27;s word is annotation, not a rewrite.</text>
+<rect x="32" y="1062" width="1096" height="148" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="56" y="1092" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#2563EB" text-anchor="start" letter-spacing="0.08em">3</text>
+<text x="82" y="1092" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="700" fill="#1E293B" text-anchor="start" letter-spacing="0.08em">ANYONE — TRUST NOTHING, RECOMPUTE EVERYTHING</text>
+<text x="82" y="1109" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">No Foxy account, no network, no dependencies.</text>
+<path d="M 580 1030 L 580 1058" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="60" y="1124" width="330" height="68" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="225.0" y="1155.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">Export the ledger</text>
+<text x="225.0" y="1173.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">GET /v1/logs/export</text>
+<path d="M 396 1158 L 454 1158" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="460" y="1124" width="380" height="68" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="650.0" y="1155.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">verifier/foxy_verify.py</text>
+<text x="650.0" y="1173.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">stdlib only — zero dependencies</text>
+<path d="M 846 1158 L 904 1158" stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#ah)"/>
+<rect x="910" y="1124" width="190" height="68" rx="10" fill="#EAEFF3" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1005.0" y="1155.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1E293B" text-anchor="middle">chain intact</text>
+<text x="1005.0" y="1173.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="middle">or: tampered at row N</text>
+</svg>
