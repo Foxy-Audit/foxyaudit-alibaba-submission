@@ -867,3 +867,56 @@ def test_a_dropped_notice_is_recovered_by_the_next_regrade(
     assert _notified_at(org["org_id"]) is not None, (
         "the recovery sent the notice and did not record it, so a third grade "
         "would send a duplicate")
+
+# ── A5 ─ the lookup that feeds those decisions back to the judge ──────
+
+def _prior(org_id, tag) -> dict:
+    db = SessionLocal()
+    try:
+        return workermod._prior_reviews(db, org_id, tag)
+    finally:
+        db.close()
+
+
+def test_the_prior_review_lookup_counts_only_this_org_and_this_tag(
+        escalated, make_org):
+    """A5 — the second tool's answer, against the real join.
+
+    tests/test_qwen_judge.py mocks the transport and hands `evaluate` a fake
+    callable, so this is the ONLY place the statement itself runs: the join
+    from `human_reviews` to `audit_logs` (which is where `policy_tag` lives,
+    reached by primary key through `audit_log_id`), the resolution FILTERs, and
+    the window. A hermetic suite cannot tell a correct query from a query that
+    never compiled.
+
+    ⚠ AND THE SCOPING IS THE SAFETY PROPERTY, not a nicety. This answer is
+    handed to a third-party model; a lookup that leaked another workspace's
+    counts would be a cross-tenant disclosure with an LLM standing in the exit.
+    """
+    assert _prior(escalated["org_id"], "chat") == {
+        "window_days": 30, "escalations": 1, "cleared": 0,
+        "confirmed_breach": 0, "policy_gap": 0}
+    assert _prior(escalated["org_id"], "hipaa")["escalations"] == 0, (
+        "the lookup answered about a tag this escalation was not filed under")
+    assert _prior(make_org()["org_id"], "chat")["escalations"] == 0, (
+        "one workspace's escalations were counted for another")
+
+
+def test_the_lookup_counts_a_human_resolution_under_its_own_verb(escalated):
+    """The counts are the whole point of the tool.
+
+    A tag humans keep CLEARING should stop being escalated, and the model can
+    only learn that if `cleared` moves when a person clears one. The row stays
+    counted as an escalation as well: it was escalated, and resolving it does
+    not unmake that.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE human_reviews SET status = 'resolved', "
+                          "resolution = 'cleared', resolved_at = now() "
+                          "WHERE org_id = :o"), {"o": str(escalated["org_id"])})
+    counts = _prior(escalated["org_id"], "chat")
+    assert counts["escalations"] == 1, (
+        "a resolved escalation stopped counting as one; the model would read a "
+        "reviewed tag as a tag nobody has ever looked at")
+    assert counts["cleared"] == 1
+    assert counts["confirmed_breach"] == 0 and counts["policy_gap"] == 0

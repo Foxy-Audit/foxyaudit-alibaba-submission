@@ -7,6 +7,12 @@ The tests that matter most are the tool-call ones. A judge that can escalate is
 the point of this provider, and the failure modes are asymmetric: a missed
 escalation silently becomes a pass, while a malformed tool call must not cost a
 grade at all.
+
+A5 adds a SECOND tool, `check_prior_reviews`, and with it a second turn. Three
+properties there are load-bearing and each has a test below that fails without
+its guard: the tool exists only when a lookup was supplied, the extra round trip
+is capped at ONE however the model behaves, and 🔴 no reviewer note ever reaches
+the wire.
 """
 
 from __future__ import annotations
@@ -61,6 +67,61 @@ def _verdict_json(**overrides):
             "risk_score": 3, "decision": "clean", "rules": []}
     body.update(overrides)
     return {"content": json.dumps(body)}
+
+
+def _lookup_call(call_id="call_abc123", name="check_prior_reviews"):
+    """What the model sends when it asks what people already decided."""
+    return {"tool_calls": [{"id": call_id, "type": "function",
+                            "function": {"name": name, "arguments": "{}"}}]}
+
+
+def _counts(**overrides):
+    """What `worker._prior_reviews` returns: counts, and nothing else."""
+    body = {"window_days": 30, "escalations": 4, "cleared": 3,
+            "confirmed_breach": 1, "policy_gap": 0}
+    body.update(overrides)
+    return body
+
+
+def _install_turns(monkeypatch, payloads, settings=None, sent=None):
+    """Answer each successive request with the next payload, capturing bodies.
+
+    Fails LOUDLY on an unscripted request rather than replaying the last
+    payload: the cap on extra round trips is the thing several of these tests
+    exist to prove, and a fixture that answered forever would hide a loop.
+    """
+    monkeypatch.setattr(qwen_judge, "get_settings", lambda: settings or _settings())
+    remaining = list(payloads)
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        if sent is not None:
+            sent.append(body)
+        assert remaining, (
+            f"the judge made request {len(sent or [])} with only "
+            f"{len(payloads)} scripted — an unbounded round trip")
+        return _Response(remaining.pop(0))
+
+    monkeypatch.setattr(qwen_judge.urllib_request, "urlopen", fake_urlopen)
+
+
+class _Lookup:
+    """A stand-in for the callable `worker._judge_verdict` binds."""
+
+    def __init__(self, result=None, raises=None):
+        self.result = _counts() if result is None else result
+        self.raises = raises
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        if self.raises is not None:
+            raise self.raises
+        return self.result
+
+
+def _tool_names(body):
+    return [t["function"]["name"] for t in body["tools"]]
 
 
 def _install(monkeypatch, payload, settings=None, captured=None):
@@ -308,6 +369,413 @@ def test_a_malformed_tool_call_with_no_usable_content_is_unknown(monkeypatch):
     result = qwen_judge.evaluate({"token_count": 1})
     assert result.decision == "unknown"
     assert result.graded_by == "none"
+
+
+# ── A5 ─ the second tool, and the one extra round trip ───────────────
+
+def test_the_lookup_tool_is_offered_only_when_a_callable_is_supplied(monkeypatch):
+    """The default has to be indistinguishable from before A5.
+
+    A model told about a lookup nobody can serve spends its turn asking for one,
+    and a turn spent on an unanswerable tool call comes back with no verdict in
+    it — so offering the tool without a way to answer it does not degrade the
+    grade, it loses it.
+    """
+    without = {}
+    _install(monkeypatch, _chat(_verdict_json()), captured=without)
+    qwen_judge.evaluate({"token_count": 1})
+    assert _tool_names(without["body"]) == ["flag_for_human_review"], (
+        "the lookup was offered with no callable to answer it")
+
+    with_lookup = []
+    _install_turns(monkeypatch, [_chat(_verdict_json())], sent=with_lookup)
+    qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+    assert _tool_names(with_lookup[0]) == ["flag_for_human_review",
+                                           "check_prior_reviews"]
+
+
+def test_the_prompt_names_the_lookup_and_its_cap_only_when_it_is_offered(monkeypatch):
+    """The prompt and the transport have to say the same thing.
+
+    ⚠ THE CAP IS STATED AS A FACT ABOUT THE TOOL, not as a request, and that is
+    the lesson of 9f9bacc applied to a limit instead of a trigger. "You may ask
+    once" is a rule a model can rationalise around; "after one call it is
+    withdrawn" describes what `evaluate` actually does on turn two, where the
+    tool is genuinely absent from the request.
+    """
+    offered = []
+    _install_turns(monkeypatch, [_chat(_verdict_json())], sent=offered)
+    qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+    system = offered[0]["messages"][0]["content"]
+    assert "check_prior_reviews" in system
+    assert "ONCE" in system and "withdrawn" in system, (
+        "the model was told the tool exists but not that asking twice fails")
+    assert "counts only" in system, (
+        "the model must be told the lookup carries no content, or it will read "
+        "the absence of detail as a finding")
+
+    silent = {}
+    _install(monkeypatch, _chat(_verdict_json()), captured=silent)
+    qwen_judge.evaluate({"token_count": 1})
+    assert "check_prior_reviews" not in silent["body"]["messages"][0]["content"], (
+        "the prompt advertised a tool that was never offered")
+
+
+def test_a_lookup_is_executed_and_answered_as_a_tool_message(monkeypatch):
+    """The whole point: the model asks, a human's decisions come back, it grades."""
+    sent = []
+    lookup = _Lookup()
+    _install_turns(monkeypatch, [_chat(_lookup_call()),
+                                 _chat(_verdict_json(decision="clean"))], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1, "policy_tag": "hipaa"},
+                                 prior_reviews=lookup)
+
+    assert lookup.calls == 1, "the lookup was offered and then not run"
+    assert len(sent) == 2, "one lookup must cost exactly one extra round trip"
+    answer = sent[1]["messages"][-1]
+    assert answer["role"] == "tool"
+    assert answer["tool_call_id"] == "call_abc123", (
+        "the tool result did not answer the call the model actually made")
+    assert json.loads(answer["content"]) == {
+        "window_days": 30, "escalations": 4, "cleared": 3,
+        "confirmed_breach": 1, "policy_gap": 0, "policy_tag": "hipaa"}
+    assert result.decision == "clean" and result.graded_by == "ai"
+
+
+def test_the_second_request_carries_the_original_messages_and_the_tool_result(
+        monkeypatch):
+    """These endpoints hold no state.
+
+    A tool result sent without the system prompt, the metadata and the assistant
+    message it answers is a tool result answering nothing — and the failure is
+    silent, because the model still replies, just without ever having seen the
+    event it is grading.
+    """
+    sent = []
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat(_verdict_json())],
+                   sent=sent)
+    qwen_judge.evaluate({"token_count": 1}, prior_reviews=_Lookup())
+
+    first, second = sent
+    assert second["messages"][:2] == first["messages"], (
+        "the system prompt and the metadata were dropped from the second turn")
+    assert [m["role"] for m in second["messages"]] == [
+        "system", "user", "assistant", "tool"]
+    assistant = second["messages"][2]
+    assert assistant["tool_calls"][0]["id"] == second["messages"][3]["tool_call_id"], (
+        "the assistant message and the tool result reference different calls")
+    assert second["model"] == first["model"]
+
+
+def test_a_second_lookup_request_is_refused_rather_than_served(monkeypatch):
+    """The cap, expressed as the only thing a model cannot talk its way past.
+
+    ⚠ THE ASSERTION IS ON THE TOOL LIST, NOT ONLY ON THE CALL COUNT. A cap
+    enforced by declining to execute a second call would still let the model
+    spend its last turn asking, and asking is what it does when the tool is
+    visible. Withdrawing it from the request is what makes the second ask
+    impossible rather than merely unproductive.
+    """
+    sent = []
+    lookup = _Lookup()
+    asks_again = _chat({**_lookup_call("call_second"),
+                        **_verdict_json(decision="breach", policy_breach=True)})
+    _install_turns(monkeypatch, [_chat(_lookup_call()), asks_again], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert lookup.calls == 1, "the lookup ran twice for one grade"
+    assert len(sent) == 2, "a second ask bought a third round trip"
+    assert _tool_names(sent[1]) == ["flag_for_human_review"], (
+        "the lookup was still on the table for the second turn")
+    assert result.decision == "breach", (
+        "a model that asked twice lost its grade; the refusal must not cost one")
+
+
+def test_an_escalation_on_turn_one_still_works_when_the_lookup_is_offered(
+        monkeypatch):
+    """A second tool must not cost the first one its turn."""
+    sent = []
+    lookup = _Lookup()
+    _install_turns(monkeypatch, [_chat(_tool_call(json.dumps({
+        "reason": "a regulated tag with no signals", "risk_score": 80})))],
+        sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert result.decision == "human_review"
+    assert result.risk_score == 80
+    assert lookup.calls == 0, "an escalation spent a lookup it never asked for"
+    assert len(sent) == 1, "an escalation is terminal and costs one round trip"
+
+
+def test_a_message_asking_for_both_escalates_without_spending_the_lookup(
+        monkeypatch):
+    """Escalation ends the grade; a lookup only defers it.
+
+    Serving the lookup first would spend a round trip and then throw away the
+    answer the model had already given.
+    """
+    sent = []
+    lookup = _Lookup()
+    both = {"tool_calls": [
+        _tool_call(json.dumps({"reason": "needs a person",
+                               "risk_score": 65}))["tool_calls"][0],
+        _lookup_call()["tool_calls"][0]]}
+    _install_turns(monkeypatch, [_chat(both)], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert result.decision == "human_review" and result.risk_score == 65
+    assert lookup.calls == 0
+    assert len(sent) == 1
+
+
+def test_the_model_can_escalate_after_reading_the_prior_reviews(monkeypatch):
+    """A1's loop, closed: human decisions reach the agent, and it acts on them.
+
+    This is the sequence the phase exists for — consult what people ruled, then
+    decide a person should rule again. `flag_for_human_review` therefore has to
+    survive into turn two, which is why the cap withdraws only the lookup.
+    """
+    sent = []
+    lookup = _Lookup(_counts(escalations=6, cleared=0, confirmed_breach=6))
+    _install_turns(monkeypatch, [
+        _chat(_lookup_call()),
+        _chat(_tool_call(json.dumps({"reason": "humans confirmed this tag six times",
+                                     "risk_score": 88})))], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert result.decision == "human_review"
+    assert result.risk_score == 88
+    assert lookup.calls == 1
+    assert "flag_for_human_review" in _tool_names(sent[1]), (
+        "the cap withdrew the escalation tool as well as the lookup")
+
+
+def test_a_lookup_that_raises_degrades_to_a_graded_verdict(monkeypatch):
+    """⚠ A JUDGE THAT IS BAD AT USING A TOOL MUST NOT BECOME A JUDGE THAT CANNOT
+    GRADE — this module's docstring, applied to the second tool.
+
+    And the second turn still HAPPENS. Turn one spent itself on a tool call and
+    holds no verdict to fall back on, so skipping it would turn a database blip
+    into an ungraded row: exactly the degradation the rule forbids.
+    """
+    sent = []
+    lookup = _Lookup(raises=RuntimeError("connection to the ledger dropped"))
+    _install_turns(monkeypatch, [_chat(_lookup_call()),
+                                 _chat(_verdict_json(decision="breach",
+                                                     policy_breach=True))], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert result.decision == "breach", "a failed lookup cost the grade"
+    assert result.graded_by == "ai"
+    answer = json.loads(sent[1]["messages"][-1]["content"])
+    assert "error" in answer and "unavailable" in answer["error"]
+    assert "connection to the ledger dropped" not in json.dumps(sent[1]), (
+        "the exception message reached the model; it can carry a query or a row")
+
+
+def test_a_lookup_that_answers_with_a_non_mapping_degrades_to_a_graded_verdict(
+        monkeypatch):
+    sent = []
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat(_verdict_json())],
+                   sent=sent)
+    result = qwen_judge.evaluate({"token_count": 1},
+                                 prior_reviews=_Lookup(result=["not", "a", "dict"]))
+    assert result.decision == "clean" and result.graded_by == "ai"
+    assert "error" in json.loads(sent[1]["messages"][-1]["content"])
+
+
+def test_a_reviewer_note_never_reaches_the_model(monkeypatch):
+    """🔴 THE ONE RULE THIS PRODUCT CANNOT BEND.
+
+    `human_reviews.note` is the single field a human types freely — "annotation,
+    not evidence" (`models.HumanReview`) — and it is why both /v1/reviews verbs
+    require an authenticated user rather than an SDK key. A reviewer explaining
+    why they cleared something will quote the prompt they were shown, so the note
+    is raw content sitting in a column next to the counts this tool returns.
+
+    Asserted against the BYTES OF EVERY REQUEST, not against the projection
+    helper, for the reason tests/integration/test_judge_content_blindness.py
+    exists: a helper that filters correctly proves nothing about a caller that
+    forgets to call it, and this codebase shipped exactly that bug once, with a
+    green test watching.
+
+    The callable here returns everything a careless `SELECT *` would hand back.
+    Only counts may survive.
+    """
+    sentinel = "MRN-4417829 the patient asked about her HIV results"
+    sent = []
+    leaky = _Lookup({
+        **_counts(),
+        "note": sentinel,
+        "reason": f"escalated because {sentinel}",
+        "resolved_by": "reviewer@hospital.example",
+        "id": "8f2c1b7e-0000-4000-8000-000000000001",
+        "resolved_at": "2026-09-04T11:02:33+00:00",
+    })
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat(_verdict_json())],
+                   sent=sent)
+
+    qwen_judge.evaluate({"token_count": 1, "policy_tag": "hipaa"},
+                        prior_reviews=leaky)
+
+    wire = json.dumps(sent)
+    assert sentinel not in wire, "a reviewer's note reached a third party"
+    assert "reviewer@hospital.example" not in wire, "a reviewer was named on the wire"
+    assert "8f2c1b7e" not in wire, "a row id reached the model"
+    assert "2026-09-04T11:02:33" not in wire, (
+        "a timestamp finer than the window reached the model")
+    assert json.loads(sent[1]["messages"][-1]["content"]) == {
+        "window_days": 30, "escalations": 4, "cleared": 3,
+        "confirmed_breach": 1, "policy_gap": 0, "policy_tag": "hipaa"}, (
+        "the answer is an allowlist of counts; anything else is a leak waiting "
+        "for the day someone widens the query")
+
+
+def test_the_answered_policy_tag_comes_from_the_metadata_not_the_lookup(monkeypatch):
+    """The one string in the answer, and it is not read from the database.
+
+    It echoes the tag the model was ALREADY sent inside `metadata`, so it adds no
+    byte that was not on the wire a turn ago. Reading it from the lookup instead
+    would open a string-shaped channel out of a table that holds a free-text note.
+    """
+    sent = []
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat(_verdict_json())],
+                   sent=sent)
+    qwen_judge.evaluate(
+        {"token_count": 1, "policy_tag": "hipaa"},
+        prior_reviews=_Lookup(_counts(policy_tag="NOT-FROM-THE-DATABASE")))
+    answer = json.loads(sent[1]["messages"][-1]["content"])
+    assert answer["policy_tag"] == "hipaa"
+    assert "NOT-FROM-THE-DATABASE" not in json.dumps(sent)
+
+
+def test_only_integers_survive_the_projection(monkeypatch):
+    """Counts are coerced rather than trusted, so no string rides out as a count."""
+    sent = []
+    _install_turns(monkeypatch, [_chat(_lookup_call()), _chat(_verdict_json())],
+                   sent=sent)
+    qwen_judge.evaluate(
+        {"token_count": 1},
+        prior_reviews=_Lookup(_counts(cleared="three of them, per Dr Ahmed",
+                                     escalations=-9, confirmed_breach=None)))
+    answer = json.loads(sent[1]["messages"][-1]["content"])
+    assert answer["cleared"] == 0, "a string was passed through as a count"
+    assert answer["escalations"] == 0, "a negative count was not clamped"
+    assert answer["confirmed_breach"] == 0
+    assert "Dr Ahmed" not in json.dumps(sent)
+
+
+def test_a_lookup_call_with_no_id_is_still_answerable(monkeypatch):
+    """Some OpenAI-compatible endpoints omit the tool_call id, and Qwen's exact
+    shape could not be verified without a live key. The `tool` message has to
+    reference something, so the assistant message is rebuilt with the same id
+    either way."""
+    sent = []
+    lookup = _Lookup()
+    _install_turns(monkeypatch, [_chat(_lookup_call(call_id=None)),
+                                 _chat(_verdict_json())], sent=sent)
+
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+
+    assert lookup.calls == 1
+    assistant, answer = sent[1]["messages"][2], sent[1]["messages"][3]
+    assert assistant["tool_calls"][0]["id"] == answer["tool_call_id"]
+    assert answer["tool_call_id"], "the tool result referenced an empty call id"
+    assert result.decision == "clean"
+
+
+def test_a_lookup_call_is_ignored_when_no_callable_was_supplied(monkeypatch):
+    """Defence in depth: the tool is not offered, so this should be unreachable —
+    but a model that calls it anyway must not get a second turn on a lookup
+    nobody can run."""
+    sent = []
+    message = {**_lookup_call(), **_verdict_json()}
+    _install_turns(monkeypatch, [_chat(message)], sent=sent)
+    result = qwen_judge.evaluate({"token_count": 1})
+    assert len(sent) == 1, "an unofferable tool bought a round trip"
+    assert result.decision == "clean"
+
+
+def test_a_call_to_an_unknown_tool_does_not_trigger_the_lookup(monkeypatch):
+    sent = []
+    lookup = _Lookup()
+    message = {**_lookup_call(name="drop_the_ledger"), **_verdict_json()}
+    _install_turns(monkeypatch, [_chat(message)], sent=sent)
+    result = qwen_judge.evaluate({"token_count": 1}, prior_reviews=lookup)
+    assert lookup.calls == 0, "an unknown tool name ran the lookup"
+    assert len(sent) == 1
+    assert result.decision == "clean"
+
+
+# ── A5 ─ the worker half, read structurally ──────────────────────
+
+def _worker_source():
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parents[1]
+            / "app" / "worker.py").read_text(encoding="utf-8")
+
+
+def test_the_prior_review_query_selects_no_reviewer_note():
+    """🔴 The other half of the note guard, and the half that is nearest the
+    note itself.
+
+    `qwen_judge` narrows the lookup result at the wire boundary, but the query is
+    where a `SELECT *` or a helpfully added column would put a note into the
+    process in the first place. Both have to hold. Parsed rather than grepped, so
+    it reads the SQL and cannot be satisfied by a comment saying the right thing.
+    """
+    import ast
+
+    tree = ast.parse(_worker_source())
+    sql = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and any(getattr(t, "id", None) == "_PRIOR_REVIEWS_SQL"
+                        for t in node.targets)):
+            sql = next(c.value for c in ast.walk(node)
+                       if isinstance(c, ast.Constant) and isinstance(c.value, str))
+    assert sql is not None, "_PRIOR_REVIEWS_SQL is gone; re-aim this test"
+    lowered = sql.lower()
+    assert "note" not in lowered, (
+        "the prior-review query reads `note`, the one free-text field a human "
+        "writes; it must never leave the database on this path")
+    assert "select *" not in lowered, "a star select would pick up `note` tomorrow"
+    for scope in ("hr.org_id = :oid", "al.policy_tag = :tag"):
+        assert scope in sql, f"the lookup is not scoped by {scope}"
+    assert "make_interval(days => :days)" in sql, "the window is unbounded"
+
+
+def test_the_worker_binds_the_lookup_only_for_the_agentic_judge():
+    """Structural, for the reason the other worker tests here are: importing
+    `app.worker` constructs the SQLAlchemy engine and so needs a driver.
+
+    Pins that `prior_reviews=` is passed to `qwen_judge.evaluate` and to neither
+    of the others — gemini and openai cannot call a tool at all, and handing them
+    a callable would be a silent no-op that reads like a feature.
+    """
+    import ast
+
+    fn = next(n for n in ast.walk(ast.parse(_worker_source()))
+              if isinstance(n, ast.FunctionDef) and n.name == "_judge_verdict")
+    bound = {}
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "evaluate":
+            continue
+        provider = getattr(node.func.value, "id", None)
+        bound[provider] = {kw.arg for kw in node.keywords}
+    assert "prior_reviews" in bound.get("qwen_judge", set()), (
+        "the agentic judge is offered no lookup; A1's decisions never reach it")
+    for provider in ("gemini", "openai_judge"):
+        assert "prior_reviews" not in bound.get(provider, set()), (
+            f"{provider} was handed a lookup it has no tool to call")
 
 
 # ── how an escalation merges with the other judges ────────────────────────────

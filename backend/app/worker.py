@@ -152,6 +152,79 @@ def _org_history(db: Session, org_id) -> dict:
     }
 
 
+#: A5 — what have HUMANS already decided about THIS tag?
+#:
+#: `_org_history` above answers a different question and cannot answer this
+#: one: it is an ORG-WIDE 7-day count of breaches, graded rows and a breach
+#: rate, so it says nothing about whether this policy_tag has ever been
+#: escalated or what a reviewer ruled when it was. A tag a human has cleared
+#: three times should not be escalated a fourth. Bound into a callable and
+#: handed to `qwen_judge.evaluate`, which offers it to the model as the
+#: `check_prior_reviews` tool — so A1's human decisions feed back into the
+#: agent instead of stopping at the reviewer's screen.
+#:
+#: 🔴 `note` IS NOT SELECTED, AND MUST NEVER BE. It is the one field a human
+#: writes freely (`models.HumanReview`: "annotation, not evidence"), it is why
+#: both /v1/reviews verbs require an authenticated user rather than an SDK key,
+#: and a reviewer explaining a decision will quote the prompt they were shown.
+#: Every column here is a COUNT. `qwen_judge._prior_reviews_payload` narrows the
+#: result again at the wire boundary, so this statement AND that allowlist both
+#: have to fail before a note could move — belt and braces, deliberately, for
+#: the one rule this product cannot bend.
+#:
+#: ⚠ THE INDEX. `ix_human_reviews_org_status_created` (0072) drives this:
+#: `org_id` is its leading column, and `created_at`, though third, is still
+#: evaluated inside the index, so the window costs no heap access. `status` is
+#: skipped rather than unused — this counts BOTH statuses, because a pending
+#: escalation is as much a fact about the tag as a resolved one. `policy_tag` is
+#: not in that index and cannot be: it lives on `audit_logs`, and is reached by
+#: PRIMARY KEY through `audit_log_id`, once per candidate row. The candidate set
+#: is one org's escalations in 30 days, small by construction — only rows a
+#: judge escalated are in this table at all. No new index, and no migration.
+_PRIOR_REVIEW_WINDOW_DAYS = 30
+
+_PRIOR_REVIEWS_SQL = text(
+    """
+    SELECT COUNT(*)                                                   AS escalations,
+           COUNT(*) FILTER (WHERE hr.resolution = 'cleared')          AS cleared,
+           COUNT(*) FILTER (WHERE hr.resolution = 'confirmed_breach') AS confirmed_breach,
+           COUNT(*) FILTER (WHERE hr.resolution = 'policy_gap')       AS policy_gap
+      FROM human_reviews hr
+      JOIN audit_logs   al ON al.id = hr.audit_log_id
+     WHERE hr.org_id = :oid
+       AND al.policy_tag = :tag
+       AND hr.created_at >= now() - make_interval(days => :days)
+    """
+)
+
+
+def _prior_reviews(db: Session, org_id, policy_tag) -> dict:
+    """How humans ruled on past escalations for this org's `policy_tag`.
+
+    ⚠ RUN IN A SAVEPOINT, and that is not decoration. This is called from
+    inside `qwen_judge.evaluate`, which swallows an exception here and grades
+    without the answer — but a failed statement aborts the whole Postgres
+    transaction, so without the savepoint that promise would be a lie: the
+    grade would be computed and the write-back would then fail on a poisoned
+    session, `_handle_failure` would send the row round again, and a lookup
+    blip would cost the grade it was supposed to survive. `begin_nested` rolls
+    back to the savepoint and re-raises, so the session the caller returns to
+    is still usable.
+    """
+    oid = org_id if isinstance(org_id, uuid.UUID) else uuid.UUID(str(org_id))
+    with db.begin_nested():
+        row = db.execute(_PRIOR_REVIEWS_SQL, {
+            "oid": oid, "tag": policy_tag,
+            "days": _PRIOR_REVIEW_WINDOW_DAYS}).mappings().first()
+    return {
+        "window_days": _PRIOR_REVIEW_WINDOW_DAYS,
+        "escalations": int(row["escalations"]),
+        "cleared": int(row["cleared"]),
+        "confirmed_breach": int(row["confirmed_breach"]),
+        "policy_gap": int(row["policy_gap"]),
+    }
+
+
 def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
                    history: dict):
     """Grade with the judge(s) THIS org chose, on the key THEY pay for.
@@ -212,10 +285,23 @@ def _judge_verdict(db: Session, org_id, meta: dict, policy_config: dict | None,
             if routing.can_call("openai")
             else openai_judge._fallback(routing.problems.get("openai", "no_api_key")))
     if routing.uses_qwen:
+        # THE AGENTIC JUDGE, and the only one handed a lookup — the other two
+        # cannot call a tool at all. `prior_reviews` is bound HERE, to this
+        # session, this org and this row's tag, because `qwen_judge` imports no
+        # database module and must not start: its `evaluate` docstring says why.
+        #
+        # ⚠ THE TAG COMES FROM THE PROJECTED `meta`, not from the raw row, so
+        # the model is answered about exactly the tag it was shown. `policy_tag`
+        # survives `judge.content_blind_meta`; `policy_tag_raw`, the
+        # caller-controlled free-text one, does not — and must not become the
+        # thing this query groups by, or S12's leak would reopen inside a
+        # WHERE clause.
         verdicts.append(
             qwen_judge.evaluate(meta, policy_config, history=history,
                                 api_key=routing.qwen_key,
-                                model=routing.qwen_model)
+                                model=routing.qwen_model,
+                                prior_reviews=lambda: _prior_reviews(
+                                    db, org_id, meta.get("policy_tag")))
             if routing.can_call("qwen")
             else qwen_judge._fallback(routing.problems.get("qwen", "no_api_key")))
     if not verdicts:
