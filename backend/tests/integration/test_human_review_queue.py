@@ -947,9 +947,13 @@ def test_a_tag_no_human_has_reviewed_is_not_offered_the_lookup_at_all(
     _ingest(client, org)
     _grade_all()
 
-    assert len(sent) == 1, (
-        f"expected exactly one round trip when the lookup is withheld; the "
-        f"judge made {len(sent)} — an offered-and-asked tool costs a second")
+    # ⚠ NOT `len(sent) == 1`. That was here and it was vacuous: this stub answers
+    # turn one with a finished verdict and never issues a tool call, so exactly
+    # one round trip happens whether or not the tool was offered. It would have
+    # stayed green through the precise regression its own message described —
+    # the third guard-that-cannot-fail in this feature. The tools array in the
+    # request is the only thing that can tell the two states apart.
+    assert sent, "the judge was never called"
     assert "check_prior_reviews" not in _offered_tools(sent[0]), (
         "a workspace with no reviewed escalations was still offered the "
         "history lookup, so the model can spend a turn learning nothing and "
@@ -958,13 +962,22 @@ def test_a_tag_no_human_has_reviewed_is_not_offered_the_lookup_at_all(
         "withholding the history lookup also removed the escalation tool")
 
 
-def test_a_tag_a_human_has_reviewed_is_offered_the_lookup(
+def _resolve_all(org_id, resolution="cleared") -> None:
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE human_reviews SET status = 'resolved', "
+                          "resolution = :r, resolved_at = now() "
+                          "WHERE org_id = :o"),
+                     {"o": str(org_id), "r": resolution})
+
+
+def test_a_tag_a_human_has_RULED_on_is_offered_the_lookup(
         escalated, client, monkeypatch):
     """The other half, and without it the test above passes by deleting A5.
 
-    `escalated` leaves one review row for tag `chat` in this workspace, so the
-    lookup now HAS something to say and must be offered.
+    ⚠ THE REVIEW IS RESOLVED FIRST, and that is the point rather than setup
+    noise — see the test below.
     """
+    _resolve_all(escalated["org_id"])
     sent: list = []
     _speak_capturing(monkeypatch, _graded(), sent)
     _ingest(client, escalated, seed="b")
@@ -974,6 +987,55 @@ def test_a_tag_a_human_has_reviewed_is_offered_the_lookup(
     assert "check_prior_reviews" in _offered_tools(sent[0]), (
         "a workspace whose humans HAVE ruled on this tag was not offered the "
         "lookup, so A1's decisions no longer reach the judge at all")
+
+
+def test_an_escalation_nobody_has_ruled_on_yet_is_not_a_prior_review(
+        escalated, client, monkeypatch):
+    """🔴 A PENDING ROW IS NOT A HUMAN DECISION, and gating on one was a bug.
+
+    `human_reviews.escalations` is an unfiltered `COUNT(*)`, so it counts rows
+    the queue has not answered yet. Gating the offer on it hands the lookup to a
+    tag no person has ruled on — the exact condition this feature withholds it
+    for — and the judge is told "there is history here" when all that exists is
+    its own escalation.
+
+    🔴 AND ON A RETRY IT IS CIRCULAR. `_handle_failure` sends a failed row round
+    again, so a row whose first grade filed an escalation is regraded with that
+    escalation sitting in the table. Counting it would feed the model its own
+    note back as corroboration from a human. `escalated` leaves exactly that
+    state — one PENDING escalation, no resolution — so this is the real shape,
+    not a contrived one.
+    """
+    sent: list = []
+    _speak_capturing(monkeypatch, _graded(), sent)
+    _ingest(client, escalated, seed="c")
+    _grade_all()
+
+    assert sent, "the judge was never called"
+    assert "check_prior_reviews" not in _offered_tools(sent[0]), (
+        "a still-pending escalation counted as a prior human review, so the "
+        "judge was offered a history no person has written yet")
+
+
+def test_a_bare_escalation_count_does_not_open_the_gate(monkeypatch):
+    """The unit-level twin of the test above: `escalations` alone, with every
+    resolution still zero, must not offer the lookup."""
+    monkeypatch.setattr(workermod, "_prior_reviews", lambda *_a: {
+        "window_days": 30, "escalations": 3, "cleared": 0,
+        "confirmed_breach": 0, "policy_gap": 0})
+    assert workermod._prior_reviews_lookup(None, "org", "chat") is None, (
+        "three escalations nobody has ruled on were treated as human history")
+
+
+def test_a_malformed_lookup_answer_withholds_instead_of_escaping(monkeypatch):
+    """⚠ THE READ IS OUTSIDE THE `try`, so a KeyError here does NOT return None —
+    it escapes into `_grade_one`, fails the row, and on every qwen row in a batch
+    trips the PROCESS-WIDE breaker in `_loop`, pausing grading for every tenant.
+    A shape change in the lookup must degrade, not detonate.
+    """
+    monkeypatch.setattr(workermod, "_prior_reviews",
+                        lambda *_a: {"window_days": 30})
+    assert workermod._prior_reviews_lookup(None, "org", "chat") is None
 
 
 def test_the_window_days_field_does_not_count_as_history(monkeypatch):
@@ -1010,10 +1072,11 @@ def test_an_informative_lookup_is_served_already_fetched(escalated):
     that was already read, so a model that asks costs no second statement — which
     is what makes running it up front cheaper than the round trip it replaces.
     """
+    _resolve_all(escalated["org_id"])
     db = SessionLocal()
     try:
         lookup = workermod._prior_reviews_lookup(db, escalated["org_id"], "chat")
-        assert lookup is not None, "an escalated tag was treated as no history"
+        assert lookup is not None, "a tag a human ruled on was treated as no history"
         first = lookup()
         assert first["escalations"] == 1
         assert lookup() is first, (

@@ -203,31 +203,50 @@ _PRIOR_REVIEWS_SQL = text(
 )
 
 
-#: The four columns that mean a human ACTUALLY LOOKED at this tag.
+#: The three columns that mean a human ACTUALLY RULED on this tag.
 #:
-#: ⚠ NOT `qwen_judge._PRIOR_REVIEW_COUNTS`, and the difference is the whole
-#: fix. That tuple is the WIRE ALLOWLIST — what may be serialised to the model —
-#: and it includes `window_days`, which is always 30. Reusing it here reads as
-#: the obvious de-duplication and offers the lookup on EVERY row, undoing the
-#: withholding completely while looking correct. Written first as exactly that
-#: mistake and caught by
-#: `test_the_window_days_field_does_not_count_as_history`, which is why that
-#: test exists rather than being a restatement of the code.
-_HISTORY_COUNTS = ("escalations", "cleared", "confirmed_breach", "policy_gap")
+#: ⚠ `escalations` IS DELIBERATELY ABSENT, and its presence was a bug. That
+#: column is an unfiltered `COUNT(*)` over `human_reviews`, so it counts rows
+#: that are still PENDING — an escalation nobody has looked at yet. Gating on it
+#: offered the lookup to tags no human had ruled on at all, which is the exact
+#: condition this whole change exists to withhold it for.
+#:
+#: 🔴 AND THE RETRY CASE IS WORSE THAN MERELY WRONG. `_handle_failure` sends a
+#: failed row round again, so a row whose FIRST grade filed an escalation is
+#: regraded with that escalation already in the table. Gating on `escalations`
+#: would then hand the judge, as "prior review history", the note it wrote about
+#: this very event — a model reading its own reasoning back to itself and
+#: mistaking it for corroboration from a person. The three resolution verbs are
+#: written only by `POST /v1/reviews/{id}/resolve`, so they cannot say a human
+#: ruled unless one did.
+#:
+#: ⚠ NOT `qwen_judge._PRIOR_REVIEW_COUNTS` either, and that difference is the
+#: rest of the fix. That tuple is the WIRE ALLOWLIST — what may be serialised to
+#: the model — and it includes `window_days`, which is always 30. Reusing it here
+#: reads as the obvious de-duplication and offers the lookup on EVERY row,
+#: undoing the withholding completely while looking correct. Written first as
+#: exactly that mistake and caught by
+#: `test_the_window_days_field_does_not_count_as_history`.
+_RESOLUTION_COUNTS = ("cleared", "confirmed_breach", "policy_gap")
 
 
 def _prior_reviews(db: Session, org_id, policy_tag) -> dict:
     """How humans ruled on past escalations for this org's `policy_tag`.
 
-    ⚠ RUN IN A SAVEPOINT, and that is not decoration. This is called from
-    inside `qwen_judge.evaluate`, which swallows an exception here and grades
-    without the answer — but a failed statement aborts the whole Postgres
-    transaction, so without the savepoint that promise would be a lie: the
-    grade would be computed and the write-back would then fail on a poisoned
-    session, `_handle_failure` would send the row round again, and a lookup
-    blip would cost the grade it was supposed to survive. `begin_nested` rolls
-    back to the savepoint and re-raises, so the session the caller returns to
-    is still usable.
+    ⚠ RUN IN A SAVEPOINT, and that is not decoration — but the caller it used to
+    name is gone. This ran inside `qwen_judge.evaluate`, which swallowed the
+    exception; it is now called eagerly by `_prior_reviews_lookup`, which catches
+    it there instead. THE SAVEPOINT IS STILL LOAD-BEARING, and the reason is
+    unchanged by the move: a failed statement aborts the whole Postgres
+    transaction, so catching the exception is not enough on its own. Without
+    `begin_nested` the grade would be computed and the write-back would then fail
+    on a poisoned session, `_handle_failure` would send the row round again, and
+    a lookup blip would cost the grade it was supposed to survive.
+
+    Said plainly because a docstring that names a caller which no longer exists
+    is how the next reader concludes the savepoint is vestigial and deletes it.
+    `begin_nested` rolls back to the savepoint and re-raises, so the session
+    `_prior_reviews_lookup` returns to is still usable.
     """
     oid = org_id if isinstance(org_id, uuid.UUID) else uuid.UUID(str(org_id))
     with db.begin_nested():
@@ -293,7 +312,16 @@ def _prior_reviews_lookup(db: Session, org_id, policy_tag):
         log.warning("prior-review lookup failed for org %s (%s); grading without "
                     "it", org_id, type(exc).__name__)
         return None
-    if not any(answer[key] for key in _HISTORY_COUNTS):
+    # ⚠ `.get`, NOT `answer[key]`, AND THE READ IS THE RISK. A KeyError here is
+    # raised OUTSIDE the `except` above, so it escapes into `_grade_one` and
+    # marks the row failed — and it would do that for every qwen row in the
+    # batch, which trips the PROCESS-WIDE circuit breaker in `_loop` and pauses
+    # grading for every tenant. A missing key means the lookup's shape changed,
+    # which is precisely when this must degrade rather than detonate: absent
+    # reads as zero, the tool is withheld, and the grade still happens. That is
+    # the promise the docstring above makes and this line is where it was
+    # quietly not kept.
+    if not any(answer.get(key) for key in _RESOLUTION_COUNTS):
         return None
     return lambda: answer
 
