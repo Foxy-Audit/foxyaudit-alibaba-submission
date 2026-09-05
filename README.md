@@ -118,7 +118,8 @@ what shapes every design decision below, including the Qwen integration — an L
 about an interaction it is deliberately not allowed to see, and given the option to say so.
 
 **Demonstrated, not asserted.** `python demo/mock_llm.py --scenario all` drives the host-side guard
-against a mock LLM — no key, no network — and prints a PASS/FAIL table over the five cases in
+against a mock LLM — no key, no network, though it does need the SDK on your path first
+(`pip install -e ./sdk`, see [Quickstart](#-quickstart)) — and prints a PASS/FAIL table over the five cases in
 `demo/mock_llm.py`: a benign prompt, **PHI** under `hipaa`, **PII** under `gdpr`, a prompt-injection
 attempt, and a leaked API key. Each blocked case shows the prompt being stopped *before* the model
 call. The SDK ships four policy tags — `hipaa` (PHI + PII), `gdpr` (PII), and `soc2` and `default`,
