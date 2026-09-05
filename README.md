@@ -54,11 +54,27 @@ servers, our database, or our word for anything.
 > so a hospital, a bank, or an auditor can independently verify that an AI interaction happened and
 > was not altered, without anyone (us included) ever holding what was said.
 >
-> **Three commands to see it work** — no account, no API key, no network:
+> **Two commands, from the repo root.** These need no account, no API key and no network:
 > ```bash
-> cd backend && docker compose up --build -d   # the stack; the API key prints in `docker compose logs foxy-seed`
-> python demo/offline_demo.py                  # build a chain, verify it, watch tamper detection fire
-> python verifier/foxy_verify.py logs.json     # recompute the chain yourself, zero dependencies
+> python demo/offline_demo.py --output-dir out
+> python verifier/foxy_verify.py out/foxy-audit-export.json
+> ```
+> The first builds a chain, checks the customer-owned commitments, and edits one historical row so you
+> can watch tamper detection fire. The second recomputes that chain from the export alone — a
+> different program, no shared state, zero dependencies — and prints
+> `[OK] chain intact - 3 rows verified from genesis`.
+>
+> Now make it fail. The demo also wrote a pre-tampered copy; point the same verifier at it:
+> ```bash
+> python verifier/foxy_verify.py out/tampered-export.json
+> # [FAIL] CHAIN BROKEN at seq 2 - chain hash mismatch at seq 2
+> ```
+>
+> **The full stack** is a separate step, and unlike the two above it *does* pull and build images:
+> ```bash
+> cd backend
+> docker compose up --build -d
+> docker compose logs foxy-seed          # your API key prints here
 > ```
 > Longer paths: [Quickstart](#-quickstart) · [Verifying it actually works](#-verifying-it-actually-works) ·
 > [Architecture](#-architecture).
@@ -105,8 +121,9 @@ about an interaction it is deliberately not allowed to see, and given the option
 against a mock LLM — no key, no network — and prints a PASS/FAIL table over the five cases in
 `demo/mock_llm.py`: a benign prompt, **PHI** under `hipaa`, **PII** under `gdpr`, a prompt-injection
 attempt, and a leaked API key. Each blocked case shows the prompt being stopped *before* the model
-call. The SDK ships policy tags for `hipaa`, `gdpr` and `default`; there is no finance-specific
-ruleset today, so the healthcare and general-PII cases are the ones this demo actually proves.
+call. The SDK ships four policy tags — `hipaa` (PHI + PII), `gdpr` (PII), and `soc2` and `default`,
+which run the secrets-and-injection baseline alone. There is no finance-specific ruleset today, so
+healthcare and general PII are the domains this demo actually proves.
 
 **What the AI judge actually judges.** It grades **metadata** — hashes, counts, lengths, the policy
 tag, the model id, timestamps. It never receives the prompt or response text, in any provider, on any
