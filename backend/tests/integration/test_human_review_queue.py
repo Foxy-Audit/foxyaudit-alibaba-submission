@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import threading
 import time
 
@@ -121,6 +122,15 @@ def _reviews(org_id) -> list[dict]:
             "       note, resolved_by "
             "  FROM human_reviews WHERE org_id = :o ORDER BY created_at"),
             {"o": str(org_id)}).mappings().all()]
+
+
+def _notified_at(org_id):
+    """A2 · §4.6(e). NULL means no notice has reached the sender for this
+    escalation, and the next regrade announces it."""
+    with engine.begin() as conn:
+        return conn.execute(text(
+            "SELECT notified_at FROM human_reviews WHERE org_id = :o"),
+            {"o": str(org_id)}).scalar_one()
 
 
 def _chain_hashes(org_id) -> list[tuple]:
@@ -620,12 +630,16 @@ def test_a_regrade_does_not_announce_the_same_escalation_twice(
     entry, and have no way to tell whether the other two notices were about
     something they had missed.
 
-    ⚠ WHICH IS WHY `_queue_human_review` ANSWERS "DID *THIS* ATTEMPT FILE IT"
-    RATHER THAN "DOES THE ROW EXIST". `ON CONFLICT DO NOTHING RETURNING id`
-    returns no row when it conflicts, which is what separates "we filed it, so
-    announce it" from "somebody already filed it, and announced it then". A plain
-    bool that was True in both cases — the first version of this gate — reads as
-    idempotent and is not.
+    ⚠ THE GATE MOVED IN A2 AND THIS ASSERTION DID NOT, WHICH IS THE POINT.
+    A1 answered "did *this* attempt file it": `ON CONFLICT DO NOTHING RETURNING
+    id` returns no row when it conflicts, which separated "we filed it, so
+    announce it" from "somebody already filed it". That fixed the duplicate and
+    created a second defect — §4.6(e) — because it also silenced the regrade
+    that used to RECOVER a notice the sender never took. A2 reads
+    `human_reviews.notified_at` instead, so this test still passes for the
+    reason it was written (the escalation WAS announced, so it is not announced
+    again) while `test_a_dropped_notice_is_recovered_by_the_next_regrade` covers
+    the case A1 could not tell apart.
     """
     org = make_org()
     _route_to_qwen(org["org_id"])
@@ -648,3 +662,69 @@ def test_a_regrade_does_not_announce_the_same_escalation_twice(
     assert reposted == [], (
         f"a regrade re-POSTed the same escalation: {reposted}")
     assert len(_reviews(org["org_id"])) == 1
+    # And the reason it stayed silent is recorded rather than inferred.
+    assert _notified_at(org["org_id"]) is not None, (
+        "the notice went out and nothing recorded that it had — the next "
+        "regrade would announce it again")
+
+
+def test_a_dropped_notice_is_recovered_by_the_next_regrade(
+        make_org, client, monkeypatch):
+    """A2 · §4.6(e) — THE HALF A1 KNOWINGLY SHIPPED BROKEN.
+
+    The notice path has three lossy points and none of them requeues:
+    `enqueue_escalation_notice` drops silently on `queue.Full` (bounded at 2000),
+    the queue is in-process memory so a restart loses it, and
+    `drain_breach_notices` swallows a send exception. A1's gate was "did this
+    attempt file the row", so once the row existed every later regrade
+    conflicted, returned False and stayed silent: ONE dropped notice, dropped
+    for good. The escalation itself was never lost — it is in
+    `audit_logs.gemini_verdict`, in the `verdict` AuditEvent and in
+    `human_reviews` — but the announcement was, and until A2's reviewer page
+    the announcement was the only way it reached a person.
+
+    So the gate is `notified_at`, and this drives the failure rather than
+    asserting the fix: the first grade's enqueue is made to fail exactly as a
+    full queue fails, and the regrade after it has to recover.
+
+    ⚠ WRITTEN TO FAIL ON THE A1 GATE. Under "did this attempt file it" the
+    second half of this test gets no email, because the INSERT conflicts.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test",
+               notify_webhook_url="https://corp.test/hook")
+    _ingest(client, org)
+
+    # Exactly what a bounded queue at capacity does to `put_nowait`.
+    def _full(_item):
+        raise queue.Full()
+
+    monkeypatch.setattr(org_notifications._NOTICE_QUEUE, "put_nowait", _full)
+    lost, unposted = _grade_and_drain(monkeypatch)
+    monkeypatch.undo()
+
+    assert lost == [] and unposted == [], (
+        "the notice was supposed to be dropped by this arrangement")
+    assert len(_reviews(org["org_id"])) == 1, (
+        "a dropped NOTICE must not cost the queue entry — they are separate "
+        "failures and only one of them happened")
+    assert _notified_at(org["org_id"]) is None, (
+        "a notice the sender never took was recorded as sent, which would make "
+        "the drop permanent all over again")
+
+    # The judge is re-stubbed because monkeypatch.undo() unwound that too.
+    _speak(monkeypatch, _tool_call())
+    _requeue_for_retry(org["org_id"])
+    recovered, reposted = _grade_and_drain(monkeypatch)
+
+    assert [message["to"] for message in recovered] == ["reviews@corp.test"], (
+        f"the dropped escalation notice was never recovered: {recovered}")
+    assert [payload["type"] for payload in reposted] == ["human_review"], reposted
+    assert len(_reviews(org["org_id"])) == 1, (
+        "recovering the notice queued the escalation a second time")
+    assert _notified_at(org["org_id"]) is not None, (
+        "the recovery sent the notice and did not record it, so a third grade "
+        "would send a duplicate")

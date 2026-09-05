@@ -265,38 +265,64 @@ _QUEUE_REVIEW_SQL = text(
     """
 )
 
+#: A2 · §4.6(e). The escalation that is already filed and still unannounced.
+#:
+#: Read only when the INSERT above conflicted. It is what turns the notice gate
+#: from "did this attempt win the race" into "does this escalation still need
+#: announcing" — a question about the escalation rather than about the caller.
+_UNNOTIFIED_REVIEW_SQL = text(
+    """
+    SELECT id FROM human_reviews
+     WHERE audit_log_id = :audit_log_id AND notified_at IS NULL
+    """
+)
 
-def _queue_human_review(db: Session, row, verdict) -> bool:
+#: Stamped once the notice has reached the sender's queue. `notified_at IS NULL`
+#: in the WHERE keeps it a one-way door under a concurrent second worker.
+_MARK_REVIEW_NOTIFIED_SQL = text(
+    """
+    UPDATE human_reviews SET notified_at = now()
+     WHERE id = :id AND notified_at IS NULL
+    """
+)
+
+
+def _queue_human_review(db: Session, row, verdict):
     """Put an escalated verdict in front of a person. Best-effort, never raises.
 
-    ⚠ RETURNS "DID *THIS* ATTEMPT FILE IT", NOT "DOES THE ROW EXIST", and the
-    caller gates the escalation notice on that. `RETURNING id` is what makes the
-    difference expressible: `ON CONFLICT DO NOTHING` returns NO ROW when it
-    conflicts, so the three outcomes this function can have stop being two.
+    ⚠ RETURNS THE REVIEW THAT STILL NEEDS ANNOUNCING, OR `None`, and the caller
+    gates the escalation notice on that. `RETURNING id` on the INSERT plus one
+    lookup on the conflict is what keeps the three outcomes three:
 
-      a row came back    we inserted it        → True  → notify
-      no row, no error   somebody else already → False → do NOT notify
-                         inserted it                     (the attempt that filed
-                                                          it sent the notice)
-      exception          nothing was inserted  → False → do not notify
+      a row came back    we inserted it        → id   → notify, then stamp
+      no row, no error   somebody already      → id   → notify ONLY IF that row
+                         filed it                       is still unannounced,
+                                                        else `None`
+      exception          nothing was inserted  → None → do not notify
 
-    ⚠ THE MIDDLE CASE IS THE COMMON ONE, AND COLLAPSING IT INTO THE FIRST SENDS
-    DUPLICATE EMAIL. `_grade_one` is re-entered for the same row every time
-    `_handle_failure` puts it back to 'pending' — a provider timeout, a dropped
-    connection, a restart mid-batch — so a row that is retried three times reaches
-    this function three times. The unique constraint keeps the QUEUE at one entry;
-    it does nothing about the notice, and `drain_breach_notices` dedupes nothing.
-    Returning True on the conflict therefore meant one escalation, one worklist
-    row, and N "A review is waiting" emails plus N `type: "human_review"` webhook
-    POSTs — a docstring promising idempotence over code that did not deliver it.
+    ⚠ A2 · §4.6(e) MOVED THE MIDDLE CASE, AND THAT IS THE WHOLE CHANGE. A1
+    answered "did *this* attempt file it", which was the right correction to a
+    gate that was always True: `_grade_one` is re-entered for the same row every
+    time `_handle_failure` puts it back to 'pending', the unique constraint bounds
+    the QUEUE at one entry and bounds the NOTICE at nothing, so a row retried
+    three times sent three "A review is waiting" emails for one determination.
+    What that correction also removed, unnoticed, was the duplicate's second job:
+    it was a de-facto RECOVERY. Afterwards every later regrade conflicted and
+    stayed silent, so a notice dropped by a full queue was dropped for good.
 
-    ⚠ AND THE LAST CASE IS NOT FIXED BY UN-GATING. Announcing an escalation whose
-    insert FAILED would email about a worklist entry that is never going to appear,
-    and §4.6(a) records that nothing reconciles a dropped insert — so the entry
-    stays missing and the customer searches for it. A notice pointing at nothing is
-    worse than silence in a product whose claim is that the record is complete. The
-    fix for that path is the reconciliation sweep in §4.6(a), which would file the
-    row AND, filing it, notify.
+    So the conflict path now asks the ROW whether it has been announced, instead
+    of asking the CALLER whether it did the announcing. A regrade of an
+    escalation that WAS announced still sends nothing — pinned by
+    `test_a_regrade_does_not_announce_the_same_escalation_twice` — and a regrade
+    of one that was not gets the announcement A1 could not give it.
+
+    ⚠ AND THE LAST CASE IS STILL NOT FIXED BY UN-GATING. Announcing an escalation
+    whose insert FAILED would email about a worklist entry that is never going to
+    appear, and §4.6(a) records that nothing reconciles a dropped insert — so the
+    entry stays missing and the customer searches for it. A notice pointing at
+    nothing is worse than silence in a product whose claim is that the record is
+    complete. The fix for that path is the reconciliation sweep in §4.6(a), which
+    would file the row AND, filing it, leave `notified_at` NULL for this gate.
 
     ⚠ THE GRADE IS ALREADY COMMITTED WHEN THIS RUNS, and that ordering is the
     contract: exactly like the breach notifier above it, a failure here must cost
@@ -339,15 +365,46 @@ def _queue_human_review(db: Session, row, verdict) -> bool:
                     # lost from the record, only from the worklist's preview.
                     "reason": verdict.reason[:300],
                     "risk_score": verdict.risk_score}).scalar_one_or_none()
+        if filed is None:
+            # ON CONFLICT DO NOTHING fired: the row is there and an earlier
+            # attempt filed it. Whether that attempt's notice ever reached the
+            # sender is a recorded fact now rather than an assumption.
+            filed = db.execute(_UNNOTIFIED_REVIEW_SQL,
+                               {"audit_log_id": row["id"]}).scalar_one_or_none()
         db.commit()
-        # None = ON CONFLICT DO NOTHING fired: the row is there, an earlier
-        # attempt filed it, and that attempt already sent the notice.
-        return filed is not None
+        return filed
     except Exception as exc:                                  # noqa: BLE001
         db.rollback()
         log.warning("queueing human review for %s failed (%s)",
                     row["id"], type(exc).__name__)
-        return False
+        return None
+
+
+def _mark_review_notified(db: Session, org_id, review_id) -> None:
+    """Record that this escalation's notice reached the sender. Never raises.
+
+    ⚠ RUNS AFTER THE ENQUEUE, NEVER BEFORE IT. A crash between the two leaves
+    `notified_at` NULL and the next regrade announces the escalation again; the
+    other order would lose the announcement for good. That is the direction the
+    loss has to fall in a product whose failure mode is an escalation nobody
+    hears about — a duplicate notice is noise, a missing one is §4.6(e).
+
+    A failed stamp is swallowed for the same reason the insert above is: this
+    runs after `_grade_one` has already committed the verdict, and nothing on
+    this path may cost the grade.
+
+    Re-scopes RLS because `_queue_human_review`'s `set_config(..., true)` is
+    transaction-local and its commit ended that transaction.
+    """
+    try:
+        db.execute(text("SELECT set_config('app.current_org', :oid, true)"),
+                   {"oid": str(org_id)})
+        db.execute(_MARK_REVIEW_NOTIFIED_SQL, {"id": review_id})
+        db.commit()
+    except Exception as exc:                                  # noqa: BLE001
+        db.rollback()
+        log.warning("marking review %s notified failed (%s)",
+                    review_id, type(exc).__name__)
 
 
 def _claim_batch(db: Session, batch: int, stuck: int) -> list:
@@ -452,17 +509,27 @@ def _grade_one(db: Session, row) -> None:
     # decides whether an escalation SURVIVED the merge. A qwen escalation beside
     # a gemini breach is a breach, and must not also queue a review.
     if verdict.decision == "human_review":
-        # ⚠ AND THE ESCALATION IS ANNOUNCED, not merely filed — but ONLY IF IT WAS
-        # FILED. A worklist row nobody is told about is the same defect A1 exists
-        # to close wearing a different hat, and until the A2 reviewer page ships
-        # this notice is the only way an escalation reaches a person. The insert
-        # above is best-effort by design, though, so the notice is gated on its
-        # result: nothing reconciles a dropped insert (plan §4.6), and an email
-        # about a queue row that will never exist sends the customer looking for
-        # something that is not there. Queued, never sent here — the same contract
-        # as the breach notices above.
-        if _queue_human_review(db, row, verdict):
-            org_notifications.enqueue_escalation_notice(row, verdict)
+        # ⚠ AND THE ESCALATION IS ANNOUNCED, not merely filed — but ONLY IF IT
+        # STILL NEEDS ANNOUNCING. A worklist row nobody is told about is the same
+        # defect A1 exists to close wearing a different hat. The insert above is
+        # best-effort by design, so the notice stays gated on its result: nothing
+        # reconciles a dropped insert (plan §4.6(a)), and an email about a queue
+        # row that will never exist sends the customer looking for something that
+        # is not there. Queued, never sent here — the same contract as the breach
+        # notices above.
+        #
+        # ⚠ THE THREE STEPS ARE ORDERED, AND THE ORDER IS THE FIX (§4.6(e)).
+        # File, then enqueue, then stamp. `_queue_human_review` hands back a
+        # review only while `notified_at IS NULL`, so a regrade of an announced
+        # escalation is silent and a regrade of a dropped one recovers it; the
+        # stamp is last so that a crash between enqueue and stamp costs a
+        # duplicate notice rather than the announcement itself. A2 also removes
+        # this path's monopoly — the reviewer page is a PULL surface that does
+        # not depend on a notice having been delivered at all.
+        review_id = _queue_human_review(db, row, verdict)
+        if review_id is not None and org_notifications.enqueue_escalation_notice(
+                row, verdict):
+            _mark_review_notified(db, row["org_id"], review_id)
     # Outbound webhook subscriptions (P3 §F): a signed 'graded' (and 'breach')
     # event per matching subscription. QUEUED, not delivered here — this fires
     # on EVERY graded row, and one synchronous POST per subscription inside the

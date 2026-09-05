@@ -323,6 +323,21 @@ class HumanReview(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
     resolved_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    # A2 · §4.6(e) (migration 0074). The escalation NOTICE's gate, and it reads a
+    # STORED FACT rather than an inference. A1 gated on "did this attempt file
+    # the row", which made a dropped notice permanent: every later regrade
+    # conflicts on `uq_human_review_audit_log`, files nothing, and stays silent.
+    # NULL means nothing has been handed to the sender for this escalation yet,
+    # so a regrade announces it; stamped after a successful enqueue, so a full
+    # queue leaves it NULL and the escalation stays recoverable.
+    #
+    # ⚠ "HANDED TO THE SENDER", NOT "DELIVERED". The notice queue is in-process
+    # memory and `drain_breach_notices` swallows a send exception by design, so
+    # a restart or a wedged provider between the stamp and the send still loses
+    # the announcement. Closing that is §4.6(a)'s reconciliation sweep — which
+    # this column is what makes queryable.
+    notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
 
 
 class AccountAction(Base):

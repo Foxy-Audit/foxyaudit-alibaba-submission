@@ -127,19 +127,28 @@ def enqueue_breach_notice(row, verdict) -> None:
         log.warning("could not queue org breach notice: %s", exc)
 
 
-def enqueue_escalation_notice(row, verdict) -> None:
+def enqueue_escalation_notice(row, verdict) -> bool:
     """A1 · the same contract as :func:`enqueue_breach_notice`, for an escalation.
 
     ⚠ THIS IS THE HALF OF A1 THAT MAKES THE QUEUE ARRIVE. A `human_reviews` row
     nobody is told about is a worklist nobody opens, which is the defect A1 exists
-    to close wearing a different hat — and until the A2 reviewer page ships, this
-    email is the ONLY way an escalation reaches a person at all.
+    to close wearing a different hat. A2's reviewer page is the PULL half of that
+    same job — an escalation reaches a person there whether or not this email ever
+    went out — so this is now the notice rather than the only route.
 
     Rides the same queue and the same drain thread as the breach notice rather
     than growing a second one: the delivery problem is identical, and a second
     thread would be a second thing that can stall the worker heartbeat. `kind`
     is what `drain_breach_notices` dispatches on; an item without it is a breach,
     so every notice already in flight when this deploys is unaffected.
+
+    ⚠ A2 · §4.6(e) · RETURNS WHETHER THE SENDER TOOK IT. The queue is bounded at
+    2000 and a full one drops the notice; A1 dropped it into a log line and
+    nothing else, and because the caller's gate was "did this attempt insert",
+    every later regrade conflicted and stayed silent — one lost notice, lost
+    permanently. `worker._grade_one` stamps `human_reviews.notified_at` on a
+    True and leaves it NULL on a False, so a drop stays recoverable by the next
+    regrade. Unchanged either way: this never raises into grading.
     """
     try:
         _NOTICE_QUEUE.put_nowait({
@@ -149,11 +158,13 @@ def enqueue_escalation_notice(row, verdict) -> None:
             "risk": verdict.risk_score,
             "reason": (verdict.reason or "")[:200],
         })
+        return True
     except queue.Full:
         log.warning("org notice queue full — dropping escalation notice for org "
                     "%s seq %s", row.get("org_id"), row.get("seq"))
     except Exception as exc:                # noqa: BLE001 — never break grading
         log.warning("could not queue escalation notice: %s", exc)
+    return False
 
 
 def send_escalation_notice(db: Session, item: dict) -> bool:
@@ -197,18 +208,21 @@ def send_escalation_notice(db: Session, item: dict) -> bool:
                     f"asked for a person to decide (risk {risk}). This is not a "
                     f"breach — it is a determination the model declined to make."),
                 et.callout(reason, tone="warn"),
-                # ⚠ THE LEDGER FILTER, NOT A RESOLVE BUTTON. Q4 shipped
-                # `human review` as a verdict option on the dashboard's ledger
-                # (`foxy-audit-premium.html`), so this sentence is true at THIS
-                # commit; the reviewer page that resolves an escalation is A2 and
-                # does not exist yet. "Open your dashboard to resolve it" was the
-                # first draft and pointed at a page nobody can open — a promise
-                # in a customer email is a claim like any other, and this product
-                # does not get to make one it cannot keep. Reword this when A2
-                # lands, not before.
-                et.muted("Filter your ledger by ‘human review’ to find "
-                         "it. Only hashes are stored — never the prompt or "
-                         "response."),
+                # ⚠ A2 LANDED, SO THIS NAMES THE PAGE. The sentence it
+                # replaces sent the reader to the ledger's `human review` filter,
+                # which was the true claim at A1: the reviewer page did not
+                # exist, and "open your dashboard to resolve it" would have been
+                # a promise this product could not keep. `page-review` ships now
+                # — it lists every pending escalation and records the decision
+                # — so the email names it.
+                #
+                # ⚠ STILL NO DEEP LINK, AND THAT IS THE SAME RULE AGAIN.
+                # `go()` is an in-page router with no URL state, so an address
+                # that opens this one escalation is a claim the dashboard cannot
+                # honour. The email names the destination and stops there.
+                et.muted("Open Review in your dashboard to see it and record a "
+                         "decision. Only hashes are stored — never the prompt "
+                         "or response."),
             ],
             surface="customer",
         )
