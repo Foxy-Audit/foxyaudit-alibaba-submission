@@ -124,6 +124,19 @@ def _reviews(org_id) -> list[dict]:
             {"o": str(org_id)}).mappings().all()]
 
 
+def _drop_the_notice(org_id) -> None:
+    """Put the row back into the state a lost notice leaves it in.
+
+    ⚠ AND INTO THE STATE 0074 LEAVES EVERY PRE-EXISTING ROW IN. The column is
+    added nullable with no backfill, deliberately (its docstring says why), so
+    `notified_at IS NULL` is not an exotic condition reached only by a full
+    queue — on the deploy that ships it, it is EVERY row in the table.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE human_reviews SET notified_at = NULL "
+                          "WHERE org_id = :o"), {"o": str(org_id)})
+
+
 def _notified_at(org_id):
     """A2 · §4.6(e). NULL means no notice has reached the sender for this
     escalation, and the next regrade announces it."""
@@ -530,6 +543,132 @@ def test_a_clean_verdict_notifies_nobody(make_org, client, monkeypatch):
 
     sent, posted = _grade_and_drain(monkeypatch)
     assert sent == [] and posted == []
+
+
+def test_a_second_grader_that_loses_the_race_announces_nothing(
+        make_org, client, monkeypatch):
+    """THE RECOVERY IN §4.6(e) IS A READ-MODIFY-WRITE, AND THE READ HAS TO LOCK.
+
+    `_UNNOTIFIED_REVIEW_SQL` asks "does this escalation still need announcing"
+    and the caller acts on the answer two statements later. As a plain SELECT
+    that is a gap, and two graders can both fall through it: both read
+    `notified_at IS NULL`, both enqueue, and the duplicate "A review is waiting"
+    email and duplicate `type: "human_review"` webhook that `24b26ee` removed are
+    back — under concurrency, where the sequential tests above cannot see them.
+
+    ⚠ AND TWO GRADERS ON ONE ROW IS A PRODUCTION PATH, not a thought experiment.
+    `_CLAIM_SQL` reclaims a row whose grading has been in flight longer than
+    `stuck`, which hands it to a second worker while the first may still be
+    running. `ON CONFLICT` is reached only by a RE-ENTRY on an already-filed row —
+    a `_handle_failure` retry or that reclaim — and the reclaim is the one that
+    makes a re-entry CONCURRENT. The branch and the race arrive together.
+
+    ⚠ THIS IS ALSO WHY THE FIX IS NOT `UPDATE ... WHERE notified_at IS NULL
+    RETURNING id`. That is atomic and it stamps BEFORE the enqueue, so a crash
+    between them loses the announcement for good — §4.6(e) recreated inside its
+    own fix. The order stays file → enqueue → stamp; the LOCK is what makes it
+    safe.
+
+    Written to FAIL without `FOR UPDATE`: without it the losing grader never
+    blocks at all, so `_wait_until_blocked_by` returns False and the guard below
+    fires rather than the test quietly degrading to the sequential case.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test")
+    _ingest(client, org)
+    _grade_and_drain(monkeypatch)          # files it and announces it once
+    _drop_the_notice(org["org_id"])        # ... and the notice is lost
+    review, = _reviews(org["org_id"])
+
+    sent, posted = [], []
+    monkeypatch.setattr(org_notifications.email_mod, "send_email",
+                        lambda **kw: sent.append(kw) or True)
+    monkeypatch.setattr(org_notifications.requests, "post",
+                        lambda url, **kw: posted.append(kw.get("json")) or True)
+
+    winner = engine.connect()
+    held = winner.begin()
+    holder_pid = winner.execute(text("SELECT pg_backend_pid()")).scalar_one()
+    winner.execute(text("SELECT id FROM human_reviews WHERE id = :i FOR UPDATE"),
+                   {"i": review["id"]})
+
+    _requeue_for_retry(org["org_id"])
+    loser = threading.Thread(target=_grade_all)
+    loser.start()
+    try:
+        assert _wait_until_blocked_by(holder_pid), (
+            "the second grader never blocked on this transaction — without an "
+            "overlap this test proves nothing about concurrency, which is "
+            "exactly what it looks like when the conflict read takes no lock")
+        # The other grader announces it and records that it did.
+        winner.execute(text("UPDATE human_reviews SET notified_at = now() "
+                            "WHERE id = :i"), {"i": review["id"]})
+        held.commit()
+    finally:
+        winner.close()
+        loser.join(timeout=60)
+        assert not loser.is_alive(), "the losing grader never returned"
+
+    # Asserted at the QUEUE, before any drain: the loser must not even have
+    # handed a notice to the sender, and a drained count could not tell "never
+    # enqueued" from "enqueued and suppressed by policy".
+    assert org_notifications.queue_depth() == 0, (
+        "the losing grader queued a second escalation notice for one "
+        "determination")
+    db = SessionLocal()
+    try:
+        org_notifications.drain_breach_notices(db)
+    finally:
+        db.close()
+    assert sent == [], f"a second grader emailed the same escalation: {sent}"
+    assert posted == [], f"a second grader re-POSTed the same escalation: {posted}"
+    assert len(_reviews(org["org_id"])) == 1
+
+
+def test_a_regrade_does_not_announce_an_escalation_a_human_already_closed(
+        make_org, client, monkeypatch, login):
+    """⚠ THE STATE 0074 SHIPS EVERY EXISTING ROW IN.
+
+    The column is nullable with no backfill — deliberately, because backfilling
+    would assert an announcement A1 could not know about. The cost of that choice
+    is that on the deploy that adds it, EVERY `human_reviews` row reads
+    `notified_at IS NULL`, **including the ones a person has already resolved**.
+    A gate that asks only "was this announced" would then email "A review is
+    waiting" about a decision that was made and recorded — sending the customer
+    to a queue entry that is not in the queue, which is a worse failure than the
+    silence being fixed and is not one the reviewer page can explain away.
+
+    So the gate asks for a PENDING escalation, and this drives the exact
+    sequence: announce, resolve on the page, lose the notice, regrade.
+    """
+    org = make_org()
+    _route_to_qwen(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _notify_to(org["org_id"], notify_on_breach="immediate",
+               notify_email="reviews@corp.test")
+    _ingest(client, org)
+    _grade_and_drain(monkeypatch)
+    review, = _reviews(org["org_id"])
+
+    reviewer = login(org["admin_email"], org["admin_password"])
+    closed = reviewer.post(f"/v1/reviews/{review['id']}/resolve",
+                           json={"resolution": "cleared"})
+    assert closed.status_code == 200, closed.text
+
+    _drop_the_notice(org["org_id"])
+    _speak(monkeypatch, _tool_call())
+    _requeue_for_retry(org["org_id"])
+    sent, posted = _grade_and_drain(monkeypatch)
+
+    assert sent == [], (
+        f"a regrade told the workspace a review was waiting for an escalation "
+        f"it had already closed: {sent}")
+    assert posted == [], posted
+    assert _reviews(org["org_id"])[0]["status"] == "resolved", (
+        "the regrade reopened a resolved escalation")
 
 
 # ══ 10 · the DSAR bundle carries the human decision, and says so truthfully ══

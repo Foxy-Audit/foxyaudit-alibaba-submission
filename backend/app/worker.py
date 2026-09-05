@@ -265,20 +265,46 @@ _QUEUE_REVIEW_SQL = text(
     """
 )
 
-#: A2 · §4.6(e). The escalation that is already filed and still unannounced.
+#: A2 · §4.6(e). The escalation that is already filed and still needs announcing.
 #:
 #: Read only when the INSERT above conflicted. It is what turns the notice gate
 #: from "did this attempt win the race" into "does this escalation still need
 #: announcing" — a question about the escalation rather than about the caller.
+#:
+#: ⚠ `FOR UPDATE`, AND IT IS THE WHOLE POINT OF THIS STATEMENT. A plain SELECT
+#: here reads `notified_at IS NULL`, returns, and lets the caller enqueue — and
+#: two graders on one `audit_log_id` can both do that. That is not hypothetical:
+#: `_CLAIM_SQL`'s `stuck` reclaim hands a row that has been claimed too long to a
+#: second grader while the first may still be running. `ON CONFLICT` is reached
+#: only by a RE-ENTRY on an already-filed row — a `_handle_failure` retry or that
+#: reclaim — and the reclaim is the one that makes a re-entry CONCURRENT, so this
+#: branch and the race are reached together. Both would read NULL, both enqueue,
+#: and the duplicate "A review is waiting" email and duplicate `human_review`
+#: webhook A1 removed would be back — under concurrency, where the sequential
+#: test cannot see them. The lock serialises the read, and READ COMMITTED
+#: re-evaluates this WHERE against the row version the winner committed, so the
+#: loser wakes to `notified_at IS NOT NULL` and gets no row.
+#:
+#: ⚠ AND `status = 'pending'`, WHICH IS NOT TIDINESS. 0074 adds the column
+#: nullable with no backfill, so EVERY row that existed before it — resolved ones
+#: included — reads `notified_at IS NULL`. Without this clause a regrade would
+#: email "A review is waiting" about an escalation a person had already closed on
+#: the reviewer page, which is worse than the silence it is fixing.
 _UNNOTIFIED_REVIEW_SQL = text(
     """
     SELECT id FROM human_reviews
-     WHERE audit_log_id = :audit_log_id AND notified_at IS NULL
+     WHERE audit_log_id = :audit_log_id
+       AND status = 'pending'
+       AND notified_at IS NULL
+     FOR UPDATE
     """
 )
 
-#: Stamped once the notice has reached the sender's queue. `notified_at IS NULL`
-#: in the WHERE keeps it a one-way door under a concurrent second worker.
+#: Stamped once the notice has reached the sender's queue.
+#:
+#: `notified_at IS NULL` is restated here as an invariant, not as the guard: what
+#: actually makes this a one-way door is the row lock the SELECT above took and
+#: this transaction still holds.
 _MARK_REVIEW_NOTIFIED_SQL = text(
     """
     UPDATE human_reviews SET notified_at = now()
@@ -287,18 +313,35 @@ _MARK_REVIEW_NOTIFIED_SQL = text(
 )
 
 
-def _queue_human_review(db: Session, row, verdict):
-    """Put an escalated verdict in front of a person. Best-effort, never raises.
+def _queue_and_announce_human_review(db: Session, row, verdict) -> None:
+    """Put an escalated verdict in front of a person, and tell them. Never raises.
 
-    ⚠ RETURNS THE REVIEW THAT STILL NEEDS ANNOUNCING, OR `None`, and the caller
-    gates the escalation notice on that. `RETURNING id` on the INSERT plus one
-    lookup on the conflict is what keeps the three outcomes three:
+    ⚠ FILE → ENQUEUE → STAMP, IN ONE TRANSACTION HOLDING ONE ROW LOCK. The three
+    steps were split across two transactions and that was wrong twice over: the
+    conflict read took no lock, and the gap between reading "still unannounced"
+    and recording "announced" was a window two graders could both pass through.
+    They are one unit now, and the lock is what makes the gate mean anything.
 
-      a row came back    we inserted it        → id   → notify, then stamp
-      no row, no error   somebody already      → id   → notify ONLY IF that row
-                         filed it                       is still unannounced,
-                                                        else `None`
-      exception          nothing was inserted  → None → do not notify
+      inserted           we filed it           → announce, stamp
+      conflict, unlocked somebody already      → announce ONLY IF the locked row
+      row came back      filed it                is still pending and unstamped
+      conflict, no row   already announced, or → say nothing
+                         already resolved
+      exception          nothing was written   → say nothing
+
+    ⚠ THE ORDER IS NOT AN IMPLEMENTATION DETAIL AND MUST NOT BE "SIMPLIFIED".
+    Collapsing the read and the stamp into one `UPDATE ... WHERE notified_at IS
+    NULL RETURNING id` is shorter, atomic, and WRONG: it stamps BEFORE the
+    enqueue, so a crash between them loses the announcement permanently — which
+    is §4.6(e) again, in the code written to close it. The loss has to fall the
+    other way. A duplicate notice is noise; a missing one is the defect.
+
+    ⚠ AND HOLDING THE LOCK ACROSS THE ENQUEUE COSTS NOTHING, which is the reason
+    this shape is affordable. `enqueue_escalation_notice` is a `put_nowait` on a
+    bounded in-memory queue — it never touches the network, because the whole
+    point of moving the notice off the grading batch was that a wedged mail
+    provider must not stall the worker heartbeat. The lock is held for two
+    statements and a list append.
 
     ⚠ A2 · §4.6(e) MOVED THE MIDDLE CASE, AND THAT IS THE WHOLE CHANGE. A1
     answered "did *this* attempt file it", which was the right correction to a
@@ -314,7 +357,11 @@ def _queue_human_review(db: Session, row, verdict):
     of asking the CALLER whether it did the announcing. A regrade of an
     escalation that WAS announced still sends nothing — pinned by
     `test_a_regrade_does_not_announce_the_same_escalation_twice` — and a regrade
-    of one that was not gets the announcement A1 could not give it.
+    of one that was not gets the announcement A1 could not give it. Under
+    concurrency the same two questions are answered by
+    `test_a_second_grader_that_loses_the_race_announces_nothing`, and an
+    escalation a person already closed is answered by
+    `test_a_regrade_does_not_announce_an_escalation_a_human_already_closed`.
 
     ⚠ AND THE LAST CASE IS STILL NOT FIXED BY UN-GATING. Announcing an escalation
     whose insert FAILED would email about a worklist entry that is never going to
@@ -368,43 +415,22 @@ def _queue_human_review(db: Session, row, verdict):
         if filed is None:
             # ON CONFLICT DO NOTHING fired: the row is there and an earlier
             # attempt filed it. Whether that attempt's notice ever reached the
-            # sender is a recorded fact now rather than an assumption.
+            # sender is a recorded fact now rather than an assumption — and this
+            # read LOCKS the row, so the answer cannot change between reading it
+            # and acting on it.
             filed = db.execute(_UNNOTIFIED_REVIEW_SQL,
                                {"audit_log_id": row["id"]}).scalar_one_or_none()
+        # The INSERT path needs no explicit lock: an uncommitted insert already
+        # holds the row, so a second grader's `ON CONFLICT` waits on it and then
+        # takes the conflict branch above against the committed result.
+        if filed is not None and org_notifications.enqueue_escalation_notice(
+                row, verdict):
+            db.execute(_MARK_REVIEW_NOTIFIED_SQL, {"id": filed})
         db.commit()
-        return filed
     except Exception as exc:                                  # noqa: BLE001
         db.rollback()
         log.warning("queueing human review for %s failed (%s)",
                     row["id"], type(exc).__name__)
-        return None
-
-
-def _mark_review_notified(db: Session, org_id, review_id) -> None:
-    """Record that this escalation's notice reached the sender. Never raises.
-
-    ⚠ RUNS AFTER THE ENQUEUE, NEVER BEFORE IT. A crash between the two leaves
-    `notified_at` NULL and the next regrade announces the escalation again; the
-    other order would lose the announcement for good. That is the direction the
-    loss has to fall in a product whose failure mode is an escalation nobody
-    hears about — a duplicate notice is noise, a missing one is §4.6(e).
-
-    A failed stamp is swallowed for the same reason the insert above is: this
-    runs after `_grade_one` has already committed the verdict, and nothing on
-    this path may cost the grade.
-
-    Re-scopes RLS because `_queue_human_review`'s `set_config(..., true)` is
-    transaction-local and its commit ended that transaction.
-    """
-    try:
-        db.execute(text("SELECT set_config('app.current_org', :oid, true)"),
-                   {"oid": str(org_id)})
-        db.execute(_MARK_REVIEW_NOTIFIED_SQL, {"id": review_id})
-        db.commit()
-    except Exception as exc:                                  # noqa: BLE001
-        db.rollback()
-        log.warning("marking review %s notified failed (%s)",
-                    review_id, type(exc).__name__)
 
 
 def _claim_batch(db: Session, batch: int, stuck: int) -> list:
@@ -518,18 +544,15 @@ def _grade_one(db: Session, row) -> None:
         # is not there. Queued, never sent here — the same contract as the breach
         # notices above.
         #
-        # ⚠ THE THREE STEPS ARE ORDERED, AND THE ORDER IS THE FIX (§4.6(e)).
-        # File, then enqueue, then stamp. `_queue_human_review` hands back a
-        # review only while `notified_at IS NULL`, so a regrade of an announced
-        # escalation is silent and a regrade of a dropped one recovers it; the
-        # stamp is last so that a crash between enqueue and stamp costs a
-        # duplicate notice rather than the announcement itself. A2 also removes
-        # this path's monopoly — the reviewer page is a PULL surface that does
-        # not depend on a notice having been delivered at all.
-        review_id = _queue_human_review(db, row, verdict)
-        if review_id is not None and org_notifications.enqueue_escalation_notice(
-                row, verdict):
-            _mark_review_notified(db, row["org_id"], review_id)
+        # ⚠ THE THREE STEPS ARE ORDERED AND SERIALISED, AND THAT IS THE FIX
+        # (§4.6(e)). File, then enqueue, then stamp — one transaction, one row
+        # lock — so a regrade of an announced escalation is silent, a regrade of
+        # a dropped one recovers it, a second grader on the same row cannot do
+        # both at once, and a crash between enqueue and stamp costs a duplicate
+        # notice rather than the announcement itself. A2 also removes this
+        # path's monopoly: the reviewer page is a PULL surface that does not
+        # depend on a notice having been delivered at all.
+        _queue_and_announce_human_review(db, row, verdict)
     # Outbound webhook subscriptions (P3 §F): a signed 'graded' (and 'breach')
     # event per matching subscription. QUEUED, not delivered here — this fires
     # on EVERY graded row, and one synchronous POST per subscription inside the
