@@ -209,6 +209,10 @@ async function probe(){
 
   // ── 3 · the resolve round-trip, through the shipped dialog ──────────────
   window.__calls.length=0;
+  window.__resolveResponse={id:'11111111-1111-4111-8111-111111111111', seq:1482,
+    status:'resolved', resolution:'cleared', reason:'...', risk_score:72,
+    note:null, policy_tag:'phi-guard', agent:'billing-agent',
+    resolved_by:'you@corp.test', resolved_at:new Date().toISOString()};
   document.querySelectorAll('#page-review .rvw')[0]
           .querySelectorAll('.rvw-acts .btn')[1].click();   // "Cleared"
   await sleep(120);
@@ -223,6 +227,9 @@ async function probe(){
   document.getElementById('foxDlgYes').click();
   await sleep(320);
   out.posted=window.__calls.filter(c=>c.method==='POST');
+  out.agreed={toast:document.getElementById('toast-msg').textContent,
+              shown:document.getElementById('toast').classList.contains('show'),
+              dialogOpen:dlg.classList.contains('on')};
 
   // ── 4 · a decision, once it is recorded ─────────────────────────────────
   window.__page={items:[
@@ -249,6 +256,80 @@ async function probe(){
   await sleep(240);
   out.emptyResolved={rows:rows(), html:list()};
 
+  // ── 5b · the decision that lost the race ────────────────────────────────
+  window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482, status:'pending',
+     resolution:null, reason:'A clinical tag on a finance policy.',
+     risk_score:72, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-7200000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}], page:{complete:true,next_after_seq:null}};
+  window.foxReviews.filter('pending');
+  await sleep(240);
+  // The endpoint answers 200 with SOMEBODY ELSE'S decision — first-write-wins.
+  window.__resolveResponse={id:'11111111-1111-4111-8111-111111111111', seq:1482,
+    status:'resolved', resolution:'confirmed_breach',
+    reason:'A clinical tag on a finance policy.', risk_score:72, note:null,
+    policy_tag:'phi-guard', agent:'billing-agent',
+    resolved_by:'sam@corp.test', resolved_at:new Date().toISOString()};
+  // The toast element holds whatever the LAST step put in it, so an assertion
+  // that no new toast fired needs the old one cleared first.
+  document.getElementById('toast-msg').textContent='';
+  document.getElementById('toast').classList.remove('show');
+  document.querySelectorAll('#page-review .rvw')[0]
+          .querySelectorAll('.rvw-acts .btn')[1].click();   // "Cleared" again
+  await sleep(120);
+  document.getElementById('foxDlgYes').click();             // Record decision
+  await sleep(340);
+  out.mismatch={dialogOpen:dlg.classList.contains('on'),
+                title:document.getElementById('foxDlgT').textContent,
+                body:document.getElementById('foxDlgB').textContent,
+                yes:document.getElementById('foxDlgYes').textContent,
+                oneButton:document.getElementById('foxDlgNo').style.display==='none',
+                toast:document.getElementById('toast-msg').textContent};
+  document.getElementById('foxDlgYes').click();             // Close
+  await sleep(140);
+
+  // ── 5c · a failed "load more" keeps the control that retries it ─────────
+  window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482, status:'pending',
+     resolution:null, reason:'A clinical tag on a finance policy.',
+     risk_score:72, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-7200000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}], page:{complete:false,next_after_seq:1482}};
+  window.foxReviews.reload();
+  await sleep(260);
+  const moreHtml=()=>document.getElementById('rvwMore').innerHTML;
+  out.more={offered:moreHtml().indexOf('Load more')>=0};
+  window.__fail=true;
+  document.querySelector('#rvwMore .btn').click();
+  await sleep(300);
+  out.more.afterFailure={
+    stillOffered:moreHtml().indexOf('Load more')>=0,
+    rowsKept:rows(),
+    toast:document.getElementById('toast-msg').textContent};
+  window.__fail=false;
+
+  // ── 5d · the bottom bar at 320px ────────────────────────────────────────
+  // Headless Chrome clamps the top-level window to ~500px wide, so the bar is
+  // measured directly instead: `.mobnav` is `position:fixed;left:0;right:0`, so
+  // its layout depends on its own width and nothing else on the page.
+  const nav=document.getElementById('mobNav');
+  const navWas=nav.getAttribute('style')||'';
+  nav.setAttribute('style','display:flex;width:320px;right:auto;left:0;');
+  void nav.offsetHeight;
+  const navBox=nav.getBoundingClientRect();
+  out.mobnav={width:Math.round(navBox.width), scrollW:nav.scrollWidth,
+              clientW:nav.clientWidth,
+              items:Array.prototype.map.call(nav.children,function(c){
+                const b=c.getBoundingClientRect();
+                return {label:(c.textContent||'').trim(),
+                        right:Math.round(b.right-navBox.left),
+                        w:Math.round(b.width),
+                        // A flex item with the default shrink does not overflow
+                        // its parent — it is squeezed and its own text overflows
+                        // IT. That is the shape the failure takes here.
+                        clipped:c.scrollWidth>c.clientWidth+1};
+              })};
+  nav.setAttribute('style',navWas);
+
   // ── 6 · the badge against the tile it actually sits on ─────────────────
   const item=document.querySelector('.dock-item[data-page="review"]');
   const pipEl=document.getElementById('reviewPip');
@@ -269,6 +350,10 @@ async function probe(){
 _STUB = r"""<script>
 window.__calls=[];
 window.__page={items:[],page:{complete:true,next_after_seq:null}};
+// What POST /v1/reviews/{id}/resolve hands back. The real endpoint returns the
+// STANDING decision, which on a lost race is not the one that was sent.
+window.__resolveResponse={};
+window.__fail=false;
 function __res(ok,status,payload){
   return Promise.resolve({ok:ok, status:status,
     json:function(){ return Promise.resolve(payload); },
@@ -282,7 +367,8 @@ window.fetch=function(input,init){
     body:(init&&init.body)?String(init.body):null,
     csrf:(h&&h.get)?h.get('X-CSRF-Token'):null});
   if(url.indexOf('/v1/reviews')===0){
-    if(method==='POST')return __res(true,200,{});
+    if(method==='POST')return __res(true,200,window.__resolveResponse);
+    if(window.__fail)return __res(false,500,{});
     // The pip asks for limit=10; the page asks for limit=50. One fixture
     // answers both, so a pip that read the wrong list would show it.
     return __res(true,200,window.__page);
@@ -418,6 +504,93 @@ def test_a_recorded_decision_reads_as_a_verdict_not_as_an_escalation(run):
     assert any("status=resolved" in u for u in resolved["urls"]), (
         "the filter never asked the server for the resolved list: %s"
         % resolved["urls"])
+
+
+@needs_chrome
+def test_a_resolve_that_agrees_reports_the_record_it_got_back(run):
+    """The happy path, asserted on the RESPONSE rather than the request: the
+    endpoint answered with `cleared` and the surface said `cleared`."""
+    agreed = run["agreed"]
+    assert agreed["shown"], "recording a decision said nothing at all"
+    assert agreed["toast"] == "Recorded — cleared", agreed["toast"]
+    assert not agreed["dialogOpen"], (
+        "an uncontested resolve interrupted the reviewer with a dialog")
+
+
+@needs_chrome
+def test_a_resolve_that_lost_the_race_is_not_reported_as_the_reviewer_s_own(run):
+    """⚠ `POST /v1/reviews/{id}/resolve` IS FIRST-WRITE-WINS AND ANSWERS 200.
+
+    A second reviewer gets the STANDING decision back, not theirs — the evidence
+    event is append-only, so the first determination is the one that was made and
+    the endpoint refuses to overwrite it. A surface that toasted the word the
+    reviewer clicked would say "Recorded — cleared" over a ledger holding
+    `confirmed_breach`: in the product whose deliverable is that the record can
+    be trusted, misreporting the record is the defect, not a rough edge.
+    """
+    m = run["mismatch"]
+    assert m["dialogOpen"], (
+        "the reviewer was never told their decision did not take: %r" % m["toast"])
+    assert m["title"] == "Already decided", m["title"]
+    assert "Confirmed breach" in m["body"], m["body"]
+    assert "sam@corp.test" in m["body"], (
+        "the standing decision is not attributed: %s" % m["body"])
+    assert "not recorded" in m["body"] and "Nothing was overwritten" in m["body"], (
+        m["body"])
+    assert m["oneButton"], (
+        "a dialog with nothing to decide offered Cancel / OK as though there "
+        "were a choice")
+    assert m["toast"] == "", (
+        "a toast fired on the losing path as well as the dialog, and the only "
+        "word it can carry is the reviewer's own: %r" % m["toast"])
+
+
+@needs_chrome
+def test_a_failed_load_more_keeps_the_control_that_retries_it(run):
+    """The rows below are real and were already fetched. Blanking the button
+    removed the only affordance that retries, so recovery meant a reload — which
+    discards exactly the rows keeping them was for."""
+    more = run["more"]
+    assert more["offered"], "a page with `next_after_seq` offered no way to get it"
+    after = more["afterFailure"]
+    assert after["rowsKept"] == 1, (
+        "a failed next page took the current one with it: %s" % after["rowsKept"])
+    assert after["stillOffered"], (
+        "the retry affordance was removed by the failure it exists for")
+    assert "try again" in after["toast"], after["toast"]
+
+
+@needs_chrome
+def test_the_bottom_bar_still_fits_a_320px_phone(run):
+    """⚠ MEASURED, BECAUSE THE CLAIM WAS ONLY EVER RENDERED ONCE.
+
+    A2 added a SIXTH destination to a bar that had five, and `test_p2_responsive`
+    only enforces `mnbtn ⊆ dock-item` — nothing anywhere measures whether they
+    fit. 320px is the narrowest phone this surface has to work on.
+
+    ⚠ AND OVERFLOW IS NOT THE SHAPE THE FAILURE TAKES. `.mnbtn` carries the
+    default `flex-shrink:1`, so a bar that cannot fit its children does not push
+    them past its edge — it SQUEEZES them, and each one's label overflows the
+    button instead. Checking only the right edge would pass while every label was
+    clipped, so both are asserted: nothing outside the bar, and nothing clipped
+    inside its own button. A seventh destination, or a longer word in one of the
+    six, fails this rather than shipping.
+    """
+    nav = run["mobnav"]
+    assert nav["width"] == 320, nav["width"]
+    labels = [i["label"] for i in nav["items"]]
+    assert labels == ["Home", "Threats", "Review", "Ledger", "Verify", "Policy"], (
+        "the bottom bar's destinations changed — re-measure before widening "
+        "this: %s" % labels)
+    assert nav["scrollW"] <= nav["clientW"], (
+        "the bottom bar overflows 320px: content %s in %s"
+        % (nav["scrollW"], nav["clientW"]))
+    over = [i for i in nav["items"] if i["right"] > 320]
+    assert not over, "destinations sit outside a 320px screen: %s" % over
+    clipped = [i["label"] for i in nav["items"] if i["clipped"]]
+    assert not clipped, (
+        "the bar fits only because these labels are being squeezed and clipped: "
+        "%s" % clipped)
 
 
 def _rgb(css):

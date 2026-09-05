@@ -8879,8 +8879,11 @@ async function loadLoginHistory(scope){
          rows below are real and were already fetched; replacing them with an
          error panel would lose a worklist somebody is part-way through reading
          because the NEXT page did not arrive. */
-      if(append){ showToast('Could not load the next page');
-                  if($('rvwMore'))$('rvwMore').innerHTML=''; return; }
+      /* ⚠ AND THE BUTTON STAYS. Clearing it removed the only control that
+         retries, so recovery meant a reload — which discards exactly the rows
+         the branch above exists to protect. `_next` is untouched, so the same
+         button retries the same page. */
+      if(append){ showToast('Could not load the next page — try again'); return; }
       /* Two different failures, told apart, because the recovery is different:
          one is "sign in again", the other is "try again". */
       box.innerHTML=(r&&r.status===401)
@@ -8952,8 +8955,37 @@ async function loadLoginHistory(scope){
                                   :'Could not record the decision');
           return;
         }
-        showToast('Recorded — '+o.label.toLowerCase());
+        /* ⚠ RENDER WHAT CAME BACK, NEVER WHAT WAS SENT. `resolve` is
+           FIRST-WRITE-WINS: a second reviewer gets a 200 carrying the STANDING
+           decision, not theirs — the evidence event is append-only, so the first
+           determination is the one that was made and this endpoint refuses to
+           overwrite it. Toasting the word the reviewer clicked would tell them
+           "Recorded — cleared" while the ledger holds `confirmed_breach`. In a
+           product whose deliverable is that the record can be trusted, a surface
+           that misreports what the record says is the defect, not a rough edge.
+           So the response decides the wording, and a mismatch is said plainly
+           rather than swallowed by a reload that quietly shows something else. */
+        var recorded=null; try{ recorded=await r.json(); }catch(e){}
+        var got=(recorded&&recorded.resolution)||null;
+        var stood=got?outcome(got):null;
         load(false); pip();
+        if(got&&got!==key){
+          await window.foxConfirm({
+            title:'Already decided',
+            body:(recorded.resolved_by
+                    ? recorded.resolved_by+' resolved this before your decision '
+                      +'reached the record.'
+                    : 'Another reviewer resolved this before your decision '
+                      +'reached the record.')
+              +' It stands as “'+(stood?stood.label:got)+'”, not “'+o.label+'”.'
+              +'\n\nThe evidence event is append-only, so the first decision is '
+              +'the one that was made. Nothing was overwritten, and yours was '
+              +'not recorded.',
+            confirm:'Close', dismiss:true
+          });
+          return;
+        }
+        showToast('Recorded — '+(stood?stood.label:o.label).toLowerCase());
       }catch(e){ showToast('Could not reach the server'); }
       finally{ _busy=false; }
     }
