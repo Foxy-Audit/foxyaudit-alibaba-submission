@@ -163,6 +163,52 @@ def test_the_system_prompt_is_built_from_the_org_policy(monkeypatch):
     assert "every plausible concern" in system, "confidence_threshold was ignored"
 
 
+def test_the_prompt_gives_escalation_a_checkable_trigger(monkeypatch):
+    """The escalation criterion must name a CONDITION, not a feeling.
+
+    ⚠ THIS GUARDS A MEASURED FAILURE, NOT A STYLE PREFERENCE. The first prompt
+    said the model returned JSON "normally" and should call the tool "if — and
+    only if — you cannot responsibly decide". Against the live API on 2026-09-05
+    that produced grading every single time, on qwen-plus AND qwen-max, including
+    on an input built to be undecidable from metadata (`policy_tag`
+    "phi-restricted" with `pii_signals` empty). A model asked whether it feels
+    uncertain resolves that by finding a rationale — "no pii_signals, therefore
+    clean" — so the escalation path, which is the entire reason this provider
+    exists, was unreachable in production.
+
+    What fixed it was naming the condition in terms of fields the model actually
+    holds, and defining the boundary by capability rather than confidence. This
+    test pins the three load-bearing pieces so a later tidy-up cannot quietly
+    restore a prompt that never escalates: the two outcomes must be presented as
+    equals, the content-blind limit must be stated as structural, and the
+    regulated-tag-without-signals trigger must survive.
+
+    It cannot assert that the live model escalates — that needs a network call and
+    a key. It asserts the only thing a hermetic test can: that the instruction
+    which made it escalate is still being sent.
+    """
+    captured = {}
+    _install(monkeypatch, _chat(_verdict_json()), captured=captured)
+    qwen_judge.evaluate({"token_count": 1}, policy_config={})
+    system = captured["body"]["messages"][0]["content"]
+
+    assert "TWO ways to respond" in system, (
+        "the branches must be presented as two correct outcomes; framing grading "
+        "as what happens 'normally' is what made escalation unreachable")
+    assert "CONTENT-BLIND" in system and "not a negative finding" in system, (
+        "the model must be told its blindness is structural, or it reads an "
+        "absent signal as evidence of absence and grades clean")
+    assert "policy_tag" in system and "pii_signals is empty" in system, (
+        "the escalation trigger must be checkable against fields the model "
+        "actually receives, not phrased as a state of mind")
+
+    tool = qwen_judge._TOOLS[0]["function"]
+    assert tool["name"] == "flag_for_human_review"
+    assert "reviewer who CAN see the content" in tool["description"], (
+        "the tool description must define the boundary by capability — what a "
+        "human could decide that this model structurally cannot")
+
+
 def test_an_ordinary_verdict_is_graded_by_ai(monkeypatch):
     _install(monkeypatch, _chat(_verdict_json(
         policy_breach=True, decision="breach", risk_score=91,
