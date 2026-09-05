@@ -8795,6 +8795,18 @@ async function loadLoginHistory(scope){
   }
 
   var _status='pending', _next=0, _rows=[], _busy=false;
+  /* ⚠ TWO GUARDS, AND THEY GUARD DIFFERENT THINGS. Keeping the "load more"
+     button alive through a failure — which is right, because the rows under it
+     are real — also keeps it clickable twice in a row with `_next` unchanged.
+     Both clicks then fetch the SAME page and both concat it, so one review
+     renders twice, with two live resolve buttons for one id.
+       `_fetching` makes a second APPEND a no-op while one is in flight. It does
+     not block a fresh load, because switching tab or hitting refresh has to stay
+     responsive while a page is arriving.
+       `_gen` is what makes that safe: a response whose generation is no longer
+     current owns nothing — not the list, not the flag — so a superseded append
+     cannot land its rows on top of the list a later load already replaced. */
+  var _gen=0, _fetching=false;
 
   var SKEL='<div class="skel-row"><div class="skel circ"></div><div class="grow"><div class="skel h" style="width:38%"></div><div class="skel line" style="width:74%;margin-top:6px"></div></div></div>';
 
@@ -8869,11 +8881,18 @@ async function loadLoginHistory(scope){
 
   async function load(append){
     var box=$('rvwList'); if(!box)return;
+    if(append&&_fetching)return;
+    var gen=++_gen;
+    _fetching=true;
     if(!append){ _next=0; _rows=[]; box.innerHTML=SKEL; if($('rvwMore'))$('rvwMore').innerHTML=''; }
     var q='/v1/reviews?status='+encodeURIComponent(_status)+'&limit=50'
       +(append&&_next?'&after_seq='+encodeURIComponent(_next):'');
     var r=null, d=null;
     try{ r=await api(q); if(r.ok)d=await r.json(); }catch(e){}
+    // A superseded request stops here: it must not paint, must not append, and
+    // must not release the flag the current request is holding.
+    if(gen!==_gen)return;
+    _fetching=false;
     if(!d){
       /* ⚠ A FAILED "LOAD MORE" MUST NOT EAT THE PAGE ALREADY ON SCREEN. The
          rows below are real and were already fetched; replacing them with an
@@ -8967,20 +8986,39 @@ async function loadLoginHistory(scope){
            rather than swallowed by a reload that quietly shows something else. */
         var recorded=null; try{ recorded=await r.json(); }catch(e){}
         var got=(recorded&&recorded.resolution)||null;
+        var by=(recorded&&recorded.resolved_by)||'';
+        var mine=(window.__foxUser&&window.__foxUser.email)||'';
         var stood=got?outcome(got):null;
         load(false); pip();
-        if(got&&got!==key){
+        /* ⚠ WHO DECIDED IT, NOT ONLY WHAT WAS DECIDED. Comparing the resolution
+           word alone misses the case where the other reviewer reached the SAME
+           conclusion: the words match, so this said "Recorded — cleared" as
+           though the reviewer had just recorded it — and they had not. The
+           endpoint's already-resolved branch returns the standing item and
+           applies NOTHING from the request, so their `note` was never stored
+           either. `resolved_by` is the accountable email the winner's session
+           supplied, and it is in the response; `__foxUser` is this session's,
+           read from /v1/auth/me at boot. When both are known and they differ,
+           somebody else made this determination whatever word it carries.
+           When either is unknown the word is still compared, because naming a
+           person we cannot identify would be a worse claim than the one being
+           fixed. */
+        if(got&&(got!==key||(by&&mine&&by!==mine))){
+          var same=(got===key);
           await window.foxConfirm({
             title:'Already decided',
-            body:(recorded.resolved_by
-                    ? recorded.resolved_by+' resolved this before your decision '
-                      +'reached the record.'
-                    : 'Another reviewer resolved this before your decision '
-                      +'reached the record.')
-              +' It stands as “'+(stood?stood.label:got)+'”, not “'+o.label+'”.'
+            body:(by?by+' resolved this before your decision reached the record.'
+                    :'Another reviewer resolved this before your decision '
+                     +'reached the record.')
+              +(same
+                  ? ' They reached the same decision — “'+(stood?stood.label:got)
+                    +'” — so the outcome is unchanged.'
+                  : ' It stands as “'+(stood?stood.label:got)+'”, not “'
+                    +o.label+'”.')
               +'\n\nThe evidence event is append-only, so the first decision is '
-              +'the one that was made. Nothing was overwritten, and yours was '
-              +'not recorded.',
+              +'the one that was made. Nothing was overwritten and yours was '
+              +'not recorded.'
+              +(note?' Your note was not saved either.':''),
             confirm:'Close', dismiss:true
           });
           return;

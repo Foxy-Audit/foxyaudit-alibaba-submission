@@ -288,6 +288,37 @@ async function probe(){
   document.getElementById('foxDlgYes').click();             // Close
   await sleep(140);
 
+  // ── 5b-ii · the SAME word, a different person ───────────────────────────
+  window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482, status:'pending',
+     resolution:null, reason:'A clinical tag on a finance policy.',
+     risk_score:72, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-7200000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}], page:{complete:true,next_after_seq:null}};
+  window.foxReviews.filter('pending');
+  await sleep(240);
+  // 200, `cleared` — the word this reviewer is about to choose — but somebody
+  // else's name on it. The outcome agrees and the determination is not theirs.
+  window.__resolveResponse={id:'11111111-1111-4111-8111-111111111111', seq:1482,
+    status:'resolved', resolution:'cleared',
+    reason:'A clinical tag on a finance policy.', risk_score:72, note:null,
+    policy_tag:'phi-guard', agent:'billing-agent',
+    resolved_by:'sam@corp.test', resolved_at:new Date().toISOString()};
+  document.getElementById('toast-msg').textContent='';
+  document.getElementById('toast').classList.remove('show');
+  document.querySelectorAll('#page-review .rvw')[0]
+          .querySelectorAll('.rvw-acts .btn')[1].click();   // "Cleared"
+  await sleep(120);
+  document.getElementById('foxDlgFields').querySelector('input')
+          .value='rule 4 does not reach a redacted field';
+  document.getElementById('foxDlgYes').click();
+  await sleep(340);
+  out.sameWord={dialogOpen:dlg.classList.contains('on'),
+                title:document.getElementById('foxDlgT').textContent,
+                body:document.getElementById('foxDlgB').textContent,
+                toast:document.getElementById('toast-msg').textContent};
+  document.getElementById('foxDlgYes').click();             // Close
+  await sleep(140);
+
   // ── 5c · a failed "load more" keeps the control that retries it ─────────
   window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482, status:'pending',
      resolution:null, reason:'A clinical tag on a finance policy.',
@@ -306,6 +337,70 @@ async function probe(){
     rowsKept:rows(),
     toast:document.getElementById('toast-msg').textContent};
   window.__fail=false;
+
+  // ── 5c-ii · and clicking it twice fetches one page, not two ─────────────
+  window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482, status:'pending',
+     resolution:null, reason:'A clinical tag on a finance policy.',
+     risk_score:72, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-7200000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}], page:{complete:false,next_after_seq:1482}};
+  // A DIFFERENT review behind the cursor, so an append that happens twice is
+  // visible as a repeated id rather than hidden by a fixture repeating itself.
+  window.__page2={items:[{id:'22222222-2222-4222-8222-222222222222', seq:1490,
+     status:'pending', resolution:null, reason:'Two rules matched and disagree.',
+     risk_score:31, note:null, policy_tag:'chat', agent:null,
+     event_created_at:new Date(Date.now()-600000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}],
+     page:{complete:true,next_after_seq:null}};
+  window.foxReviews.reload();
+  await sleep(280);
+  window.__calls.length=0;
+  const moreBtn=document.querySelector('#rvwMore .btn');
+  moreBtn.click(); moreBtn.click();          // two, as fast as a hand can manage
+  await sleep(420);
+  out.doubleMore={
+    rows:rows(),
+    // ONE id per CARD, not per button — each card carries three resolve
+    // controls, so mapping the buttons would report every row three times.
+    ids:Array.prototype.map.call(
+      document.querySelectorAll('#page-review .rvw'),
+      r=>{ const b=r.querySelector('.rvw-acts .btn');
+           return b?(b.getAttribute('onclick')||'')
+                     .replace(/^.*?'([^']+)'.*$/,'$1'):''; }),
+    appendGets:window.__calls.filter(
+      c=>c.method==='GET'&&c.url.indexOf('after_seq=1482')>=0).length};
+  window.__page2=null;
+
+  // ── 5c-iii · a superseded append does not land on the list that replaced it
+  window.__page={items:[{id:'11111111-1111-4111-8111-111111111111', seq:1482,
+     status:'pending', resolution:null, reason:'A clinical tag on a finance policy.',
+     risk_score:72, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-7200000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}],
+     page:{complete:false,next_after_seq:1482}};
+  window.__page2={items:[{id:'22222222-2222-4222-8222-222222222222', seq:1490,
+     status:'pending', resolution:null, reason:'Two rules matched and disagree.',
+     risk_score:31, note:null, policy_tag:'chat', agent:null,
+     event_created_at:new Date(Date.now()-600000).toISOString(),
+     created_at:new Date().toISOString(), resolved_at:null, resolved_by:null}],
+     page:{complete:true,next_after_seq:null}};
+  window.foxReviews.filter('pending');
+  await sleep(280);
+  window.__slow=500;                       // the next page will be slow to arrive
+  document.querySelector('#rvwMore .btn').click();
+  await sleep(60);                         // ... and while it is still in flight,
+  window.__slow=0;
+  window.__page={items:[{id:'33333333-3333-4333-8333-333333333333', seq:1301,
+     status:'resolved', resolution:'cleared', reason:'A clinical tag.',
+     risk_score:64, note:null, policy_tag:'phi-guard', agent:'billing-agent',
+     event_created_at:new Date(Date.now()-260000000).toISOString(),
+     created_at:new Date().toISOString(),
+     resolved_at:new Date(Date.now()-90000).toISOString(),
+     resolved_by:'alex@corp.test'}], page:{complete:true,next_after_seq:null}};
+  document.querySelector('[data-rvwfilter="resolved"]').click();   // the tab changes
+  await sleep(900);                        // long enough for the slow one to land
+  out.superseded={rows:rows(), html:list()};
+  window.__page2=null;
 
   // ── 5d · the bottom bar at 320px ────────────────────────────────────────
   // Headless Chrome clamps the top-level window to ~500px wide, so the bar is
@@ -354,11 +449,18 @@ window.__page={items:[],page:{complete:true,next_after_seq:null}};
 // STANDING decision, which on a lost race is not the one that was sent.
 window.__resolveResponse={};
 window.__fail=false;
-function __res(ok,status,payload){
-  return Promise.resolve({ok:ok, status:status,
+// The page a CURSOR asks for, when a test needs the second page to be
+// distinguishable from the first. Null everywhere else.
+window.__page2=null;
+window.__slow=0;
+function __res(ok,status,payload,delay){
+  var mk=function(){ return {ok:ok, status:status,
     json:function(){ return Promise.resolve(payload); },
     text:function(){ return Promise.resolve(JSON.stringify(payload)); },
-    headers:{get:function(){ return null; }}});
+    headers:{get:function(){ return null; }}}; };
+  // A response that has not arrived yet is the only way two loads overlap.
+  return delay?new Promise(function(res){ setTimeout(function(){ res(mk()); }, delay); })
+              :Promise.resolve(mk());
 }
 window.fetch=function(input,init){
   var url=String(input), method=((init&&init.method)||'GET').toUpperCase();
@@ -366,9 +468,16 @@ window.fetch=function(input,init){
   window.__calls.push({url:url, method:method,
     body:(init&&init.body)?String(init.body):null,
     csrf:(h&&h.get)?h.get('X-CSRF-Token'):null});
+  // `foxAvatar` reads this at boot and parks it on `window.__foxUser`. Without
+  // it the page has no identity to compare `resolved_by` against, and the
+  // same-word case below would pass for the wrong reason.
+  if(url.indexOf('/v1/auth/me')===0)
+    return __res(true,200,{email:'you@corp.test', full_name:'You', preferences:{}});
   if(url.indexOf('/v1/reviews')===0){
     if(method==='POST')return __res(true,200,window.__resolveResponse);
     if(window.__fail)return __res(false,500,{});
+    if(url.indexOf('after_seq=')>=0&&window.__page2)
+      return __res(true,200,window.__page2,window.__slow);
     // The pip asks for limit=10; the page asks for limit=50. One fixture
     // answers both, so a pip that read the wrong list would show it.
     return __res(true,200,window.__page);
@@ -508,8 +617,15 @@ def test_a_recorded_decision_reads_as_a_verdict_not_as_an_escalation(run):
 
 @needs_chrome
 def test_a_resolve_that_agrees_reports_the_record_it_got_back(run):
-    """The happy path, asserted on the RESPONSE rather than the request: the
-    endpoint answered with `cleared` and the surface said `cleared`."""
+    """The happy path, asserted on the RESPONSE rather than the request.
+
+    ⚠ THIS ONE DOES NOT DISCRIMINATE THE FIX THAT INTRODUCED IT — the code it
+    replaced produced the identical string from the reviewer's own word, so it
+    was never evidence for reading the response. It is kept as a FORWARD guard,
+    and the identity check gave it something real to hold: the response carries
+    this session's own `resolved_by`, so a guard that nagged whenever a decision
+    came back at all would fail here.
+    """
     agreed = run["agreed"]
     assert agreed["shown"], "recording a decision said nothing at all"
     assert agreed["toast"] == "Recorded — cleared", agreed["toast"]
@@ -543,6 +659,82 @@ def test_a_resolve_that_lost_the_race_is_not_reported_as_the_reviewer_s_own(run)
     assert m["toast"] == "", (
         "a toast fired on the losing path as well as the dialog, and the only "
         "word it can carry is the reviewer's own: %r" % m["toast"])
+
+
+@needs_chrome
+def test_a_resolve_the_same_word_but_not_the_same_person_is_still_not_theirs(run):
+    """⚠ THE WORD MATCHING IS NOT THE SAME AS THE DECISION BEING YOURS.
+
+    Comparing only the resolution missed the commonest overlap of all: two
+    reviewers looking at one escalation and reaching the SAME conclusion. The
+    words agree, so the surface said "Recorded — cleared" as though this
+    reviewer had just recorded it — and they had not. The endpoint's
+    already-resolved branch returns the standing item and applies NOTHING from
+    the request, so their `note` was never stored either, and nothing on screen
+    said so.
+
+    `resolved_by` is the accountable email the winner's session supplied and it
+    is in the response; `__foxUser.email` is this session's, read from
+    `/v1/auth/me` at boot. When both are known and they differ, the
+    determination belongs to somebody else whatever word it carries.
+    """
+    m = run["sameWord"]
+    assert m["dialogOpen"], (
+        "a decision recorded by somebody else was reported as this reviewer's "
+        "own, because the resolution word happened to match: %r" % m["toast"])
+    assert m["title"] == "Already decided", m["title"]
+    assert "sam@corp.test" in m["body"], m["body"]
+    assert "same decision" in m["body"], (
+        "the dialog claims a disagreement that did not happen: %s" % m["body"])
+    assert "Cleared" in m["body"], m["body"]
+    assert "Your note was not saved either" in m["body"], (
+        "the endpoint discarded the note on this path and the reviewer was not "
+        "told: %s" % m["body"])
+    assert m["toast"] == "", (
+        "a toast fired as well, and the only word it can carry is the "
+        "reviewer's own: %r" % m["toast"])
+
+
+@needs_chrome
+def test_two_clicks_on_load_more_fetch_one_page_not_two(run):
+    """⚠ THE PREVIOUS FIX MADE THIS REACHABLE. Keeping the button alive through a
+    failure is right — the rows under it are real — and it also leaves it
+    clickable twice with `_next` unchanged. Both clicks then request the SAME
+    page and both `concat` it: one review rendered twice, with two live resolve
+    buttons for one id, on a page whose whole subject is a decision written once.
+    """
+    d = run["doubleMore"]
+    assert d["appendGets"] == 1, (
+        "two clicks fired %s identical requests for the same cursor"
+        % d["appendGets"])
+    assert d["rows"] == 2, (
+        "the same page was appended twice: %s rows for a 1 + 1 list" % d["rows"])
+    ids = d["ids"]
+    assert len(ids) == len(set(ids)), (
+        "one review id is rendered more than once, with a live resolve control "
+        "on each copy: %s" % ids)
+
+
+@needs_chrome
+def test_a_superseded_page_does_not_land_on_the_list_that_replaced_it(run):
+    """`_fetching` and `_gen` guard DIFFERENT interleavings, so both are driven.
+
+    `_fetching` stops a second APPEND while one is in flight. It deliberately
+    does not block a fresh load, because changing tab has to stay responsive
+    while a page is arriving — and that is the hole `_gen` closes. Click "load
+    more", switch to Decided before it lands, and without a generation token the
+    in-flight append concats pending rows onto the resolved list it now finds
+    there. Not a flash, either: whichever response arrives last wins, so the
+    wrong list can be the one that stays.
+    """
+    sup = run["superseded"]
+    assert sup["rows"] == 1, (
+        "a page fetched for the previous filter was appended to this one: %s "
+        "rows" % sup["rows"])
+    assert "risk 31" not in sup["html"] and "risk 72" not in sup["html"], (
+        "pending escalations are on the Decided tab, carried over by a request "
+        "that was already superseded when it returned")
+    assert 'class="pill safe"' in sup["html"], sup["html"][:300]
 
 
 @needs_chrome
