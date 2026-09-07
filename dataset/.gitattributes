@@ -1,0 +1,17 @@
+# The dataset is byte-compared, so git must not rewrite it on the way out.
+#
+# `build_dataset.py --check` regenerates every file into memory and compares
+# BYTES against what is on disk. That is deliberate: comparing parsed JSON would
+# let a whitespace or encoding change through, and this data is evidence.
+#
+# This repository has no root `.gitattributes` and `core.autocrlf` is true on the
+# machine it is developed on, so without the line below git converts LF to CRLF
+# on checkout. MEASURED: a plain `git checkout` of `manifest.json` added 11 CR
+# bytes and `--check` then exited 1 on a dataset that had not drifted at all --
+# a false alarm on every fresh Windows clone, which would teach the one gate
+# this directory has to be ignored.
+#
+# `-text` means "never convert, in either direction". The bytes in the commit are
+# the bytes in the working tree on every platform, which is the only thing that
+# makes the check meaningful.
+* -text

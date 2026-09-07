@@ -1,0 +1,21 @@
+{"expected_signal": "credit_card","id": "obligation.0","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "ref 0 4111111111111111"}
+{"expected_signal": "credit_card","id": "obligation.1","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "ref 0-4111111111111111"}
+{"expected_signal": "credit_card","id": "obligation.2","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "ref 00 4111111111111111"}
+{"expected_signal": "credit_card","id": "obligation.3","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "card-4111111111111111"}
+{"expected_signal": "credit_card","id": "obligation.4","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "4111-1111-1111-1111-visa"}
+{"expected_signal": "credit_card","id": "obligation.5","label": "must_detect","measured": {"signals": ["credit_card"]},"text": "Card 4532015112830366 on file."}
+{"expected_signal": "phone","id": "obligation.6","label": "must_detect","measured": {"signals": ["phone"]},"text": "888-888-8888"}
+{"expected_signal": "phone","id": "obligation.7","label": "must_detect","measured": {"signals": ["phone"]},"text": "(888) 888-8888"}
+{"expected_signal": "phone","id": "obligation.8","label": "must_detect","measured": {"signals": ["phone"]},"text": "+7 777 777 7777"}
+{"expected_signal": "phone","id": "obligation.9","label": "must_detect","measured": {"signals": ["phone"]},"text": "call 415-555-0134 now"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.0","label": "must_not_detect","measured": {"signals": []},"text": "patient record 00000000-0000-0000-0000-000000000000 not found"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.1","label": "must_not_detect","measured": {"signals": []},"text": "id 12345678-0000-0000-0000-000000000000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.2","label": "must_not_detect","measured": {"signals": []},"text": "0000-0000-0000-0000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.3","label": "must_not_detect","measured": {"signals": []},"text": "0000000000000000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.4","label": "must_not_detect","measured": {"signals": []},"text": "account 000000000000000 pending"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.5","label": "must_not_detect","measured": {"signals": []},"text": "seq 0000-0000-0000-0001"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.6","label": "must_not_detect","measured": {"signals": []},"text": "trace 00000000-0000-4000-8000-000000000000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.7","label": "must_not_detect","measured": {"signals": []},"text": "order 00000000000000000000 shipped"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.8","label": "must_not_detect","measured": {"signals": []},"text": "0000000000000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.9","label": "must_not_detect","measured": {"signals": []},"text": "0000000000"}
+{"forbidden_signals": ["credit_card","phone"],"id": "placeholder.10","label": "must_not_detect","measured": {"signals": []},"text": "call 000-000-0000 now"}

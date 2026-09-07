@@ -89,6 +89,7 @@ servers, our database, or our word for anything.
 
 - [For judges](#-judging-this-start-here)
 - [Submission — Alibaba Cloud AI Hackathon Pakistan 2026](#-submission--alibaba-cloud-ai-hackathon-pakistan-2026)
+- [Dataset](dataset/README.md)
 - [How it's different](#-how-its-different)
 - [Architecture](#-architecture)
 - [Quickstart](#-quickstart)
@@ -131,6 +132,15 @@ tag, the model id, timestamps. It never receives the prompt or response text, in
 code path. That is enforced by an allowlist validator on ingest (`_metadata_is_content_blind` in
 [`backend/app/schemas.py`](backend/app/schemas.py)) and by a shared projection every judge call goes
 through (`content_blind_meta` in [`backend/app/judge.py`](backend/app/judge.py)).
+
+**The dataset.** No model here was trained, fine-tuned or distilled — the agent is Qwen called
+zero-shot with a built system prompt and two tools — so [`dataset/`](dataset/README.md) ships what
+the agent actually runs on instead: the labelled prompt corpora the host-side guard is measured
+against (137 rows across three files), the exact content-blind records the judge receives for each of
+those prompts, the judge's own system prompt and tool schemas, and the schema of the human-review
+feedback it reads at inference time. Every label is re-measured against the real SDK at generation
+time, and `python dataset/build_dataset.py --check` fails if the committed data has drifted from what
+the code now does.
 
 **Where Alibaba Cloud is used, and where it isn't.** Two separate things, and it is worth being
 exact about which is which.

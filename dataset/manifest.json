@@ -1,0 +1,11 @@
+{
+  "judge_contract.json": "one JSON object, not rows: the judge's system prompt, its two tool schemas, and the two metadata allowlists",
+  "rows": {
+    "guard_probes.jsonl": 35,
+    "identifier_corpus.jsonl": 21,
+    "injection_corpus.jsonl": 81
+  },
+  "ruleset_hash": "7da63a03f602f9fbda04991ef9f53a84e75f019c8af71dcfd08d309c66772bcd",
+  "ruleset_version": "2026.08.5",
+  "sdk_version": "1.14.0"
+}
