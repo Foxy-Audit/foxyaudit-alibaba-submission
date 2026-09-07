@@ -2,7 +2,7 @@
 
 **No model in Foxy Audit was trained, fine-tuned or distilled.** The agent is
 Qwen — `qwen-plus` by default — called zero-shot on Alibaba Cloud Model Studio
-with a system prompt built at request time and two tools it may call. There is
+with a system prompt built at request time and up to two tools it may call. There is
 no weights file, no fine-tuning job, no training run, and nothing in this
 directory was ever fed to a model as training data.
 
@@ -77,7 +77,7 @@ padding it would be fabrication. The schema is above; the data is not.
 
 | File | Rows | What it is |
 |---|---|---|
-| `guard_probes.jsonl` | 35 | The sector probe corpus: labelled prompts across healthcare, finance and legal, each with the guard verdict measured today and the record the agent would receive for it |
+| `guard_probes.jsonl` | 35 | The sector probe corpus: labelled prompts across healthcare, finance and legal, each with the guard verdict measured today, the content-blind record the ledger receives for it, and whether the AI judge or the deterministic engine grades that record |
 | `injection_corpus.jsonl` | 81 | The prompt-injection obligation set, both directions: 11 evasions, 5 phrasings the previous ruleset already caught, 65 ordinary prompts that must stay clean |
 | `identifier_corpus.jsonl` | 21 | The individually asserted identifier cases: 10 that must be detected, 11 placeholders that must not be |
 | `judge_contract.json` | 1 object | The agent's default system prompt, its two tool schemas, the two metadata allowlists, and the verdict shape |
@@ -103,7 +103,8 @@ corpus order.
 | `intent` | What this probe is testing |
 | `gap_reason` | Required on `known_gap`, empty otherwise. The sentence a reader needs when nothing fires |
 | `measured` | `triggered`, `rules`, `signals`, `reason` from `foxy_audit.check(prompt, policy_tag)` at generation time |
-| `judge_input` | Seven of the ten fields of the content-blind record the agent receives for this prompt — see below |
+| `content_blind_record` | Seven of the ten fields of the content-blind record the ledger receives for this prompt — see below |
+| `graded_by` | `ai` when the worker sends this record to the AI judge, `rules` when it never does — see below |
 
 **What `measured` means.** It is not a copy of the label. It is a fresh call into
 the policy engine, and the generator asserts the two agree: `expect_block` must
@@ -111,10 +112,21 @@ trip a rule and carry rule ids, `expect_assist` and `known_gap` must trip none.
 That is the same assertion `sdk/tests_testbed/test_probes.py` makes. A gap probe
 that started firing is a finding, not a relabelling job, and it fails the build.
 
-**What `judge_input` is.** The projection the agent would receive, computed with
-the same SDK functions the wire uses — `hashing.canonical_json`,
-`hashing.sha256_hex`, `hashing.estimate_tokens`, `pii.detect_pii` and
-`client._merge_signals`.
+**What `content_blind_record` is.** The record the SDK would ship to the ledger
+for this prompt, computed with the same SDK functions the wire uses —
+`hashing.canonical_json`, `hashing.sha256_hex`, `hashing.estimate_tokens`,
+`pii.detect_pii` and `client._merge_signals`.
+
+**Not every record reaches the agent, and `graded_by` says which do.** The
+worker ([`backend/app/worker.py`](../backend/app/worker.py)) routes an
+enforcement event — `blocked`, `redacted`, `response_blocked` — to the
+deterministic `policy_engine` and never calls a model for it: the host already
+stopped the interaction, and there is no model response to grade. Only an
+`interaction` is handed to the AI judge. So the eleven `expect_block` rows carry
+`graded_by: "rules"` and their record is what the ledger holds, not what the
+agent sees; the twenty-four `expect_assist` and `known_gap` rows carry
+`graded_by: "ai"` and their record is, field for field, what the agent receives.
+The two strings are the worker's own `graded_by` vocabulary.
 
 **It is a subset, and the missing fields are missing on purpose.** The allowlist
 in `judge_contract.json` has ten entries; these rows carry seven. `event_id` and
@@ -202,10 +214,15 @@ the measurement unreadable.
 | `forbidden_signals` | On placeholders: `credit_card` and `phone`, the two that must be absent |
 | `measured.signals` | What `pii.detect_pii(text, "")` returns today |
 
-**Only the individually asserted cases are here.** The fixture module also holds
-four large generated populations, but their guarantee is a per-**set**
-false-positive rate, not a per-item label. Writing `must_not_detect` on each of
-20,000 generated rows would be asserting something nobody measured.
+**Only the named cases are here, and they are a strict subset of what is
+measured.** The fixture module also holds several large generated populations:
+hundreds of card and phone shapes that must be detected, and thousands of
+placeholder, digest and build-id shapes that must not be — some asserted at
+exactly zero, some against a per-set false-positive bound. The SDK suite
+(`sdk/tests/test_policy_truth_1_9_0.py`) measures all of them on every run. This
+file exports only the named cases because they are the ones with a per-item
+label a reader can check by eye; it does not claim to be the whole obligation
+set.
 
 Note that the placeholder assertion is the one the test actually makes:
 `credit_card` and `phone` must be absent. It is not "no signal at all". Anything
@@ -220,17 +237,27 @@ Read out of the backend at generation time, never transcribed.
 | `provider` · `endpoint` · `model_default` | From the `Settings` **field defaults**, not from live settings — reading the environment would make the output depend on whichever machine ran the generator |
 | `input_allowlist` | The ten fields `content_blind_meta` passes through, read from the compiled function's own constant |
 | `event_metadata_allowlist` | The ten `event_metadata` keys that survive the same projection, sorted |
-| `system_prompt` | Built with an **empty** `policy_config` |
-| `tools` | `flag_for_human_review` and `check_prior_reviews`, verbatim |
-| `prior_reviews_payload_keys` · `prior_review_window_days` | The shape and reach of the feedback lookup |
+| `policy_config_default` | The policy flags every graded event carries unless the workspace changed one — read from the `OrgPolicy` table's column defaults and projected by the backend's own `judge_policy_config` |
+| `system_prompt` | What the agent receives for a policy tag **no human has ruled on yet** — one tool offered |
+| `system_prompt_with_prior_reviews` | What the agent receives once `check_prior_reviews` would return a non-zero count — two tools offered |
+| `tools_always` | `flag_for_human_review`, verbatim, offered on every call |
+| `tools_when_prior_reviews_exist` | `check_prior_reviews`, verbatim, offered only when there is something to read back |
+| `prior_reviews_payload_keys` · `prior_review_window_days` | The shape and reach of the feedback lookup when it can answer |
+| `prior_reviews_unavailable_payload` | What the model is answered with when the lookup itself fails — it is told to grade without it, verbatim |
 | `verdict` | The five keys the model returns as JSON, and the pattern `Verdict.decision` is validated against |
 
-**The shipped prompt is the *default* prompt, not "the" prompt.** An empty
-`policy_config` is falsy, so `_build_system_prompt` omits its four
-policy-derived rules; a workspace with an active policy config appends rules to
-the tail of what you see here. `lookup_offered=True` because the deployed worker
-does supply a prior-review lookup, and a prompt that named a tool the model was
-not actually given would send it asking for something nobody can answer.
+**Two prompts, because the product sends two.** Ingest freezes a policy snapshot
+into every event, creating the workspace's policy row with its column defaults
+if none exists, and the worker projects that snapshot into the rules at the tail
+of the prompt — so the deployed default is the column defaults, not an empty
+config, and both prompts are built from them. The worker also builds a seven-day
+activity aggregate for every graded row and passes it unconditionally, which
+adds one more rule; both prompts carry it. What differs between the two is the
+lookup: the worker offers `check_prior_reviews` only when the tag already has at
+least one non-zero human-ruling count inside the window, and withholds it
+otherwise. A new workspace's judge therefore has one tool and the shorter
+prompt, and that is `system_prompt`. A workspace that changed a policy setting
+gets different rule sentences at the tail of either.
 
 **There are no expected agent verdicts anywhere in this dataset**, on any row.
 The model's output is not deterministic and has never been measured per probe, so
@@ -262,8 +289,10 @@ Licence: **MIT**, the same as the rest of the repository. See [`LICENSE`](../LIC
 
 ## 6 · Regenerate and verify
 
-The generator needs this repository's own SDK, not whatever `foxy_audit` happens
-to be on your path. From the repository root:
+The generator measures this repository's own SDK by construction: it puts
+`sdk/src` at the front of `sys.path` before importing anything and exits if
+`foxy_audit` still resolved elsewhere. The venv is for the SDK's dependency and
+the backend's, not for choosing which SDK is measured. From the repository root:
 
 ```bash
 python -m venv .venv

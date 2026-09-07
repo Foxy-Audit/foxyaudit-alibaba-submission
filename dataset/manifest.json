@@ -1,5 +1,5 @@
 {
-  "judge_contract.json": "one JSON object, not rows: the judge's system prompt, its two tool schemas, and the two metadata allowlists",
+  "judge_contract.json": "one JSON object, not rows: the judge's system prompts, its tool schemas, and the two metadata allowlists",
   "rows": {
     "guard_probes.jsonl": 35,
     "identifier_corpus.jsonl": 21,

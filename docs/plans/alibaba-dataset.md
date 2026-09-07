@@ -76,6 +76,16 @@ not a dataset.
 
 ## 3 · Design
 
+> ⚠ **§3.2 and §3.4 below are the plan as written on 2026-09-07 morning and are
+> superseded where they disagree with `dataset/README.md` and §8.** Specifically:
+> evasions are labelled per mechanism, not uniformly uncaught; benign rows are
+> measured under four tags; the signal vocabulary is `ssn_pattern`; the guard-probe
+> field is `content_blind_record` plus `graded_by`, not `judge_input`; and the
+> contract ships two prompts built from the OrgPolicy column defaults with the
+> tools split by when the worker offers them. The generated files and the README
+> are the source of truth for the shipped shape; this section is kept as the
+> record of what was planned.
+
 ### 3.1 Files — all new unless marked
 
 ```
@@ -397,4 +407,6 @@ wrong, the commit SHA, the diff stat. Push the branch. Do not merge.
 
 | Date | SHA | What |
 |---|---|---|
-| 2026-09-07 | *(this commit)* | Plan written. Awaiting D1 build. |
+| 2026-09-07 | `3fba73e` | Plan written. |
+| 2026-09-07 | `5e75bab` | D1 built by the executor. **Three things this plan had wrong, corrected in favour of the SDK:** (1) §3.2 said every evasion passes today — ruleset `2026.08.5` catches all 8 *mechanical* ones; only the 2 semantic and 1 declined still pass, so labels are per-mechanism and those rows replay the frozen `2026.08.4` definition; (2) the benign corpus is asserted under **four** tags (`gdpr` too), not three; (3) the signal vocabulary is `ssn_pattern` / `phi.ssn_pattern`, not `ssn` / `phi.ssn`. Also added `dataset/.gitattributes` (`* -text`) — `core.autocrlf` put 11 CR bytes into `manifest.json` on checkout and `--check` failed on data that had not drifted. |
+| 2026-09-07 | *(review commit)* | **`code-review` on `5e75bab` found four accuracy defects in the judge contract, every one traceable to this plan's §3.2, all verified against `worker.py` and fixed:** (a) blocked rows were labelled "the record the agent receives" — `worker.py:649` never sends an enforcement event to any judge; the field is now `content_blind_record` and every row carries the worker's `graded_by` (`rules` ×11 / `ai` ×24); (b) `{}` is **not** the deployment-default policy config — ingest creates an `OrgPolicy` row with column defaults and the worker projects it, so the prompt always carries the policy rules; the contract now builds from those defaults via `judge_policy_config`; (c) `history` is never `None` in the worker; (d) `lookup_offered=True` is the **minority** path — `worker.py:326` withholds `check_prior_reviews` until a tag has a non-zero human-ruling count. The contract now ships both prompts and splits the tools into `tools_always` / `tools_when_prior_reviews_exist`. Also: `ruleset.drift()` asserted `None` and a blank provenance refused before the manifest is written; `sdk/src` forced to the front of `sys.path` with an exit if `foxy_audit` resolves elsewhere; `probe.expect` validated against `EXPECTATIONS`; `PREVIOUS_RULESET` derived from the registry; the lookup's unavailable payload added to the contract; the identifier prose corrected (the fixture holds eight generated sets, several per-item, all measured by the SDK suite — the export is a named subset). **Not done, recorded as follow-ups:** a CI step running `--check` (CI has never run in this repo, #315); hoisting `content_blind_meta`'s allowlist to a module constant so the generator stops reading bytecode; a shared fixture loader for the four tests and the script; the README's hand-typed sub-counts. |

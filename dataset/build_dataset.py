@@ -3,8 +3,9 @@
 
 WARNING -- NOTHING HERE WAS TRAINED. This script does not fit, tune or distil
 anything. It exports four files: the labelled prompt corpora the host-side guard
-is measured against, the exact content-blind records the AI judge receives for
-each of those prompts, and the judge's own contract. See ``dataset/README.md``.
+is measured against, the content-blind record the ledger receives for each of
+those prompts (marked by whether the AI judge or the deterministic engine grades
+it), and the judge's own contract. See ``dataset/README.md``.
 
 THE RULE THIS SCRIPT ENFORCES
 =============================
@@ -25,10 +26,16 @@ No timestamps, no git SHAs, no environment. Sorted keys, ``ensure_ascii=False``,
 LF endings, and ``--check`` compares BYTES against what is on disk -- so a CRLF
 checkout cannot pass by accident. Run it twice; the second run changes nothing.
 
-RUN IT IN A VENV THAT HAS THIS WORKTREE'S SDK. ``pip install -e ./sdk`` from the
-repository root. The first line of output is ``foxy_audit.__file__`` for exactly
-this reason: a ruleset hash measured against some other checkout of the SDK is a
-dataset about some other product.
+WHICH SDK IS MEASURED. This checkout's, by construction: ``sdk/src`` is put at
+the front of ``sys.path`` before anything is imported, and the script exits if
+``foxy_audit`` still resolved elsewhere. The first line of output is
+``foxy_audit.__file__`` so the reader can see it too -- a ruleset hash measured
+against some other checkout of the SDK is a dataset about some other product.
+
+PREREQUISITES. The SDK's own dependency (``pip install -e ./sdk``) for the three
+corpora, plus ``pip install -r backend/requirements.txt`` for
+``judge_contract.json``, which imports the backend's pydantic models and the
+``OrgPolicy`` table definition. No database is opened.
 """
 
 from __future__ import annotations
@@ -44,19 +51,28 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
 # The backend is not an installed package; the judge contract is read from the
-# source tree the same way the backend's own tests read it.
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# source tree the same way the backend's own tests read it. The SDK is read from
+# THIS checkout's src layout, ahead of anything pip installed, so the venv cannot
+# decide which product gets measured.
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "sdk" / "src"))
 
 import foxy_audit  # noqa: E402
 from foxy_audit import hashing, introspect, pii, policy, ruleset  # noqa: E402
 from foxy_audit.client import _merge_signals  # noqa: E402
-from foxy_testbed.sectors import SECTOR_NAMES, SECTORS  # noqa: E402
+from foxy_testbed.sectors import EXPECTATIONS, SECTOR_NAMES, SECTORS  # noqa: E402
 
-#: The ruleset version the injection corpus's "before" column replays. Named in
-#: ``test_injection_ruleset_2026_08_5.PREVIOUS``; an evasion is an evasion
-#: because THIS definition missed it, and the live one is what caught it.
-PREVIOUS_RULESET = "2026.08.4"
+if not Path(foxy_audit.__file__).resolve().is_relative_to(ROOT):
+    sys.exit("foxy_audit resolved to {0}, outside this checkout; refusing to "
+             "measure another product".format(foxy_audit.__file__))
+
+#: The ruleset version the injection corpus's "before" column replays: the one
+#: minted immediately before the current one, read from the registry rather
+#: than typed here. An evasion is an evasion because THIS definition missed it,
+#: and the live one is what caught it. ``test_injection_ruleset_2026_08_5``
+#: names the same version as ``PREVIOUS``.
+_VERSIONS = ruleset.known_versions()
+PREVIOUS_RULESET = _VERSIONS[_VERSIONS.index(ruleset.CURRENT_VERSION) - 1]
 
 #: Every tag whose baseline includes the injection family. Four, not three --
 #: ``test_no_ordinary_prompt_trips_an_injection_rule`` parametrises over exactly
@@ -141,9 +157,16 @@ def _previous_injection_rules(text: str, tag: str = "default") -> list:
                    if m.rule_id.startswith("injection.")})
 
 
-def _judge_input(prompt: str, triggered: bool, guard_signals,
+def _wire_record(prompt: str, triggered: bool, guard_signals,
                  policy_tag: str) -> dict:
-    """The content-blind record the judge receives for this prompt.
+    """The content-blind record the ledger receives for this prompt.
+
+    NOT every one of these reaches the AI judge. ``backend/app/worker.py``
+    routes an enforcement event (``blocked`` / ``redacted`` /
+    ``response_blocked``) to the deterministic ``policy_engine`` and never calls
+    a model for it; only an ``interaction`` is graded by the judge. The row's
+    ``graded_by`` says which, using the worker's own vocabulary (``rules`` /
+    ``ai``), so a reader cannot mistake a blocked row for agent input.
 
     Reproduced with the SDK's OWN functions rather than by re-deriving them, so
     a change to the wire contract shows up here as a diff instead of as a lie:
@@ -193,6 +216,10 @@ def build_guard_probes(failures: list) -> list:
         sector = SECTORS[sector_name]
         for probe in sector.probes:
             result = introspect.check(probe.prompt, sector.policy_tag)
+            if probe.expect not in EXPECTATIONS:
+                failures.append(
+                    "{0}: label {1!r} is not one of {2}".format(
+                        probe.id, probe.expect, list(EXPECTATIONS)))
             expects_block = probe.expect == "expect_block"
             if expects_block and not (result.triggered and result.rules):
                 failures.append(
@@ -234,10 +261,14 @@ def build_guard_probes(failures: list) -> list:
                     "signals": sorted(result.signals),
                     "reason": result.reason or "",
                 },
-                "judge_input": _judge_input(
+                "content_blind_record": _wire_record(
                     probe.prompt, result.triggered,
                     list(result.signals) if result.triggered else None,
                     sector.policy_tag),
+                # worker.py: an enforcement event is graded by policy_engine
+                # ("rules") and never shown to a judge; an interaction is
+                # graded by the AI judge ("ai"). Same strings the worker stamps.
+                "graded_by": "rules" if result.triggered else "ai",
             })
     return rows
 
@@ -341,10 +372,13 @@ def build_injection_corpus(failures: list) -> list:
 def build_identifier_corpus(failures: list) -> list:
     """The 21 INDIVIDUALLY asserted identifier cases.
 
-    ONLY THE NAMED SETS. ``identifier_corpora.py`` also holds four large
-    generated populations, but their guarantee is a per-SET false-positive rate,
-    not a per-item label -- writing ``must_not_detect`` on each of 20,000 rows
-    would be asserting something nobody measured.
+    ONLY THE NAMED SETS. ``identifier_corpora.py`` also holds several large
+    generated populations -- hundreds of card and phone shapes that must be
+    detected, and thousands of placeholder, digest and id shapes that must not
+    be, some asserted at exactly zero and some against a per-set bound. The SDK
+    suite (``test_policy_truth_1_9_0.py``) measures all of them; this file
+    exports only the named cases, which the README says plainly. It is a strict
+    subset of what is measured, not the whole obligation set.
 
     The placeholder assertion is the one the test makes and NOT "no signal at
     all": ``credit_card`` and ``phone`` must be absent. Anything else the sweep
@@ -405,17 +439,55 @@ def _allowlist_from(function) -> list:
         "left to guess what the judge is allowed to see")
 
 
+def _deployment_default_policy_config() -> dict:
+    """The policy flags every graded event carries unless a workspace changed one.
+
+    Ingest (``routers/logs.py``) creates an ``OrgPolicy`` row with its column
+    defaults for any workspace that has none, freezes a snapshot of it into
+    every event, and the worker projects that snapshot through
+    ``judge_policy_config`` before calling a judge. So "no config" is not the
+    deployed default -- the column defaults are. Read them off the table
+    definition and run the SAME projection, rather than typing the values here.
+    """
+    from backend.app.models import OrgPolicy
+    from backend.app.policy_snapshot import (POLICY_SNAPSHOT_SCHEMA,
+                                             judge_policy_config)
+
+    columns = OrgPolicy.__table__.c
+    snapshot = {"schema": POLICY_SNAPSHOT_SCHEMA}
+    for name in ("pii_detection", "prompt_injection", "regulated_data_mode",
+                 "max_token_threshold"):
+        snapshot[name] = columns[name].default.arg
+    server = columns["confidence_threshold"].server_default.arg
+    snapshot["confidence_threshold"] = server if isinstance(server, str) else server.text
+    config = judge_policy_config(snapshot)
+    if config is None:
+        raise LabelDisagreement(
+            "judge_policy_config rejected a snapshot built from OrgPolicy's own "
+            "column defaults; the snapshot contract moved and this script must "
+            "follow it")
+    return config
+
+
 def build_judge_contract() -> dict:
-    """The agent's contract: its system prompt, its two tools, what it may see.
+    """The agent's contract: its system prompt, its tools, what it may see.
 
-    Imported from the backend, never transcribed. Three deliberate choices:
+    Imported from the backend, never transcribed. Four deliberate choices, each
+    checked against ``backend/app/worker.py`` rather than assumed:
 
-    * the system prompt is built with an EMPTY ``policy_config``, which is the
-      deployment-default path -- ``_build_system_prompt`` skips its four
-      policy-derived rules when the config is falsy, so this is the DEFAULT
-      prompt and not "the" prompt. A per-org config appends rules to it.
-    * ``lookup_offered=True``, because the deployed worker supplies a
-      prior-review lookup and the prompt must name a tool it is actually given.
+    * ``policy_config`` is the DEPLOYMENT DEFAULT, built from ``OrgPolicy``'s
+      column defaults and projected by the backend's own function (above). An
+      empty config would describe a prompt no live workspace receives.
+    * ``history`` is present, because the worker builds a seven-day aggregate
+      for EVERY graded row and passes it unconditionally. The prompt reads only
+      its presence, so a zero-count aggregate in the worker's own shape is what
+      is passed here.
+    * TWO prompts, because the worker offers ``check_prior_reviews`` only when
+      the tag already has at least one non-zero human-ruling count and withholds
+      it otherwise. ``system_prompt`` is the prompt every new tag gets (one
+      tool); ``system_prompt_with_prior_reviews`` is the prompt once humans have
+      ruled (two tools). Shipping only the second would describe the minority
+      path as the norm.
     * the endpoint and model come from the ``Settings`` FIELD DEFAULTS, not from
       ``get_settings()``. Reading live settings would make the output depend on
       whichever environment ran the generator, and ``--check`` would then fail
@@ -434,6 +506,12 @@ def build_judge_contract() -> dict:
         raise LabelDisagreement(
             "Verdict.decision no longer carries a pattern constraint")
 
+    policy_config = _deployment_default_policy_config()
+    # worker._org_history's shape at zero activity. Only its presence reaches
+    # the prompt ("Use recent_history only as an aggregate risk signal").
+    history = {"window_days": 7, "recent_breaches": 0, "recent_graded": 0,
+               "breach_rate_pct": 0.0}
+
     return {
         "provider": "qwen",
         "endpoint": defaults["qwen_base_url"].default.rstrip("/") + "/chat/completions",
@@ -443,15 +521,36 @@ def build_judge_contract() -> dict:
             "ids are volatile and are never hardcoded in the judge."),
         "input_allowlist": _allowlist_from(content_blind_meta),
         "event_metadata_allowlist": sorted(SAFE_EVENT_METADATA),
+        "policy_config_default": policy_config,
         "system_prompt": qwen_judge._build_system_prompt(
-            {}, None, lookup_offered=True),
+            policy_config, history, lookup_offered=False),
+        "system_prompt_with_prior_reviews": qwen_judge._build_system_prompt(
+            policy_config, history, lookup_offered=True),
         "system_prompt_note": (
-            "Built with an empty policy_config, which is the deployment default. "
-            "A workspace with an active policy config appends rules to this "
-            "prompt; see _build_system_prompt in backend/app/qwen_judge.py."),
-        "tools": [qwen_judge._TOOLS[0], qwen_judge._PRIOR_REVIEWS_TOOL],
+            "Both prompts are built with the deployment-default policy config "
+            "(policy_config_default, read from OrgPolicy's column defaults and "
+            "projected by judge_policy_config) and with the seven-day history "
+            "aggregate the worker always supplies. A workspace that changed a "
+            "policy setting gets different rule sentences at the tail. "
+            "system_prompt is what every tag receives until a human has ruled "
+            "on it; system_prompt_with_prior_reviews is what the worker sends "
+            "once check_prior_reviews would return a non-zero count. See "
+            "_build_system_prompt in backend/app/qwen_judge.py and "
+            "_prior_reviews_lookup in backend/app/worker.py."),
+        "tools_always": list(qwen_judge._TOOLS),
+        "tools_when_prior_reviews_exist": [qwen_judge._PRIOR_REVIEWS_TOOL],
+        "tools_note": (
+            "flag_for_human_review is offered on every call. check_prior_reviews "
+            "is offered only when the workspace already holds at least one human "
+            "ruling on this policy_tag inside the window; with all counts zero the "
+            "worker withholds it, so a new workspace's judge has one tool."),
         "prior_reviews_payload_keys": sorted(
             set(qwen_judge._PRIOR_REVIEW_COUNTS) | {"policy_tag"}),
+        # The OTHER shape the tool can return: when the lookup itself fails the
+        # model is answered with this and told to grade without it. A contract
+        # that named only the success shape would reject every real answer
+        # produced while the database was unreachable.
+        "prior_reviews_unavailable_payload": dict(qwen_judge._LOOKUP_UNAVAILABLE),
         "prior_review_window_days": qwen_judge.PRIOR_REVIEW_WINDOW_DAYS,
         "verdict": {
             "returned_as_json": ["policy_breach", "reason", "risk_score",
@@ -523,14 +622,28 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 1
 
+    # The manifest names the FROZEN ruleset; every label above was measured
+    # against the LIVE regexes. The two are only the same thing if nobody edited
+    # a pattern without minting a version -- the same invariant the SDK suite
+    # pins with `assert ruleset.drift() is None`. An empty provenance is the
+    # other way to stamp a hash nothing produced.
+    drift = ruleset.drift()
+    if drift is not None:
+        print("FAILED: live rules do not match ruleset {0}: {1}".format(
+            ruleset.CURRENT_VERSION, drift), file=sys.stderr)
+        return 1
     provenance = ruleset.provenance()
+    if not provenance.get("ruleset_version") or not provenance.get("ruleset_hash"):
+        print("FAILED: ruleset.provenance() returned no version/hash; refusing "
+              "to write a manifest with a blank provenance", file=sys.stderr)
+        return 1
     manifest = {
         "sdk_version": foxy_audit.__version__,
         "ruleset_version": provenance.get("ruleset_version", ""),
         "ruleset_hash": provenance.get("ruleset_hash", ""),
         "rows": {name: counts[name] for name in JSONL_FILES},
         "judge_contract.json": (
-            "one JSON object, not rows: the judge's system prompt, its two tool "
+            "one JSON object, not rows: the judge's system prompts, its tool "
             "schemas, and the two metadata allowlists"),
     }
     artefacts["manifest.json"] = _json_bytes(manifest)

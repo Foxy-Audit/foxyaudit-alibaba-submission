@@ -134,11 +134,11 @@ code path. That is enforced by an allowlist validator on ingest (`_metadata_is_c
 through (`content_blind_meta` in [`backend/app/judge.py`](backend/app/judge.py)).
 
 **The dataset.** No model here was trained, fine-tuned or distilled — the agent is Qwen called
-zero-shot with a built system prompt and two tools — so [`dataset/`](dataset/README.md) ships what
-the agent actually runs on instead: the labelled prompt corpora the host-side guard is measured
-against (137 rows across three files), the exact content-blind records the judge receives for each of
-those prompts, the judge's own system prompt and tool schemas, and the schema of the human-review
-feedback it reads at inference time. Every label is re-measured against the real SDK at generation
+zero-shot with a built system prompt and up to two tools — so [`dataset/`](dataset/README.md) ships
+what the agent actually runs on instead: the labelled prompt corpora the host-side guard is measured
+against (137 rows across three files), the content-blind record the ledger receives for each of those
+prompts marked by whether the AI judge or the deterministic engine grades it, the judge's own system
+prompts and tool schemas, and the schema of the human-review feedback it reads at inference time. Every label is re-measured against the real SDK at generation
 time, and `python dataset/build_dataset.py --check` fails if the committed data has drifted from what
 the code now does.
 
