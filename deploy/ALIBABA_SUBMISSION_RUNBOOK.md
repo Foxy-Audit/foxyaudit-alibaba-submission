@@ -63,12 +63,31 @@ admin.foxyaudit.tech         HTTP 302    154b
 checkout.foxyaudit.tech      HTTP 200  43000b
 ```
 
-Also confirm swap exists — the box runs four businesses' containers and a
-docker build spikes:
+Then three capacity checks. This is a **shared box**, and the ways a third stack
+hurts production are resource exhaustion, not config bleed.
 
 ```bash
-free -h   # expect ~2Gi swap. If 0, STOP and add it before building.
+# 1 · Swap. The box runs four businesses' containers and a docker build spikes.
+free -h            # expect ~2Gi swap. If 0, STOP and add it before building.
+
+# 2 · Disk. The backend image is ~1-2GB (weasyprint) and shares a disk with
+#     production's foxy_pgdata volume. A full disk corrupts Postgres, not just
+#     the build.
+df -h /var/lib/docker /   # want several GB free before building
+
+# 3 · Postgres connection budget. THIS IS THE ONE THAT CAN TAKE PRODUCTION DOWN.
+#     A third stack adds two more SQLAlchemy QueuePools (pool_size 5 +
+#     max_overflow 10 each) against the SAME postgres container, which ships
+#     with max_connections=100.
+docker exec foxy-prod-db-1 psql -U foxy -c \
+  "SELECT current_setting('max_connections') AS max,
+          (SELECT count(*) FROM pg_stat_activity) AS in_use;"
 ```
+
+⚠ If `max - in_use` is under ~40, **stop and raise `max_connections` before
+starting this stack** — production hitting `FATAL: sorry, too many clients
+already` is exactly the outcome this whole parallel-stack design exists to
+avoid.
 
 ---
 
@@ -96,13 +115,19 @@ let this credential connect to `foxy` and do DML on production's tables. That is
 exactly why `foxy_app_alibaba` exists.
 
 ```bash
-# Pick a strong password and keep it — you need it in Step 3.
-PW=$(openssl rand -base64 24)
-echo "$PW" | tee ~/foxy-alibaba-secrets/db_password   # create the dir first, see Step 3
+# The secrets directory must exist BEFORE anything writes into it.
+mkdir -p ~/foxy-alibaba-secrets && chmod 700 ~/foxy-alibaba-secrets
+
+# ⚠ hex, NOT base64. This password is pasted into a URL-form DATABASE_URL, and
+# base64's alphabet includes `/` and `+` — roughly two in five generated
+# passwords would silently corrupt the connection string.
+openssl rand -hex 24 > ~/foxy-alibaba-secrets/db_password
+chmod 600 ~/foxy-alibaba-secrets/db_password
+PW=$(cat ~/foxy-alibaba-secrets/db_password)
 
 docker exec -i foxy-prod-db-1 psql -U foxy -d postgres <<SQL
 CREATE ROLE foxy_alibaba LOGIN PASSWORD '$PW' BYPASSRLS;
-CREATE ROLE foxy_app_alibaba NOLOGIN;
+CREATE ROLE foxy_app_alibaba NOLOGIN NOBYPASSRLS;
 GRANT foxy_app_alibaba TO foxy_alibaba;
 CREATE DATABASE foxy_alibaba OWNER foxy_alibaba;
 SQL
@@ -127,12 +152,14 @@ an `IF NOT EXISTS` check.
 
 ## Step 3 · Secrets and the env file
 
+The directory already exists from Step 2. `db_password` is already in it.
+
 ```bash
-mkdir -p ~/foxy-alibaba-secrets && chmod 700 ~/foxy-alibaba-secrets
 cd ~/foxy-alibaba-secrets
 openssl rand -hex 32   > session
 openssl rand -hex 32   > staff_session
 openssl rand -hex 32   > api_pepper
+openssl rand -hex 24   > staff_password    # the ops-console login, used in Step 6
 # A valid Fernet key — its OWN, never production's. crypto_secrets.py uses
 # MultiFernet, so a merge-back appends this key to prod's list rather than
 # copying prod's crown jewel to a second place.
@@ -161,11 +188,28 @@ chmod 600 .env.alibaba
 
 Then edit `.env.alibaba` and paste the real key in place of the placeholder.
 
-✅ **Everything else is deliberately left to the compose file's defaults** —
-Gemini/OpenAI blank so routing goes to Qwen, Brevo blank so this stack cannot
-email real customers, Paddle blank and sandbox, anchoring off, and
-`DEMO_APPROVAL_REQUIRED=false` so a judge who signs up is not stuck in a queue.
-Read the comments in `docker-compose.alibaba.yml` before overriding any of them.
+✅ **Everything else is deliberately left to the compose file's defaults** — Brevo
+blank so this stack cannot email real customers, Paddle blank and sandbox,
+anchoring off, and `DEMO_APPROVAL_REQUIRED=false` so a judge who signs up is not
+stuck in a queue. Read the comments in `docker-compose.alibaba.yml` before
+overriding any of them.
+
+🔴 **`QWEN_API_KEY` here is NOT, by itself, enough to make Qwen grade anything.**
+This is the single easiest way to end up with a live deployment that quietly
+demonstrates nothing, so it is worth stating flatly:
+
+- `org_policies.judge_provider` has server default **`gemini`** and
+  `judge_key_mode` has server default **`own`** (`models.py:526`). A freshly
+  seeded org is therefore configured for *Gemini, on its own BYOK key* — and it
+  has no Gemini key, so grading returns `evaluator_unavailable`.
+- Setting `judge_key_mode="platform"` does **not** rescue it either:
+  `platform_keys_allowed` (`judge_routing.py:199`) gates on tier *and* on
+  `entitlement_is_earned`, which a seeded `pro` org does not satisfy.
+
+**Each org that should demonstrate the Alibaba judge must have its policy set
+explicitly** — provider `qwen`, key mode `own`, and the Model Studio key stored
+as that org's BYOK key. That is exactly what the verified demo does
+(`demo/agentic_demo.py:1207`). **Step 6b** below does it.
 
 ⚠ `.env.alibaba` must never be committed. Confirm: `git check-ignore -v deploy/.env.alibaba`
 
@@ -199,7 +243,59 @@ docker compose -f docker-compose.alibaba.yml --env-file .env.alibaba \
 
 ---
 
-## Step 5 · Seed the accounts a judge will use
+## Step 5 · 🔴 Grant the confined role — migrations DO NOT do this
+
+**Do not skip this, and do not defer it.** Migration 0021 hardcodes
+`ROLE = "foxy_app"` (`0021_confined_app_role.py:28`). Run against the
+`foxy_alibaba` database it grants DML to **production's** `foxy_app` and creates
+nothing for `foxy_app_alibaba` — which therefore exists with **zero
+privileges**.
+
+`auth._scope_org` issues `SET LOCAL ROLE foxy_app_alibaba` on every org-scoped
+transaction. The `SET ROLE` succeeds (the login role is a member), and then every
+statement fails `permission denied`. ⚠ **Seeding and `/health/ready` both pass
+without touching this**, so the stack looks healthy and only breaks when a judge
+logs in and loads the dashboard.
+
+Grants are **per-database**, so everything below is confined to `foxy_alibaba`
+and cannot reach production.
+
+```bash
+docker exec -i foxy-prod-db-1 psql -U foxy -d foxy_alibaba <<'SQL'
+-- Mirror exactly what 0021 grants foxy_app, onto this stack's own role.
+GRANT USAGE ON SCHEMA public TO foxy_app_alibaba;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO foxy_app_alibaba;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO foxy_app_alibaba;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO foxy_app_alibaba;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO foxy_app_alibaba;
+
+-- Tidiness, not a live exposure: 0021 handed prod's foxy_app rights in THIS
+-- database. foxy_app is NOLOGIN and foxy_alibaba is not a member of it, so
+-- nothing can assume it here — but leaving it contradicts the isolation this
+-- stack claims, so take it back.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM foxy_app;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM foxy_app;
+REVOKE USAGE ON SCHEMA public FROM foxy_app;
+SQL
+```
+
+**Verify the role can actually read, under RLS** — this must return a number,
+not an error:
+
+```bash
+docker exec -i foxy-prod-db-1 psql -U foxy -d foxy_alibaba -c \
+  "SET ROLE foxy_app_alibaba; SELECT count(*) FROM organizations;"
+```
+
+⚠ If a later `alembic upgrade` adds tables, re-run the two `GRANT ... ON ALL`
+lines. The `ALTER DEFAULT PRIVILEGES` above covers tables created by the
+migration superuser, which is the normal path.
+
+---
+
+## Step 6 · Seed the accounts a judge will use
 
 ```bash
 cd /home/devops/foxy-audit-alibaba/deploy
@@ -213,14 +309,60 @@ $CMP exec foxy-backend python scripts/seed_staff.py \
   --email alikamran1223@gmail.com --password "$(cat ~/foxy-alibaba-secrets/staff_password)"
 ```
 
-Create `staff_password` first (`openssl rand -base64 24 > ~/foxy-alibaba-secrets/staff_password && chmod 600 $_`).
-
 `seed_judges.py` prints each API key **once**, on first creation only. Capture
-that output.
+that output. (`staff_password` was generated in Step 3.)
 
 ---
 
-## Step 6 · nginx vhosts — HTTP first, TLS second
+## Step 6b · 🔴 Point every judge org at the Alibaba Cloud judge
+
+Without this the deployment demonstrates **nothing** — see the red block in
+Step 3. Each org needs `judge_provider="qwen"`, `judge_key_mode="own"`, and the
+Model Studio key stored as that org's BYOK key, encrypted with this stack's KEK.
+
+This uses the app's own `crypto_secrets.encrypt_secret`, the same path
+`PUT /v1/policies` uses — it is not a second encryption scheme.
+
+```bash
+cd /home/devops/foxy-audit-alibaba/deploy
+CMP="docker compose -f docker-compose.alibaba.yml --env-file .env.alibaba"
+
+$CMP exec foxy-backend python - <<'PY'
+import os
+from sqlalchemy import select
+from app.db import SessionLocal
+from app.models import Organization, OrgPolicy
+from app.crypto_secrets import encrypt_secret
+
+key = os.environ["QWEN_API_KEY"]          # the platform key, from .env.alibaba
+db = SessionLocal()
+for org in db.execute(select(Organization)).scalars():
+    pol = db.execute(
+        select(OrgPolicy).where(OrgPolicy.org_id == org.id)
+    ).scalar_one_or_none()
+    if pol is None:
+        pol = OrgPolicy(org_id=org.id)
+        db.add(pol)
+    pol.judge_provider = "qwen"
+    pol.judge_key_mode = "own"            # BYOK: this org's own stored key
+    pol.qwen_key_enc = encrypt_secret(key, org.id, "qwen")
+    print(f"  {org.name}: judge_provider=qwen, qwen key stored")
+db.commit()
+db.close()
+PY
+```
+
+⚠ `judge_provider` is `String(16)` and the CHECK constraint from migration 0073
+allows `gemini`, `openai`, `qwen`, `gemini+openai`, `gemini+qwen`, `openai+qwen`
+and `all`. Anything else raises an IntegrityError rather than being stored.
+
+⚠ Re-run this after seeding any NEW org, including one a judge creates by
+signing up — a self-signed-up org gets the `gemini` default and will grade
+`evaluator_unavailable` until pointed at Qwen.
+
+---
+
+## Step 7 · nginx vhosts — HTTP first, TLS second
 
 ⚠ **Never open `sites-available/foxyaudit.conf`.** On 2026-08-13 copying the
 repo template over the live file discarded every TLS block and took HTTPS down
@@ -259,7 +401,7 @@ They are on their own certificates and must stay there.
 
 ---
 
-## Step 7 · Verify — what a judge will actually see
+## Step 8 · Verify — what a judge will actually see
 
 ```bash
 for h in app-alibaba-submission admin-alibaba-submission checkout-alibaba-submission; do
@@ -295,7 +437,7 @@ docker run --rm curlimages/curl:latest -sS -o /dev/null -w "HTTP %{http_code}\n"
 
 ---
 
-## Step 8 · Confirm production never moved
+## Step 9 · Confirm production never moved
 
 ```bash
 for h in foxyaudit.tech www.foxyaudit.tech app.foxyaudit.tech \

@@ -144,12 +144,14 @@ produces `decision="human_review"`, and `check_prior_reviews`, which reads back 
 ruled on that policy tag. So the model does not merely answer the question; it decides whether it
 should be the one answering, and it may consult the humans who answered before it.
 
-*The hosting is **Google Cloud**, not Alibaba Cloud.* The live instance runs
-`deploy/docker-compose.alibaba.yml` on the project's existing GCE VM as a third isolated stack
-alongside production. An Alibaba Cloud ECS instance was scoped and then not purchased, so this
-README does not claim an Alibaba Cloud deployment and neither should anything else. The deploy
-config and the full procedure are in
-[`deploy/ALIBABA_SUBMISSION_RUNBOOK.md`](deploy/ALIBABA_SUBMISSION_RUNBOOK.md).
+*The hosting is **Google Cloud**, not Alibaba Cloud.* An Alibaba Cloud ECS instance was scoped and
+then not purchased, so the deployment target is the project's existing GCE VM, where
+[`deploy/docker-compose.alibaba.yml`](deploy/docker-compose.alibaba.yml) runs as a third isolated
+stack alongside production — its own port, database, confined RLS role, avatar volume, nginx file
+and certificate. This README does not claim an Alibaba Cloud deployment and neither should anything
+else. The config and the full procedure are in
+[`deploy/ALIBABA_SUBMISSION_RUNBOOK.md`](deploy/ALIBABA_SUBMISSION_RUNBOOK.md), which is run by hand
+— no workflow deploys this repo.
 
 Everything described in this README also runs locally with `docker compose`.
 
