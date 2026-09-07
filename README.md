@@ -132,11 +132,26 @@ code path. That is enforced by an allowlist validator on ingest (`_metadata_is_c
 [`backend/app/schemas.py`](backend/app/schemas.py)) and by a shared projection every judge call goes
 through (`content_blind_meta` in [`backend/app/judge.py`](backend/app/judge.py)).
 
-**Deployment.** The intended target for this submission is **Alibaba Cloud ECS running
-`deploy/docker-compose.prod.yml`** — the same plain-Linux-VM compose file the project already uses,
-re-pointed. *That instance is not stood up yet*; nothing in this repo currently runs on Alibaba
-Cloud, and the only `aliyuncs.com` reference in the codebase is the Qwen **API** endpoint used by the
-judge. Everything described in this README runs locally with `docker compose` today.
+**Where Alibaba Cloud is used, and where it isn't.** Two separate things, and it is worth being
+exact about which is which.
+
+*The Alibaba Cloud usage is real, and it is the interesting part.* The agentic compliance judge in
+[`backend/app/qwen_judge.py`](backend/app/qwen_judge.py) calls **Alibaba Cloud Model Studio** (Qwen)
+at `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`, over stdlib `urllib` against the
+OpenAI-compatible `/chat/completions` endpoint — no new dependency. It is the only one of the three
+judge providers given **tools**: `flag_for_human_review`, which routes an interaction to a person and
+produces `decision="human_review"`, and `check_prior_reviews`, which reads back what people already
+ruled on that policy tag. So the model does not merely answer the question; it decides whether it
+should be the one answering, and it may consult the humans who answered before it.
+
+*The hosting is **Google Cloud**, not Alibaba Cloud.* The live instance runs
+`deploy/docker-compose.alibaba.yml` on the project's existing GCE VM as a third isolated stack
+alongside production. An Alibaba Cloud ECS instance was scoped and then not purchased, so this
+README does not claim an Alibaba Cloud deployment and neither should anything else. The deploy
+config and the full procedure are in
+[`deploy/ALIBABA_SUBMISSION_RUNBOOK.md`](deploy/ALIBABA_SUBMISSION_RUNBOOK.md).
+
+Everything described in this README also runs locally with `docker compose`.
 
 <br>
 

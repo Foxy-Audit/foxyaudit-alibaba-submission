@@ -21,6 +21,12 @@ node_modules/
 .env
 .env.local
 backend/.env
+# Per-stack env files — deploy/.env.alibaba holds the Alibaba Cloud Model Studio
+# key and is created inside the repo checkout on the VM. `.env` above matches
+# only that exact name, at any depth, so a SUFFIXED file such as .env.alibaba
+# was not covered by it. `.env.example` is the one tracked file; re-include it.
+.env.*
+!.env.example
 *.local
 
 # DB backups (created by deploy/backup.sh on the VM)

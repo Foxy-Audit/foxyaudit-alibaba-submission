@@ -1,0 +1,279 @@
+# Alibaba Cloud AI Hackathon Pakistan 2026 — the SUBMISSION stack.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS DEMONSTRATES, AND WHAT IT DOES NOT
+#
+# This file configures the product's **Alibaba Cloud Model Studio** integration:
+# the agentic compliance judge in `backend/app/qwen_judge.py`, which calls Qwen
+# over the OpenAI-compatible endpoint at
+#     https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+# and is given two tools — `flag_for_human_review` and `check_prior_reviews` —
+# so it can escalate to a person and read back what people ruled before it.
+# QWEN_API_KEY is REQUIRED below, on purpose: this stack exists to run that
+# judge, and a stack whose signature feature is silently disabled is worse than
+# one that refuses to start.
+#
+# ⚠ HOSTING IS **GOOGLE CLOUD**, NOT ALIBABA CLOUD. Owner decision 2026-09-07:
+# the Alibaba ECS instance was not purchased, so this deploys to the project's
+# existing GCE VM (`devops`, project `prod-45412`, zone `me-central1-a`,
+# 34.18.4.58). Nothing here should be read, or described anywhere, as an
+# Alibaba Cloud deployment. The Alibaba Cloud usage is the Model Studio API
+# above — real, and the only such claim this project makes. See README.md.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A THIRD stack on a shared VM. The box already runs two:
+#
+#   prod (FROZEN)  127.0.0.1:8085  project foxy-prod     db foxy
+#                  — foxyaudit.tech, www, app, admin, checkout
+#   dev2           127.0.0.1:8086  project foxy-dev      db foxy_dev
+#                  — app2, admin2, checkout2
+#   THIS           127.0.0.1:8087  project foxy-alibaba  db foxy_alibaba
+#                  — app-alibaba-submission, admin-alibaba-submission,
+#                    checkout-alibaba-submission
+#
+# GENERATED from docker-compose.dev2.yml by the same mechanical transform that
+# produced it from docker-compose.prod.yml. NOT retyped. The environment block
+# is an ALLOWLIST — a value in the env file that is not named here never reaches
+# the container. When prod's list gains a variable, regenerate rather than
+# hand-patching, or the three silently diverge.
+#
+# There is deliberately NO `db` service and NO `caddy` service: this stack uses
+# the `foxy_alibaba` database inside the EXISTING foxy-prod-db-1 container,
+# reached by joining the prod compose network as an external. Nothing in the
+# production project is modified or restarted by attaching to it.
+#
+# Run from deploy/:
+#   docker compose -f docker-compose.alibaba.yml --env-file .env.alibaba up --build -d
+#
+# Full procedure, including the database roles and the nginx vhosts:
+#   deploy/ALIBABA_SUBMISSION_RUNBOOK.md
+#
+# TEARDOWN after judging: see the runbook's teardown section. A parallel stack
+# left running is a second attack surface and a second thing to patch.
+
+name: foxy-alibaba
+
+services:
+  foxy-migrate:
+    build: ../backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL:?set in deploy/.env.alibaba}
+    command: alembic upgrade head
+    networks:
+      - prodnet
+
+  foxy-backend:
+    build: ../backend
+    depends_on:
+      foxy-migrate:
+        condition: service_completed_successfully
+    environment:
+      - FOXY_ENV=prod
+      - DATABASE_URL=${DATABASE_URL:?set in deploy/.env.alibaba}
+      # Confined RLS role. This stack uses its OWN (foxy_app_alibaba), not
+      # prod's foxy_app: the login role foxy_alibaba is a member of
+      # foxy_app_alibaba ONLY, so it cannot connect to the production database
+      # and act as foxy_app there.
+      #
+      # ⚠ The DEFAULT here is foxy_app_alibaba, NOT foxy_app as in
+      # docker-compose.dev2.yml. dev2's default is prod's role and is only safe
+      # because its env file overrides it; an unset variable there would
+      # silently point a parallel stack at production's confined role.
+      - DB_APP_ROLE=${DB_APP_ROLE:-foxy_app_alibaba}
+      - SESSION_SECRET=${SESSION_SECRET:?set in deploy/.env.alibaba}
+      - STAFF_SESSION_SECRET=${STAFF_SESSION_SECRET:?set in deploy/.env.alibaba}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:?set in deploy/.env.alibaba}
+      # Fernet KEK that wraps tenant BYOK provider keys at rest. Its OWN key,
+      # never production's — crypto_secrets.py uses MultiFernet, so a merge-back
+      # appends this key to prod's list rather than copying prod's crown jewel
+      # to a second place. Optional at the compose level so a missing value
+      # degrades ONLY BYOK key storage (HTTP 503) instead of taking the service
+      # down; the app validates it loudly at startup.
+      - PROVIDER_KEY_ENCRYPTION_KEY=${PROVIDER_KEY_ENCRYPTION_KEY:-}
+      - STAFF_COOKIE_DOMAIN=${STAFF_COOKIE_DOMAIN:-admin-alibaba-submission.foxyaudit.tech}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://app-alibaba-submission.foxyaudit.tech}
+      - ADMIN_CORS_ORIGINS=${ADMIN_CORS_ORIGINS:-}
+      - ADMIN_IP_ALLOWLIST=${ADMIN_IP_ALLOWLIST:-}
+      - TRAFFIC_TRACKING_ENABLED=${TRAFFIC_TRACKING_ENABLED:-true}
+      - TRAFFIC_RETENTION_DAYS=${TRAFFIC_RETENTION_DAYS:-90}
+      # ⚠ Gemini and OpenAI stay BLANK. judge_routing.py picks a provider from
+      # what is configured; leaving these empty is what guarantees a judge who
+      # opens this deployment sees the QWEN path, which is the submission.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
+      - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      # ── Alibaba Cloud Model Studio (DashScope) ───────────────────────────
+      # REQUIRED, unlike every other provider key in this project. See the
+      # header: this stack has no reason to exist without it.
+      - QWEN_API_KEY=${QWEN_API_KEY:?Alibaba Cloud Model Studio key - set in deploy/.env.alibaba, never commit}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_COMPANION=${STRIPE_PRICE_COMPANION:-}
+      - STRIPE_PRICE_GUARDIAN=${STRIPE_PRICE_GUARDIAN:-}
+      - STRIPE_PRICE_MAX=${STRIPE_PRICE_MAX:-}
+      # Blank: enabling it means editing a PRODUCTION OAuth client to add this
+      # hostname as an origin. Judges sign up with email and password.
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - STRIPE_PRICE_PRO=${STRIPE_PRICE_PRO:-}
+      # Paddle. This block is an ALLOWLIST: a value in the env file that is not
+      # named here never reaches the container. Blank and sandbox — no
+      # submission stack should be able to take money.
+      - PADDLE_API_KEY=${PADDLE_API_KEY:-}
+      - PADDLE_WEBHOOK_SECRET=${PADDLE_WEBHOOK_SECRET:-}
+      - PADDLE_ENV=${PADDLE_ENV:-sandbox}
+      - PADDLE_PRICE_PRO=${PADDLE_PRICE_PRO:-}
+      - PADDLE_PRICE_MAX=${PADDLE_PRICE_MAX:-}
+      - PADDLE_SIGNATURE_TOLERANCE_SECONDS=${PADDLE_SIGNATURE_TOLERANCE_SECONDS:-300}
+      - TRIAL_DAYS=${TRIAL_DAYS:-7}
+      # ⚠ MUST stay false here. True makes every new signup wait for a human,
+      # and a judge who signs up at midnight would sit in a queue nobody is
+      # watching. This is the one default that decides whether the deployment
+      # is usable by a stranger.
+      - DEMO_APPROVAL_REQUIRED=${DEMO_APPROVAL_REQUIRED:-false}
+      - MONTHLY_QUOTA_FREE=${MONTHLY_QUOTA_FREE:-500}
+      - MONTHLY_QUOTA_PRO=${MONTHLY_QUOTA_PRO:-25000}
+      - MONTHLY_QUOTA_MAX=${MONTHLY_QUOTA_MAX:-250000}
+      # ⚠ Blank on purpose. A parallel stack that can send from
+      # no-reply@foxyaudit.tech can email real customers. A1's escalation email
+      # therefore does not send here; the queue itself is visible in the
+      # reviewer page (A2), which is what a judge actually looks at.
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-no-reply@foxyaudit.tech}
+      - BREVO_SENDER_NAME=${BREVO_SENDER_NAME:-Foxy Audit}
+      - DASHBOARD_URL=${DASHBOARD_URL:-https://app-alibaba-submission.foxyaudit.tech/dashboard}
+      - ADMIN_URL=${ADMIN_URL:-https://admin-alibaba-submission.foxyaudit.tech/admin/}
+      - FOXY_DASHBOARD_HTML=/site/foxy-dashboard/foxy-audit-premium.html
+      - FOXY_ADMIN_HTML=/site/foxy-adminpage/index.html
+      # Anchor SLA cadences — the API reports them via /v1/anchors/sla; keep in
+      # sync with the worker service below (which enforces them).
+      - ANCHOR_CADENCE_FREE=${ANCHOR_CADENCE_FREE:-86400}
+      - ANCHOR_CADENCE_PRO=${ANCHOR_CADENCE_PRO:-21600}
+      - ANCHOR_CADENCE_MAX=${ANCHOR_CADENCE_MAX:-3600}
+      - ANCHOR_CADENCE_ENTERPRISE=${ANCHOR_CADENCE_ENTERPRISE:-3600}
+      - ANCHOR_CADENCE_DEFAULT=${ANCHOR_CADENCE_DEFAULT:-86400}
+      # ⚠ Anchoring OFF. Production owns the funded Sepolia wallet; a second
+      # stack signing with the same key would race its nonce. The chain is
+      # independently verifiable without an anchor — that is the verifier's job.
+      - ANCHOR_ENABLED=${ANCHOR_ENABLED:-false}
+      - ANCHOR_PROVIDER=${ANCHOR_PROVIDER:-stub}
+      - ANCHOR_EVM_RPC_URL=${ANCHOR_EVM_RPC_URL:-}
+      - ANCHOR_EVM_CHAIN=${ANCHOR_EVM_CHAIN:-sepolia}
+      - ANCHOR_EVM_PRIVATE_KEY=${ANCHOR_EVM_PRIVATE_KEY:-}
+      - ANCHOR_EVM_CONTRACT=${ANCHOR_EVM_CONTRACT:-}
+      - ANCHOR_WALLET_MIN_BALANCE_WEI=${ANCHOR_WALLET_MIN_BALANCE_WEI:-0}
+    volumes:
+      # Dashboard + ops-console HTML live at the repo root, outside the build
+      # context. Mount the DIRECTORIES (not single files): a git pull on deploy
+      # replaces files with new inodes, and a single-file bind mount would keep
+      # serving the stale pre-deploy copy until the container is recreated.
+      - ../foxy-dashboard:/site/foxy-dashboard:ro
+      - ../foxy-adminpage:/site/foxy-adminpage:ro
+      # Avatar PNGs. READ-WRITE, unlike the two site mounts above. Its OWN named
+      # volume — sharing prod's would write into the frozen submission's files.
+      - foxy_alibaba_avatars:/data/avatars
+    # Loopback-only publish: the host nginx reaches the API here. 8085 is prod,
+    # 8086 is dev2; never expose any of them publicly.
+    ports:
+      - "127.0.0.1:8087:8000"
+    # --proxy-headers: real client IP/scheme from the proxy's X-Forwarded-* —
+    # needed for rate-limit keys, traffic ip_hash, and the admin IP allow-list.
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=*
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - prodnet
+
+  # Grading poller + usage_daily rollups + traffic partition upkeep. This is the
+  # service that actually calls Alibaba Cloud Model Studio: worker.py picks the
+  # provider via judge_routing.py and, with only QWEN_API_KEY set, that is Qwen.
+  foxy-worker:
+    build: ../backend
+    depends_on:
+      foxy-migrate:
+        condition: service_completed_successfully
+    environment:
+      - FOXY_ENV=prod
+      - DATABASE_URL=${DATABASE_URL:?set in deploy/.env.alibaba}
+      # See the backend service above: default is this stack's own role.
+      - DB_APP_ROLE=${DB_APP_ROLE:-foxy_app_alibaba}
+      - SESSION_SECRET=${SESSION_SECRET:?}
+      - STAFF_SESSION_SECRET=${STAFF_SESSION_SECRET:?}
+      - API_KEY_PEPPER=${API_KEY_PEPPER:?}
+      # KEK for BYOK provider keys — the worker DECRYPTS them at grading time,
+      # so this is the most important service for it to reach. Optional here
+      # (degrades BYOK grading to evaluator_unavailable) but validated loudly.
+      - PROVIDER_KEY_ENCRYPTION_KEY=${PROVIDER_KEY_ENCRYPTION_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.6}
+      - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-12}
+      - QWEN_API_KEY=${QWEN_API_KEY:?Alibaba Cloud Model Studio key - set in deploy/.env.alibaba, never commit}
+      - QWEN_MODEL=${QWEN_MODEL:-qwen-plus}
+      - QWEN_TIMEOUT=${QWEN_TIMEOUT:-12}
+      - QWEN_BASE_URL=${QWEN_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}
+      - BREVO_API_KEY=${BREVO_API_KEY:-}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL:-no-reply@foxyaudit.tech}
+      - BREVO_SENDER_NAME=${BREVO_SENDER_NAME:-Foxy Audit}
+      - ALERT_EMAIL=${ALERT_EMAIL:-}
+      - ADMIN_ACTIONS_RETENTION_DAYS=${ADMIN_ACTIONS_RETENTION_DAYS:-365}
+      - GRADING_BREAKER_THRESHOLD=${GRADING_BREAKER_THRESHOLD:-3}
+      - GRADING_BREAKER_COOLDOWN=${GRADING_BREAKER_COOLDOWN:-60}
+      - GRADING_MAX_BACKOFF=${GRADING_MAX_BACKOFF:-60}
+      - USAGE_ROLLUP_INTERVAL=${USAGE_ROLLUP_INTERVAL:-300}
+      - TRAFFIC_RETENTION_DAYS=${TRAFFIC_RETENTION_DAYS:-90}
+      - ANCHOR_ENABLED=${ANCHOR_ENABLED:-false}
+      - ANCHOR_PROVIDER=${ANCHOR_PROVIDER:-stub}
+      - ANCHOR_INTERVAL_SECONDS=${ANCHOR_INTERVAL_SECONDS:-3600}
+      - ANCHOR_CADENCE_FREE=${ANCHOR_CADENCE_FREE:-86400}
+      - ANCHOR_CADENCE_PRO=${ANCHOR_CADENCE_PRO:-21600}
+      - ANCHOR_CADENCE_MAX=${ANCHOR_CADENCE_MAX:-3600}
+      - ANCHOR_CADENCE_ENTERPRISE=${ANCHOR_CADENCE_ENTERPRISE:-3600}
+      - ANCHOR_CADENCE_DEFAULT=${ANCHOR_CADENCE_DEFAULT:-86400}
+      - ANCHOR_EVM_RPC_URL=${ANCHOR_EVM_RPC_URL:-}
+      - ANCHOR_EVM_CHAIN=${ANCHOR_EVM_CHAIN:-sepolia}
+      - ANCHOR_EVM_PRIVATE_KEY=${ANCHOR_EVM_PRIVATE_KEY:-}
+      - ANCHOR_EVM_CONTRACT=${ANCHOR_EVM_CONTRACT:-}
+      - ANCHOR_WALLET_MIN_BALANCE_WEI=${ANCHOR_WALLET_MIN_BALANCE_WEI:-0}
+      - ANCHOR_STALE_ALERT_SECONDS=${ANCHOR_STALE_ALERT_SECONDS:-0}
+      - ANCHOR_ALERT_COOLDOWN=${ANCHOR_ALERT_COOLDOWN:-3600}
+    volumes:
+      # The worker does not write avatars today. It is mounted anyway because
+      # the account-deletion path it owns will need to unlink them, and a worker
+      # that could not see the directory would fail that silently.
+      - foxy_alibaba_avatars:/data/avatars
+    command: python -m app.worker_main
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,psycopg,datetime as d,sys; u=os.environ['DATABASE_URL'].replace('+psycopg',''); c=psycopg.connect(u); r=c.execute('SELECT beat_at FROM worker_heartbeat WHERE id=1').fetchone(); c.close(); sys.exit(0 if r and r[0] and (d.datetime.now(d.timezone.utc)-r[0]).total_seconds()<30 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - prodnet
+
+networks:
+  # The production project's default network, joined as an external. This is
+  # what makes the hostname `db` resolve to foxy-prod-db-1. Nothing in the prod
+  # project is modified or restarted by attaching to it.
+  prodnet:
+    external: true
+    name: foxy-prod_default
+
+volumes:
+  # NOT prod's foxy_avatars and NOT dev2's foxy_dev_avatars. A shared volume
+  # would let this stack write into another's uploaded files.
+  foxy_alibaba_avatars:
