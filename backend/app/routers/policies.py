@@ -59,15 +59,19 @@ class PolicyConfig(BaseModel):
     notify_email: str | None = Field(default=None, max_length=320)
     notify_webhook_url: str | None = Field(default=None, max_length=1024)
     # ── Per-tenant AI Judge selection (0053) ──
-    judge_provider: Literal["gemini", "openai", "both"] = "gemini"
+    judge_provider: Literal["gemini", "openai", "qwen",
+                            "gemini+openai", "gemini+qwen", "openai+qwen",
+                            "all"] = "gemini"
     judge_key_mode: Literal["own", "platform"] = "own"
     # WRITE-ONLY. Submit a key to store it (encrypted); submit "" to clear it;
     # omit to leave it untouched. Never populated on a response.
     gemini_api_key: str | None = Field(default=None, max_length=512, exclude=True)
     openai_api_key: str | None = Field(default=None, max_length=512, exclude=True)
+    qwen_api_key: str | None = Field(default=None, max_length=512, exclude=True)
     # READ-ONLY, derived. Presence booleans + what this plan is allowed to do.
     gemini_key_set: bool = False
     openai_key_set: bool = False
+    qwen_key_set: bool = False
     plan_tier: str | None = None
     platform_keys_allowed: bool = False
     # WRITABLE (P6f · 0058). Which model of the chosen provider grades this org.
@@ -75,6 +79,7 @@ class PolicyConfig(BaseModel):
     # state for every tenant — see migration 0058 for why there is no default here.
     judge_gemini_model: str | None = Field(default=None, max_length=64)
     judge_openai_model: str | None = Field(default=None, max_length=64)
+    judge_qwen_model: str | None = Field(default=None, max_length=64)
     # §7.6 · read-only. Which model each provider will ACTUALLY grade with —
     # the org's pick where it has one, the deployment default otherwise. It
     # resolves through the same function the worker routes with, so this can
@@ -104,6 +109,7 @@ def _to_config(row: OrgPolicy, org: Organization | None = None) -> "PolicyConfig
         judge_key_mode=row.judge_key_mode,
         gemini_key_set=bool((row.gemini_key_enc or "").strip()),
         openai_key_set=bool((row.openai_key_enc or "").strip()),
+        qwen_key_set=bool((row.qwen_key_enc or "").strip()),
         plan_tier=tier,
         # The ORG, not `tier` (M4a): premium alone no longer distinguishes a
         # paying customer from an evaluator, and this boolean is what the
@@ -111,14 +117,17 @@ def _to_config(row: OrgPolicy, org: Organization | None = None) -> "PolicyConfig
         platform_keys_allowed=platform_keys_allowed(org),
         judge_gemini_model=row.gemini_judge_model,
         judge_openai_model=row.openai_judge_model,
+        judge_qwen_model=row.qwen_judge_model,
         # Resolved, not reported raw: an org pinned to a model that has since been
         # withdrawn would otherwise be shown a name the worker no longer calls.
         judge_models={
             "gemini": resolve_model("gemini", row.gemini_judge_model),
             "openai": resolve_model("openai", row.openai_judge_model),
+            "qwen": resolve_model("qwen", row.qwen_judge_model),
         },
         judge_models_available={"gemini": list(allowed_models("gemini")),
-                                "openai": list(allowed_models("openai"))},
+                                "openai": list(allowed_models("openai")),
+                                "qwen": list(allowed_models("qwen"))},
     )
 
 
@@ -258,8 +267,12 @@ def update_policies(
     if "judge_openai_model" in body.model_fields_set:
         row.openai_judge_model = _checked_model("openai", body.judge_openai_model,
                                                 row.openai_judge_model)
+    if "judge_qwen_model" in body.model_fields_set:
+        row.qwen_judge_model = _checked_model("qwen", body.judge_qwen_model,
+                                              row.qwen_judge_model)
     row.gemini_key_enc = _store_key(body.gemini_api_key, row.gemini_key_enc, org.id, "gemini")
     row.openai_key_enc = _store_key(body.openai_api_key, row.openai_key_enc, org.id, "openai")
+    row.qwen_key_enc = _store_key(body.qwen_api_key, row.qwen_key_enc, org.id, "qwen")
     account_audit.record_account_action(
         db, org_id=admin.org_id, actor_email=admin.email, action="policy.update",
         # Records THAT a key changed, never the key itself.
@@ -272,8 +285,10 @@ def update_policies(
                 # records the value, not merely that it changed.
                 "judge_gemini_model": row.gemini_judge_model,
                 "judge_openai_model": row.openai_judge_model,
+                "judge_qwen_model": row.qwen_judge_model,
                 "gemini_key_set": bool((row.gemini_key_enc or "").strip()),
-                "openai_key_set": bool((row.openai_key_enc or "").strip())})
+                "openai_key_set": bool((row.openai_key_enc or "").strip()),
+                "qwen_key_set": bool((row.qwen_key_enc or "").strip())})
     db.commit()
     db.refresh(row)
     return _to_config(row, org)

@@ -448,6 +448,9 @@ class OrgPolicy(Base):
     # model produced each grade.
     gemini_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     openai_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    qwen_judge_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # BYOK secrets for Qwen — same shape as gemini_*/openai_*.
+    qwen_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

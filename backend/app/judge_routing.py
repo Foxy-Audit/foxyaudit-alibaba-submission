@@ -42,11 +42,29 @@ log = logging.getLogger("foxy.judge_routing")
 # (pro, free, trial, max, NULL, anything unknown) are BYOK-only.
 PLATFORM_KEY_TIERS = {"premium"}
 
-PROVIDERS = ("gemini", "openai", "both")
+PROVIDERS = ("gemini", "openai", "qwen",
+             "gemini+openai", "gemini+qwen", "openai+qwen", "all")
 KEY_MODES = ("own", "platform")
 
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_KEY_MODE = "own"
+
+# Before Qwen, "both" meant gemini+openai. Map it at resolve time so existing
+# orgs with judge_provider="both" keep grading exactly as before, and no DB
+# migration or data rewrite is needed.
+_PROVIDER_COMPAT = {"both": "gemini+openai"}
+
+# Human-readable names for the admin UI. Every value in PROVIDERS must appear
+# here; values not in this dict will render as their raw string.
+JUDGE_PROVIDER_DISPLAY = {
+    "gemini": "Gemini",
+    "openai": "OpenAI",
+    "qwen": "Qwen",
+    "gemini+openai": "Gemini + OpenAI",
+    "gemini+qwen": "Gemini + Qwen",
+    "openai+qwen": "OpenAI + Qwen",
+    "all": "Gemini + OpenAI + Qwen",
+}
 
 # Which model versions an org may pin, per provider (P6f). One constant, in the
 # same spirit as PLATFORM_KEY_TIERS above: adding a model is a one-line change.
@@ -59,7 +77,22 @@ DEFAULT_KEY_MODE = "own"
 JUDGE_MODELS = {
     "gemini": ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"),
     "openai": ("gpt-5.6", "gpt-5.6-mini", "chat-latest"),
+    "qwen": ("qwen-plus", "qwen3.5-plus"),
 }
+
+# Map each single provider to its Settings field for the deployment default.
+# allowed_models / resolve_model read through this so adding a provider is one
+# line here + one line in JUDGE_MODELS, not a new branch in every function.
+_PROVIDER_DEFAULT_ATTR = {
+    "gemini": "gemini_model",
+    "openai": "openai_model",
+    "qwen": "qwen_model",
+}
+
+
+def _default_model(provider: str) -> str:
+    """The deployment-default model id for a provider, from settings."""
+    return getattr(get_settings(), _PROVIDER_DEFAULT_ATTR[provider])
 
 
 def allowed_models(provider: str) -> tuple[str, ...]:
@@ -68,8 +101,7 @@ def allowed_models(provider: str) -> tuple[str, ...]:
     The default is prepended rather than assumed present, and de-duplicated, so
     the list is correct whether or not the running default happens to appear in
     JUDGE_MODELS."""
-    settings = get_settings()
-    default = settings.gemini_model if provider == "gemini" else settings.openai_model
+    default = _default_model(provider)
     out = [default] if default else []
     for m in JUDGE_MODELS.get(provider, ()):
         if m not in out:
@@ -86,8 +118,7 @@ def resolve_model(provider: str, stored: str | None) -> str:
     and the org finds out through a grading outage it cannot diagnose. The same
     posture the BYOK path takes when a key will not decrypt: record the problem,
     carry on with something that works."""
-    settings = get_settings()
-    default = settings.gemini_model if provider == "gemini" else settings.openai_model
+    default = _default_model(provider)
     if stored and stored in allowed_models(provider):
         return stored
     if stored:
@@ -156,6 +187,7 @@ class JudgeRouting:
     key_mode: str = DEFAULT_KEY_MODE
     gemini_key: str | None = None
     openai_key: str | None = None
+    qwen_key: str | None = None
     # The RESOLVED model id per provider — an org pin if it survived validation,
     # otherwise the deployment default. Never None once resolve_judge_routing has
     # run. Unlike the keys above these are safe to record: a model id identifies
@@ -163,23 +195,42 @@ class JudgeRouting:
     # can say which model graded each event.
     gemini_model: str | None = None
     openai_model: str | None = None
+    qwen_model: str | None = None
     # Why a chosen provider had to be skipped (e.g. "no_byok_key"), for the
     # evaluator_unavailable reason string. Never contains key material.
     problems: dict[str, str] = field(default_factory=dict)
 
+    # Which providers this routing calls. Named combinations replace the old
+    # "both" — see _PROVIDER_COMPAT for the backwards-compat shim.
+    _GEMINI_PROVIDERS = frozenset({"gemini", "gemini+openai", "gemini+qwen", "all"})
+    _OPENAI_PROVIDERS = frozenset({"openai", "gemini+openai", "openai+qwen", "all"})
+    _QWEN_PROVIDERS = frozenset({"qwen", "gemini+qwen", "openai+qwen", "all"})
+
     @property
     def uses_gemini(self) -> bool:
-        return self.provider in ("gemini", "both")
+        return self.provider in self._GEMINI_PROVIDERS
 
     @property
     def uses_openai(self) -> bool:
-        return self.provider in ("openai", "both")
+        return self.provider in self._OPENAI_PROVIDERS
+
+    @property
+    def uses_qwen(self) -> bool:
+        return self.provider in self._QWEN_PROVIDERS
 
     def key_for(self, provider: str) -> str | None:
-        return self.gemini_key if provider == "gemini" else self.openai_key
+        if provider == "qwen":
+            return self.qwen_key
+        if provider == "openai":
+            return self.openai_key
+        return self.gemini_key
 
     def model_for(self, provider: str) -> str | None:
-        return self.gemini_model if provider == "gemini" else self.openai_model
+        if provider == "qwen":
+            return self.qwen_model
+        if provider == "openai":
+            return self.openai_model
+        return self.gemini_model
 
     def can_call(self, provider: str) -> bool:
         """False when this provider is chosen but has no usable key in own mode."""
@@ -222,9 +273,14 @@ def resolve_judge_routing(db: Session, org_id) -> JudgeRouting:
     policy = db.get(OrgPolicy, oid)
     if policy is None:
         return JudgeRouting(gemini_model=resolve_model("gemini", None),
-                            openai_model=resolve_model("openai", None))
+                            openai_model=resolve_model("openai", None),
+                            qwen_model=resolve_model("qwen", None))
 
-    provider = policy.judge_provider if policy.judge_provider in PROVIDERS else DEFAULT_PROVIDER
+    # Backwards-compat: "both" predates Qwen and meant gemini+openai.
+    raw_provider = policy.judge_provider
+    provider = _PROVIDER_COMPAT.get(raw_provider, raw_provider)
+    if provider not in PROVIDERS:
+        provider = DEFAULT_PROVIDER
     key_mode = policy.judge_key_mode if policy.judge_key_mode in KEY_MODES else DEFAULT_KEY_MODE
 
     if key_mode == "platform":
@@ -238,17 +294,31 @@ def resolve_judge_routing(db: Session, org_id) -> JudgeRouting:
     # independent choices, and a platform-key org still gets to pick a model.
     gemini_model = resolve_model("gemini", policy.gemini_judge_model)
     openai_model = resolve_model("openai", policy.openai_judge_model)
+    qwen_model = resolve_model("qwen", policy.qwen_judge_model)
 
     if key_mode == "platform":
         return JudgeRouting(provider=provider, key_mode=key_mode,
-                            gemini_model=gemini_model, openai_model=openai_model)
+                            gemini_model=gemini_model,
+                            openai_model=openai_model,
+                            qwen_model=qwen_model)
 
+    # Build the routing first so the uses_* properties decide which keys to
+    # decrypt — only a chosen provider's key is worth attempting.
+    routing = JudgeRouting(provider=provider, key_mode=key_mode,
+                           gemini_model=gemini_model,
+                           openai_model=openai_model,
+                           qwen_model=qwen_model)
     problems: dict[str, str] = {}
     gemini_key = (_decrypt_optional(policy.gemini_key_enc, oid, "gemini", problems)
-                  if provider in ("gemini", "both") else None)
+                  if routing.uses_gemini else None)
     openai_key = (_decrypt_optional(policy.openai_key_enc, oid, "openai", problems)
-                  if provider in ("openai", "both") else None)
+                  if routing.uses_openai else None)
+    qwen_key = (_decrypt_optional(policy.qwen_key_enc, oid, "qwen", problems)
+                if routing.uses_qwen else None)
     return JudgeRouting(provider=provider, key_mode=key_mode,
                         gemini_key=gemini_key, openai_key=openai_key,
-                        gemini_model=gemini_model, openai_model=openai_model,
+                        qwen_key=qwen_key,
+                        gemini_model=gemini_model,
+                        openai_model=openai_model,
+                        qwen_model=qwen_model,
                         problems=problems)

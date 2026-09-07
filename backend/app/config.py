@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5.6"
     openai_timeout: float = 12.0
+    # Optional Qwen (Alibaba Cloud) judge via the OpenAI-compatible endpoint.
+    # Blank key disables this provider. Default model is volatile — check the
+    # Qwen Cloud console for the current id before deploying.
+    qwen_api_key: str = ""
+    qwen_model: str = "qwen-plus"
+    qwen_timeout: float = 12.0
+    qwen_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     # Fernet key (urlsafe-base64, 32 bytes) that encrypts customer-supplied BYOK
     # provider keys at rest. Empty = BYOK unavailable on this deployment; every
     # store/read of a tenant key then fails closed rather than touching plaintext.
